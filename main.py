@@ -10,4 +10,4 @@ try:
     print("Random Number: " + str(number))
 
 except:
-    print("Random number not generated.")
+    print("ERROR: Random number not generated.")
