@@ -7,7 +7,7 @@ from utils import is_valid_random_number
 
 def main() -> None:
     print(APP_NAME)
-    printf(f"Environment: {ENVIRONMENT}")
+    print(f"Environment: {ENVIRONMENT}")
 
     try:
         number = randint(1, 10)
