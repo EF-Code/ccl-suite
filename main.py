@@ -5,4 +5,9 @@ print("CCL AI Suite")
 print("New Features")
 
 number = randint(1,9)
-print("Random Number: " + str(number))
+
+try:
+    print("Random Number: " + str(number))
+
+except:
+    print("Random number not generated.")
