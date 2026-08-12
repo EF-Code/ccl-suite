@@ -24,7 +24,7 @@ class ProjectResponse(ProjectCreate):
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
-@app.post("/projects", status_code=status,HTTP_201_CREATED)
+@app.post("/projects", status_code=status.HTTP_201_CREATED)
 def create_project(project: ProjectCreate) -> ProjectResponse:
     created_project = {
             "id": str(uuid4()),
@@ -41,7 +41,7 @@ def create_project(project: ProjectCreate) -> ProjectResponse:
         return ProjectResponse(**created_project)
 
 @app.get("/projects")
-dep list_projects() -> list[ProjectResponse]:
+def list_projects() -> list[ProjectResponse]:
     return [ProjectResponse(**project) for project in projects]
 
         
