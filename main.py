@@ -1,26 +1,48 @@
-from random import randint
+from uuid import uuid4
 
-import check
-from config import APP_NAME, ENVIRONMENT
-from logger import logger
-from utils import is_valid_random_number
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, Field
 
-def main() -> None:
-    print(APP_NAME)
-    print(f"Environment: {ENVIRONMENT}")
+app = FastAPI (
+        title="CCL AI Suite",
+        version="0.1.0",
+        )
 
-    try:
-        number = randint(1, 10)
+projects: list[dict[str, str]] = []
 
-        if not is_valid_random_number(number):
-            raise ValueError(f"Generated number {number} is out of the expected range.")
 
-        check.display_random_number(number)
-        logger.info("Generated valid number: %s", number)
+class ProjectCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=500)
 
-    except (TypeError, ValueError) as error:
-        logger.error("Could not generate valid number: %s", error)
-        print("Error: Random number generation failed. Please check the logs for details.")
 
-if __name__ == "__main__":
-    main()
+class ProjectResponse(ProjectCreate):
+    id:str
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+@app.post("/projects", status_code=status,HTTP_201_CREATED)
+def create_project(project: ProjectCreate) -> ProjectResponse:
+    created_project = {
+            "id": str(uuid4()),
+            "title": project.title.strip(),
+            "description": project.description.strip(),
+            }
+    if not created_project["title"]:
+        raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="title cannot be blank"
+            )
+        
+        projects.append(created_project)
+        return ProjectResponse(**created_project)
+
+@app.get("/projects")
+dep list_projects() -> list[ProjectResponse]:
+    return [ProjectResponse(**project) for project in projects]
+
+        
+
