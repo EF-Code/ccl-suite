@@ -27,18 +27,18 @@ def health() -> dict[str, str]:
 @app.post("/projects", status_code=status.HTTP_201_CREATED)
 def create_project(project: ProjectCreate) -> ProjectResponse:
     created_project = {
-            "id": str(uuid4()),
-            "title": project.title.strip(),
-            "description": project.description.strip(),
-            }
+        "id": str(uuid4()),
+        "title": project.title.strip(),
+        "description": project.description.strip(),
+    }
     if not created_project["title"]:
         raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="title cannot be blank"
-            )
-        
-        projects.append(created_project)
-        return ProjectResponse(**created_project)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="title cannot be blank",
+        )
+
+    projects.append(created_project)
+    return ProjectResponse(**created_project)
 
 @app.get("/projects")
 def list_projects() -> list[ProjectResponse]:
