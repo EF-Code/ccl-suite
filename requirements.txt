@@ -1,3 +1,5 @@
 # API server dependencies
 fastapi>=0.141,<1.0
 uvicorn[standard]>=0.52,<1.0
+httpx>=0.28,<1.0
+pytest>=9.0,<10.0
