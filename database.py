@@ -5,7 +5,7 @@ outside the repository.  The fallback is a credential-free local PostgreSQL
 URL for development; Docker configuration will provide an explicit URL later.
 """
 
-from collections.abc import Generator
+from collections.abc import AsyncIterator
 import os
 
 from sqlalchemy import create_engine
@@ -28,7 +28,7 @@ engine = create_engine(get_database_url(), pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-def get_db() -> Generator[Session, None, None]:
+async def get_db() -> AsyncIterator[Session]:
     """Yield one database session and always close it after use."""
 
     with SessionLocal() as session:
