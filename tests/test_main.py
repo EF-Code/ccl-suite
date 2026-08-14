@@ -135,3 +135,132 @@ def test_rejects_oversized_request_body() -> None:
 
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body is too large."}
+
+
+def create_project() -> dict[str, object]:
+    response = request(
+        "POST",
+        "/projects",
+        json={"title": "Endpoint Project", "owner_id": TEST_OWNER_ID},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def create_workflow(project_id: str) -> dict[str, object]:
+    response = request(
+        "POST",
+        f"/projects/{project_id}/workflows",
+        json={"name": "Review", "created_by_id": TEST_OWNER_ID},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def test_provisions_development_user() -> None:
+    response = request(
+        "POST",
+        "/users",
+        json={"external_ref": "local-reviewer", "role": "reviewer"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["external_ref"] == "local-reviewer"
+    assert response.json()["role"] == "reviewer"
+
+
+def test_user_provisioning_is_disabled_outside_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("main.ENVIRONMENT", "production")
+
+    response = request(
+        "POST",
+        "/users",
+        json={"external_ref": "production-user"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_file_and_workflow_endpoints() -> None:
+    project = create_project()
+    project_id = str(project["id"])
+
+    file_response = request(
+        "POST",
+        f"/projects/{project_id}/files",
+        json={
+            "storage_key": "projects/one/report.pdf",
+            "media_type": "application/pdf",
+            "size_bytes": 2048,
+            "checksum_sha256": "A" * 64,
+            "uploaded_by_id": TEST_OWNER_ID,
+        },
+    )
+    listed_files = request("GET", f"/projects/{project_id}/files")
+
+    assert file_response.status_code == 201
+    assert file_response.json()["checksum_sha256"] == "a" * 64
+    assert listed_files.status_code == 200
+    assert len(listed_files.json()) == 1
+
+    workflow = create_workflow(project_id)
+    listed_workflows = request("GET", f"/projects/{project_id}/workflows")
+
+    assert workflow["status"] == "draft"
+    assert listed_workflows.status_code == 200
+    assert len(listed_workflows.json()) == 1
+
+
+def test_approval_can_be_decided_once() -> None:
+    project = create_project()
+    workflow = create_workflow(str(project["id"]))
+
+    created = request(
+        "POST",
+        f"/workflows/{workflow['id']}/approvals",
+        json={"requested_by_id": TEST_OWNER_ID},
+    )
+    decided = request(
+        "POST",
+        f"/approvals/{created.json()['id']}/decision",
+        json={
+            "status": "approved",
+            "approved_by_id": TEST_OWNER_ID,
+            "decision_code": "reviewed",
+        },
+    )
+    repeated = request(
+        "POST",
+        f"/approvals/{created.json()['id']}/decision",
+        json={"status": "rejected", "approved_by_id": TEST_OWNER_ID},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["status"] == "pending"
+    assert decided.status_code == 200
+    assert decided.json()["status"] == "approved"
+    assert decided.json()["decision_code"] == "reviewed"
+    assert repeated.status_code == 409
+
+
+def test_security_events_are_structured_and_limited() -> None:
+    created = request(
+        "POST",
+        "/security-events",
+        json={
+            "event_code": "project.created",
+            "outcome": "success",
+            "actor_id": TEST_OWNER_ID,
+            "resource_type": "project",
+            "resource_ref": "project-1",
+            "request_ref": "request-1",
+        },
+    )
+    listed = request("GET", "/security-events?limit=1")
+
+    assert created.status_code == 201
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["event_code"] == "project.created"
