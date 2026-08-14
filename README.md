@@ -39,13 +39,6 @@ in-memory storage until the database repository is connected.
 
 ## Database setup
 
-Day 4 adds a normalized PostgreSQL-compatible schema for users, projects,
-files, workflows, approvals, and security events. See the [database schema
-guide](docs/database-schema.md) for the ER diagram and data-minimization rules.
-
-Keep the connection string outside Git by setting `DATABASE_URL` in the shell
-or in a local ignored environment file:
-
 ```bash
 export DATABASE_URL='postgresql+psycopg://localhost/ccl_suite'
 python -m alembic upgrade head
@@ -56,9 +49,6 @@ To roll the local schema back to its empty state:
 ```bash
 python -m alembic downgrade base
 ```
-
-Do not commit passwords, API keys, or `.env` files. Docker and the API's
-database repository integration are scheduled for the next development day.
 
 ## Tests
 
