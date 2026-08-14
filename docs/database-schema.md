@@ -100,7 +100,7 @@ first migration:
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://localhost/ccl_suite'
-/home/wellington/env/bin/python -m alembic upgrade head
+python -m alembic upgrade head
 ```
 
 The migration creates tables and constraints only; it does not insert personal
