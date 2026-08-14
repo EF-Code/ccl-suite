@@ -13,17 +13,17 @@ git clone https://github.com/EF-Code/ccl-suite.git
 - Create a virtual environment
 ```bash
 cd ccl-suite
-/home/wellington/env/bin/python -m venv .venv
+python -m venv .venv
 ```
 - Install dependencies
 ```bash
-/home/wellington/env/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
 - Start the API:
 
 ```bash
-/home/wellington/env/bin/python -m uvicorn main:app --reload
+.venv/bin/python -m uvicorn main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for interactive API documentation.
@@ -51,13 +51,13 @@ helper and is not an authentication mechanism.
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://localhost/ccl_suite'
-/home/wellington/env/bin/python -m alembic upgrade head
+.venv/bin/python -m alembic upgrade head
 ```
 
 To roll the local schema back to its empty state:
 
 ```bash
-/home/wellington/env/bin/python -m alembic downgrade base
+.venv/bin/python -m alembic downgrade base
 ```
 
 ## Docker development environment
@@ -88,7 +88,7 @@ set `TEST_DATABASE_URL` to the same local database, then run the opt-in test:
 
 ```bash
 export TEST_DATABASE_URL='postgresql+psycopg://ccl_suite:LOCAL_PASSWORD@localhost:5432/ccl_suite'
-/home/wellington/env/bin/python -m pytest -m integration
+.venv/bin/python -m pytest -m integration
 ```
 
 Without `TEST_DATABASE_URL`, the integration test is skipped and the default
@@ -106,5 +106,5 @@ curl -X POST http://127.0.0.1:8000/users \
 ## Tests
 
 ```bash
-/home/wellington/env/bin/python -m pytest
+.venv/bin/python -m pytest
 ```
