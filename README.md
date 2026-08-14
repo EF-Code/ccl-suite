@@ -31,11 +31,13 @@ Open `http://127.0.0.1:8000/docs` for interactive API documentation.
 ## API endpoints
 
 - `GET /health` returns the service status.
-- `POST /projects` creates an in-memory project from a title and optional description.
-- `GET /projects` lists projects created since the server started.
+- `POST /projects` creates a database-backed project from a title, description,
+  and existing user `owner_id`.
+- `GET /projects` lists projects persisted in the database.
 
-Request bodies are limited to 1 MiB. The API endpoints still use temporary
-in-memory storage until the database repository is connected.
+Request bodies are limited to 1 MiB. The API returns `404` when the supplied
+`owner_id` does not identify an existing user. User creation and authentication
+are not exposed by this initial API slice.
 
 ## Database setup
 
