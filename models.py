@@ -35,7 +35,7 @@ def utc_now() -> datetime:
 class User(Base):
     """Minimal application identity record.
 
-    ``external_ref`` is an opaque identifier supplied by an trusted identity
+    ``external_ref`` is an opaque identifier supplied by a trusted identity
     boundary.  Passwords, tokens, email addresses, and profile data remain
     outside this database.
     """
