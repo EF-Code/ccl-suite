@@ -71,14 +71,14 @@ def persist_record(db: Session, record: Entity, resource_name: str) -> Entity:
         db.refresh(record)
     except IntegrityError:
         db.rollback()
-        logger.error("%s creation failed because of a database constraint.", resource_name)
+        logger.error("%s write failed because of a database constraint.", resource_name)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"{resource_name} could not be created.",
+            detail=f"{resource_name} could not be saved.",
         )
     except SQLAlchemyError:
         db.rollback()
-        logger.error("%s creation failed because the database was unavailable.", resource_name)
+        logger.error("%s write failed because the database was unavailable.", resource_name)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database temporarily unavailable.",
