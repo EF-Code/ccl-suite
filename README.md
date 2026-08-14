@@ -13,17 +13,17 @@ git clone https://github.com/EF-Code/ccl-suite.git
 - Create a virtual environment
 ```bash
 cd ccl-suite
-/home/wellington/env/bin/python -m venv .venv
+python -m venv .venv
 ```
 - Install dependencies
 ```bash
-/home/wellington/env/bin/python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 - Start the API:
 
 ```bash
-/home/wellington/env/bin/python -m uvicorn main:app --reload
+python -m uvicorn main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for interactive API documentation.
@@ -48,13 +48,13 @@ or in a local ignored environment file:
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://localhost/ccl_suite'
-/home/wellington/env/bin/python -m alembic upgrade head
+python -m alembic upgrade head
 ```
 
 To roll the local schema back to its empty state:
 
 ```bash
-/home/wellington/env/bin/python -m alembic downgrade base
+python -m alembic downgrade base
 ```
 
 Do not commit passwords, API keys, or `.env` files. Docker and the API's
@@ -63,5 +63,5 @@ database repository integration are scheduled for the next development day.
 ## Tests
 
 ```bash
-/home/wellington/env/bin/python -m pytest
+python -m pytest
 ```
