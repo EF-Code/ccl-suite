@@ -1,6 +1,6 @@
 # Database schema
 
-Day 4 uses a normalized PostgreSQL-compatible schema. Foreign keys express
+Normalized PostgreSQL-compatible schema. Foreign keys express
 ownership and lifecycle, while indexes support the list and audit queries that
 the API will need.
 
