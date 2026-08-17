@@ -33,6 +33,8 @@ Open `http://127.0.0.1:8000/docs` for interactive API documentation.
 - `GET /health` returns the service status.
 - `POST /users` provisions an opaque development user reference. It is disabled
   when `CCL_ENVIRONMENT` is not `development`.
+- `GET /users/{user_id}` returns one development user by opaque ID and is
+  disabled outside development. It does not expose a user-list endpoint.
 - `POST /projects` creates a database-backed project from a title, description,
   and existing user `owner_id`.
 - `GET /projects` lists projects persisted in the database.
@@ -108,3 +110,18 @@ curl -X POST http://127.0.0.1:8000/users \
 ```bash
 .venv/bin/python -m pytest
 ```
+
+## Folder Standards
+
+The standalone `folder_generator.py` script creates the standard project layout
+for the file-automation work. It normalizes names to lowercase kebab-case and
+creates `incoming`, `working`, `output`, and `archive` directories below one
+approved root. It rejects path separators, world-writable roots, and existing
+projects instead of overwriting them.
+
+```bash
+python folder_generator.py "Client Intake Q3" --root ./projects
+```
+
+See [`docs/folder-standards.md`](docs/folder-standards.md) for the naming rules,
+layout, and safety boundary.
