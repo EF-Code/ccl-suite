@@ -151,6 +151,15 @@ async def create_user(
     return UserResponse.model_validate(created_user)
 
 
+@app.get("/users/{user_id}", response_model=UserResponse, tags=["users"])
+async def get_user(user_id: UUID, db: Session = Depends(get_db)) -> UserResponse:
+    """Return one development user by its opaque identifier."""
+
+    require_development_provisioning()
+    user = require_record(db, User, user_id, "User was not found.")
+    return UserResponse.model_validate(user)
+
+
 @app.post(
     "/projects",
     response_model=ProjectResponse,
