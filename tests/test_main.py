@@ -169,6 +169,22 @@ def test_provisions_development_user() -> None:
     assert response.json()["role"] == "reviewer"
 
 
+def test_gets_one_user_by_id() -> None:
+    response = request("GET", f"/users/{TEST_OWNER_ID}")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == TEST_OWNER_ID
+    assert response.json()["external_ref"] == "test-owner"
+    assert response.json()["role"] == "member"
+
+
+def test_get_user_returns_not_found_for_unknown_id() -> None:
+    response = request("GET", f"/users/{uuid4()}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User was not found."}
+
+
 def test_user_provisioning_is_disabled_outside_development(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,6 +197,10 @@ def test_user_provisioning_is_disabled_outside_development(
     )
 
     assert response.status_code == 403
+
+    lookup_response = request("GET", f"/users/{TEST_OWNER_ID}")
+
+    assert lookup_response.status_code == 403
 
 
 def test_file_and_workflow_endpoints() -> None:
