@@ -40,3 +40,8 @@ def resolve_approved_root(root: Path | str) -> Path:
         raise ValueError("Approved root must not be a symlink.")
     resolved = candidate.resolve(strict=False)
     if not resolved.is_dir():
+        raise NotADirectoryError(f"Approved root is not a directory: {resolved}")
+    if resolved.stat().st_mode & 0o002:
+        raise PermissionError("Approved root must not be world-writable.")
+    return resolved
+def safe_relative_path(root: Path, path: Path) -> Path:
