@@ -9,7 +9,7 @@ import json
 import mimetypes
 import os
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -115,3 +115,22 @@ def inventory_file(root: Path, path: Path) -> FileRecord:
 def scan_files(approved_root: Path | str) -> list[FileRecord]:
     """Scan all regular files below the approved root."""
     root = resolve_approved_root(approved_root)
+    return [inventory_file(root, path) for path in iter_regular_files(root)]
+
+
+def _manifest_paths(
+    root: Path,
+    json_path: Path | None,
+    csv_path: Path | None,
+) -> tuple[Path, Path]:
+    """Resolve manifest paths and keep both outputs below the root."""
+
+    json_output = (json_path or root / DEFAULT_JSON_NAME).resolve(strict=False)
+    csv_output = (csv_path or root / DEFAULT_CSV_NAME).resolve(strict=False)
+    if json_output == csv_output:
+        raise ValueError("JSON and CSV manifest paths must be different.")
+    for output in (json_output, csv_output):
+        if not output.is_relative_to(root):
+            raise ValueError("Manifest output must stay inside the approved root.")
+        output.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    return json_output, csv_output
