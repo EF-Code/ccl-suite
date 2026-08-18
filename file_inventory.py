@@ -30,3 +30,7 @@ class FileRecord:
     size_bytes: int
     modified_at: str
     sha256: str
+    extension_mime_match: bool | None
+
+def resolve_approved_root(root: Path | str) -> Path:
+    """Resolve one existing, non-symlink approved root."""
