@@ -100,3 +100,8 @@ def inventory_file(root: Path, path: Path) -> FileRecord:
     details = path.stat()
     mime_type = detect_mime_type(path)
     return FileRecord(
+        relative_path=relative.as_posix(),
+        name=path.name,
+        extension=path.suffix.lower(),
+        mime_type=mime_type,
+        size_bytes=details.st_size,
