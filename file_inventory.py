@@ -13,3 +13,5 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+
+DEFAULT_CHUNK_SIZE = 1024 * 1024
