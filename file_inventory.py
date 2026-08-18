@@ -50,3 +50,8 @@ def safe_relative_path(root: Path, path: Path) -> Path:
     try:
         return resolved.relative_to(root)
     except ValueError as exc:
+        raise ValueError("Path escapes the approved root.") from exc
+
+def iter_regular_files(root: Path) -> Iterable[Path]:
+    """Yield regular, non-symlink files below root."""
+    for current, directories, filenames in os.walk(root, followlinks=False):
