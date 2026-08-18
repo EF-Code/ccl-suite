@@ -20,3 +20,8 @@ DEFAULT_JSON_NAME = "manifest.json"
 DEFAULT_CSV_NAME = "manifest.csv"
 MIME_COMMAND = ("file", "--brief", "--mime-type")
 @dataclass(frozen=True)
+class FileRecord:
+    """One manifest row for a regular file."""
+
+    relative_path: str
+    name: str
