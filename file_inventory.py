@@ -34,3 +34,9 @@ class FileRecord:
 
 def resolve_approved_root(root: Path | str) -> Path:
     """Resolve one existing, non-symlink approved root."""
+
+    candidate = Path(root).expanduser()
+    if candidate.is_symlink():
+        raise ValueError("Approved root must not be a symlink.")
+    resolved = candidate.resolve(strict=False)
+    if not resolved.is_dir():
