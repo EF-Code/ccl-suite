@@ -65,3 +65,8 @@ def iter_regular_files(root: Path) -> Iterable[Path]:
                 continue
             safe_relative_path(root, path)
             yield path
+
+def sha256_file(path: Path, chunk_size: int = DEFAULT_CHUNK_SIZE) -> str:
+    """Hash a file in bounded chunks."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
