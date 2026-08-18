@@ -95,3 +95,8 @@ def extension_mime_match(path: Path, mime_type: str) -> bool | None:
         return None
     return expected == mime_type
 def inventory_file(root: Path, path: Path) -> FileRecord:
+    """Build one manifest record for a regular file."""
+    relative = safe_relative_path(root, path)
+    details = path.stat()
+    mime_type = detect_mime_type(path)
+    return FileRecord(
