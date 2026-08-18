@@ -134,3 +134,24 @@ def _manifest_paths(
             raise ValueError("Manifest output must stay inside the approved root.")
         output.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
     return json_output, csv_output
+
+
+def write_manifests(
+    approved_root: Path | str,
+    records: Iterable[FileRecord],
+    json_path: Path | None = None,
+    csv_path: Path | None = None,
+) -> tuple[Path, Path]:
+    """Write deterministic JSON and CSV manifests below the approved root."""
+
+    root = resolve_approved_root(approved_root)
+    json_output, csv_output = _manifest_paths(root, json_path, csv_path)
+    rows = [asdict(record) for record in records]
+    json_output.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+
+    fieldnames = [field.name for field in fields(FileRecord)]
+    with csv_output.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return json_output, csv_output
