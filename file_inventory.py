@@ -25,3 +25,8 @@ class FileRecord:
 
     relative_path: str
     name: str
+    extension: str
+    mime_type: str
+    size_bytes: int
+    modified_at: str
+    sha256: str
