@@ -90,3 +90,8 @@ def detect_mime_type(path: Path) -> str:
 
 def extension_mime_match(path: Path, mime_type: str) -> bool | None:
     """Compare independent extension and content checks."""
+    expected, _ = mimetypes.guess_type(path.name)
+    if expected is None:
+        return None
+    return expected == mime_type
+def inventory_file(root: Path, path: Path) -> FileRecord:
