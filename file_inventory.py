@@ -15,3 +15,8 @@ from pathlib import Path
 from typing import Iterable
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024
+DEFAULT_PROJECT_ROOT = Path(os.getenv("CCL_PROJECT_ROOT", "projects"))
+DEFAULT_JSON_NAME = "manifest.json"
+DEFAULT_CSV_NAME = "manifest.csv"
+MIME_COMMAND = ("file", "--brief", "--mime-type")
+@dataclass(frozen=True)
