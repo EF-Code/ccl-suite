@@ -75,3 +75,8 @@ def sha256_file(path: Path, chunk_size: int = DEFAULT_CHUNK_SIZE) -> str:
     return digest.hexdigest()
 
 def detect_mime_type(path: Path) -> str:
+    """Detect MIME from content, not the filename extension."""
+    result = subprocess.run(
+        [*MIME_COMMAND, "--", str(path)],
+        capture_output=True,
+        check=False,
