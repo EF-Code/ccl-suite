@@ -45,3 +45,8 @@ def resolve_approved_root(root: Path | str) -> Path:
         raise PermissionError("Approved root must not be world-writable.")
     return resolved
 def safe_relative_path(root: Path, path: Path) -> Path:
+    """Return a path inside the approved root."""
+    resolved = path.resolve(strict=False)
+    try:
+        return resolved.relative_to(root)
+    except ValueError as exc:
