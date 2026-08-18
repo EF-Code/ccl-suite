@@ -55,3 +55,8 @@ def safe_relative_path(root: Path, path: Path) -> Path:
 def iter_regular_files(root: Path) -> Iterable[Path]:
     """Yield regular, non-symlink files below root."""
     for current, directories, filenames in os.walk(root, followlinks=False):
+        directories[:] = sorted(
+            name for name in directories
+            if not (Path(current) / name).is_symlink()
+        )
+        for name in sorted(filenames):
