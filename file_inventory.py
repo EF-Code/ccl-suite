@@ -110,3 +110,8 @@ def inventory_file(root: Path, path: Path) -> FileRecord:
         ).isoformat(),
         sha256=sha256_file(path),
         extension_mime_match=extension_mime_match(path, mime_type),
+    )
+
+def scan_files(approved_root: Path | str) -> list[FileRecord]:
+    """Scan all regular files below the approved root."""
+    root = resolve_approved_root(approved_root)
