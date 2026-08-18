@@ -85,3 +85,8 @@ def detect_mime_type(path: Path) -> str:
     )
     mime_type = result.stdout.strip()
     if result.returncode != 0 or not mime_type:
+        return "application/octet-stream"
+    return mime_type
+
+def extension_mime_match(path: Path, mime_type: str) -> bool | None:
+    """Compare independent extension and content checks."""
