@@ -125,3 +125,30 @@ python folder_generator.py "Client Intake Q3" --root ./projects
 
 See [`docs/folder-standards.md`](docs/folder-standards.md) for the naming rules,
 layout, and safety boundary.
+
+## Week 3 Day 2: file inventory
+
+Create a standard project folder first, then scan it with
+`file_inventory.py`:
+
+```bash
+python folder_generator.py "Client Intake Q3" --root ./projects
+python file_inventory.py --root ./projects/client-intake-q3
+```
+
+The scanner records each regular file's relative path, name, extension,
+content-based MIME type, size, UTC modification time, SHA-256 hash, and whether
+the MIME type agrees with the extension. It writes `manifest.json` and
+`manifest.csv` inside the approved root.
+
+Custom manifest paths may be supplied when they remain inside that root:
+
+```bash
+python file_inventory.py \
+  --root ./projects/client-intake-q3 \
+  --json ./projects/client-intake-q3/output/files.json \
+  --csv ./projects/client-intake-q3/output/files.csv
+```
+
+The scanner rejects symlinked or world-writable roots, skips symlinked files
+and directories, and refuses output paths outside the approved root.
