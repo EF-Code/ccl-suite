@@ -80,3 +80,8 @@ def detect_mime_type(path: Path) -> str:
         [*MIME_COMMAND, "--", str(path)],
         capture_output=True,
         check=False,
+        text=True,
+        timeout=10,
+    )
+    mime_type = result.stdout.strip()
+    if result.returncode != 0 or not mime_type:
