@@ -60,3 +60,8 @@ def iter_regular_files(root: Path) -> Iterable[Path]:
             if not (Path(current) / name).is_symlink()
         )
         for name in sorted(filenames):
+            path = Path(current) / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            safe_relative_path(root, path)
+            yield path
