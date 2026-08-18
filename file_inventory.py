@@ -105,3 +105,8 @@ def inventory_file(root: Path, path: Path) -> FileRecord:
         extension=path.suffix.lower(),
         mime_type=mime_type,
         size_bytes=details.st_size,
+        modified_at=datetime.fromtimestamp(
+            details.st_mtime, tz=timezone.utc
+        ).isoformat(),
+        sha256=sha256_file(path),
+        extension_mime_match=extension_mime_match(path, mime_type),
