@@ -177,3 +177,22 @@ class JournalEntry:
     destination: str
     sha256: str
     operation: Literal["move", "quarantine"]
+
+
+def write_journal(
+    approved_root: Path | str,
+    entries: list[JournalEntry],
+    output: Path | None = None,
+) -> Path:
+    """Persist applied operations inside the approved root."""
+
+    root = resolve_approved_root(approved_root)
+    destination = (output or root / DEFAULT_JOURNAL_NAME).resolve(strict=False)
+    safe_relative_path(root, destination)
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    payload = {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "entries": [asdict(entry) for entry in entries],
+    }
+    destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return destination
