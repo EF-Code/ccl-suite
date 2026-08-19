@@ -215,3 +215,25 @@ def quarantine_destination(root: Path, source_relative: str) -> Path:
     destination = quarantine / stamp / Path(source_relative)
     safe_relative_path(root, destination)
     return destination
+
+
+def apply_plan(
+    plan: OrganizationPlan,
+    journal_path: Path | None = None,
+) -> Path:
+    """Apply only conflict-free actions and persist a rollback journal."""
+
+    root = resolve_approved_root(plan.root)
+    entries: list[JournalEntry] = []
+    for action in plan.actions:
+        if action.status != "planned":
+            continue
+        source = root / action.source
+        destination = root / action.destination
+        safe_relative_path(root, source)
+        safe_relative_path(root, destination)
+        move_without_overwrite(source, destination)
+        entries.append(
+            JournalEntry(action.source, action.destination, action.sha256 or "", "move")
+        )
+    return write_journal(root, entries, journal_path)
