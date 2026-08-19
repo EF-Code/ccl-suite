@@ -18,3 +18,16 @@ DEFAULT_TARGET_DIR = "working"
 DEFAULT_QUARANTINE_DIR = "quarantine"
 DEFAULT_JOURNAL_NAME = "organization-journal.json"
 DEFAULT_PLAN_NAME = "organization-plan.json"
+
+ActionStatus = Literal["planned", "conflict", "applied", "quarantined", "rolled_back"]
+FILE_CATEGORIES = {
+    ".csv": "spreadsheets",
+    ".json": "data",
+    ".md": "documents",
+    ".pdf": "documents",
+    ".png": "images",
+    ".jpg": "images",
+    ".jpeg": "images",
+    ".gif": "images",
+    ".zip": "archives",
+}
