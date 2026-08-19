@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,3 +58,18 @@ def category_for(record: FileRecord) -> str:
     """Return the deterministic destination category for one file."""
 
     return FILE_CATEGORIES.get(record.extension, "other")
+
+
+def normalize_filename(name: str) -> str:
+    """Normalize one basename without allowing path components."""
+
+    if Path(name).name != name or name in {".", ".."}:
+        raise ValueError("File names must not contain path components.")
+    original = Path(name)
+    extension = original.suffix.lower()
+    stem = unicodedata.normalize("NFKD", original.stem)
+    stem = stem.encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^A-Za-z0-9]+", "-", stem).strip("-").lower()
+    if not normalized:
+        raise ValueError("File name must contain letters or numbers.")
+    return f"{normalized}{extension}"
