@@ -73,3 +73,13 @@ def normalize_filename(name: str) -> str:
     if not normalized:
         raise ValueError("File name must contain letters or numbers.")
     return f"{normalized}{extension}"
+
+
+def approved_child(root: Path, name: str) -> Path:
+    """Resolve a named child directory while preserving the root boundary."""
+
+    if not name or Path(name).name != name or name in {".", ".."}:
+        raise ValueError("Directory names must be single safe path components.")
+    child = root / name
+    safe_relative_path(root, child)
+    return child
