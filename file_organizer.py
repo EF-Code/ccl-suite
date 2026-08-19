@@ -141,3 +141,9 @@ def build_plan(
         created_at=datetime.now(timezone.utc).isoformat(),
         actions=tuple(actions),
     )
+
+
+def plan_dict(plan: OrganizationPlan) -> dict[str, object]:
+    """Return a JSON-ready representation of a plan."""
+
+    return asdict(plan)
