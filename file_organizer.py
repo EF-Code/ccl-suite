@@ -158,3 +158,12 @@ def write_plan(plan: OrganizationPlan, output: Path | None = None) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
     destination.write_text(json.dumps(plan_dict(plan), indent=2) + "\n", encoding="utf-8")
     return destination
+
+
+def render_plan(plan: OrganizationPlan) -> str:
+    """Render a human-readable dry-run preview without changing files."""
+
+    lines = [f"Plan for {plan.root}: {len(plan.actions)} action(s)"]
+    for action in plan.actions:
+        lines.append(f"[{action.status}] {action.source} -> {action.destination} ({action.reason})")
+    return "\n".join(lines)
