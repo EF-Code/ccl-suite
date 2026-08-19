@@ -12,3 +12,9 @@ from pathlib import Path
 from typing import Literal
 
 from file_inventory import FileRecord, resolve_approved_root, safe_relative_path
+
+DEFAULT_SOURCE_DIR = "incoming"
+DEFAULT_TARGET_DIR = "working"
+DEFAULT_QUARANTINE_DIR = "quarantine"
+DEFAULT_JOURNAL_NAME = "organization-journal.json"
+DEFAULT_PLAN_NAME = "organization-plan.json"
