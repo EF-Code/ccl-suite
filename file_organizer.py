@@ -147,3 +147,14 @@ def plan_dict(plan: OrganizationPlan) -> dict[str, object]:
     """Return a JSON-ready representation of a plan."""
 
     return asdict(plan)
+
+
+def write_plan(plan: OrganizationPlan, output: Path | None = None) -> Path:
+    """Write a dry-run plan inside its approved root."""
+
+    root = Path(plan.root)
+    destination = (output or root / DEFAULT_PLAN_NAME).resolve(strict=False)
+    safe_relative_path(root, destination)
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    destination.write_text(json.dumps(plan_dict(plan), indent=2) + "\n", encoding="utf-8")
+    return destination
