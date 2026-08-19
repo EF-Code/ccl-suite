@@ -288,3 +288,18 @@ def rollback_journal(approved_root: Path | str, journal_path: Path) -> int:
         move_without_overwrite(current, original)
         restored += 1
     return restored
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the safe organiser command-line interface."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path, help="Approved project root")
+    parser.add_argument("--source", default=DEFAULT_SOURCE_DIR)
+    parser.add_argument("--target", default=DEFAULT_TARGET_DIR)
+    parser.add_argument("--plan", type=Path)
+    parser.add_argument("--journal", type=Path)
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--quarantine-conflicts", action="store_true")
+    parser.add_argument("--rollback", type=Path)
+    return parser
