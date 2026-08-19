@@ -120,3 +120,9 @@ def build_plan(
         destination = destination_for(root, target_dir, record)
         source_rel = safe_relative_path(root, path).as_posix()
         destination_rel = safe_relative_path(root, destination).as_posix()
+        status: ActionStatus = "planned"
+        reason = "ready"
+        if source_rel == destination_rel:
+            status, reason = "conflict", "source already has the destination path"
+        elif destination_rel in destinations or destination.exists():
+            status, reason = "conflict", "destination name already exists"
