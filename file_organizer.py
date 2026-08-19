@@ -51,3 +51,9 @@ class OrganizationPlan:
     root: str
     created_at: str
     actions: tuple[OrganizationAction, ...]
+
+
+def category_for(record: FileRecord) -> str:
+    """Return the deterministic destination category for one file."""
+
+    return FILE_CATEGORIES.get(record.extension, "other")
