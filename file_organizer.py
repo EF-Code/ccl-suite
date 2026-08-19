@@ -303,3 +303,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quarantine-conflicts", action="store_true")
     parser.add_argument("--rollback", type=Path)
     return parser
+
+
+def main() -> int:
+    """Preview, apply, quarantine, or roll back an organisation plan."""
+
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        root = resolve_approved_root(args.root)
+        if args.rollback is not None:
+            restored = rollback_journal(root, args.rollback)
+            print(f"Rolled back {restored} operation(s).")
+            return 0
+        plan = build_plan(root, args.source, args.target)
+        plan_path = write_plan(plan, args.plan)
+        print(render_plan(plan))
+        print(f"Plan written to {plan_path.relative_to(root)}")
+        if args.quarantine_conflicts and not args.apply:
+            parser.error("--quarantine-conflicts requires --apply.")
+        if args.apply:
+            journal = apply_plan(plan, args.journal)
+            print(f"Journal written to {journal.relative_to(root)}")
+            if args.quarantine_conflicts:
+                quarantine_journal = root / "quarantine-journal.json"
+                quarantine_conflicts(plan, quarantine_journal)
+                print(f"Conflicts quarantined in {quarantine_journal.relative_to(root)}")
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
+    return 0
