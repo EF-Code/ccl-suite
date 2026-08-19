@@ -12,7 +12,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from file_inventory import FileRecord, resolve_approved_root, safe_relative_path
+from file_inventory import (
+    FileRecord,
+    inventory_file,
+    iter_regular_files,
+    resolve_approved_root,
+    safe_relative_path,
+)
 
 DEFAULT_SOURCE_DIR = "incoming"
 DEFAULT_TARGET_DIR = "working"
@@ -93,3 +99,19 @@ def destination_for(root: Path, target_dir: str, record: FileRecord) -> Path:
     destination = category / normalize_filename(record.name)
     safe_relative_path(root, destination)
     return destination
+
+
+def build_plan(
+    approved_root: Path | str,
+    source_dir: str = DEFAULT_SOURCE_DIR,
+    target_dir: str = DEFAULT_TARGET_DIR,
+) -> OrganizationPlan:
+    """Build a no-mutation plan for organising files from source_dir."""
+
+    root = resolve_approved_root(approved_root)
+    source = approved_child(root, source_dir)
+    approved_child(root, target_dir)
+    if not source.is_dir():
+        raise NotADirectoryError(f"Source directory is not available: {source}")
+    actions: list[OrganizationAction] = []
+    destinations: set[str] = set()
