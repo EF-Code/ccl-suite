@@ -126,3 +126,18 @@ def build_plan(
             status, reason = "conflict", "source already has the destination path"
         elif destination_rel in destinations or destination.exists():
             status, reason = "conflict", "destination name already exists"
+        destinations.add(destination_rel)
+        actions.append(
+            OrganizationAction(
+                source=source_rel,
+                destination=destination_rel,
+                status=status,
+                reason=reason,
+                sha256=record.sha256,
+            )
+        )
+    return OrganizationPlan(
+        root=root.as_posix(),
+        created_at=datetime.now(timezone.utc).isoformat(),
+        actions=tuple(actions),
+    )
