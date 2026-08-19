@@ -167,3 +167,13 @@ def render_plan(plan: OrganizationPlan) -> str:
     for action in plan.actions:
         lines.append(f"[{action.status}] {action.source} -> {action.destination} ({action.reason})")
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class JournalEntry:
+    """One reversible filesystem operation."""
+
+    source: str
+    destination: str
+    sha256: str
+    operation: Literal["move", "quarantine"]
