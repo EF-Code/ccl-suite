@@ -83,3 +83,13 @@ def approved_child(root: Path, name: str) -> Path:
     child = root / name
     safe_relative_path(root, child)
     return child
+
+
+def destination_for(root: Path, target_dir: str, record: FileRecord) -> Path:
+    """Compute one deterministic destination below the approved root."""
+
+    target = approved_child(root, target_dir)
+    category = approved_child(target, category_for(record))
+    destination = category / normalize_filename(record.name)
+    safe_relative_path(root, destination)
+    return destination
