@@ -39,3 +39,10 @@ class OrganizationAction:
 
     source: str
     destination: str
+    status: ActionStatus = "planned"
+    reason: str = ""
+    sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class OrganizationPlan:
