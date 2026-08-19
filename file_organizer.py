@@ -31,3 +31,11 @@ FILE_CATEGORIES = {
     ".gif": "images",
     ".zip": "archives",
 }
+
+
+@dataclass(frozen=True)
+class OrganizationAction:
+    """One planned source-to-destination operation."""
+
+    source: str
+    destination: str
