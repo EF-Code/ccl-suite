@@ -258,3 +258,13 @@ def quarantine_conflicts(
             JournalEntry(action.source, safe_relative_path(root, destination).as_posix(), action.sha256 or "", "quarantine")
         )
     return write_journal(root, entries, journal_path)
+
+
+def load_journal(path: Path) -> list[JournalEntry]:
+    """Load and validate journal entries from JSON."""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("Journal must contain an entries list.")
+    return [JournalEntry(**entry) for entry in entries]
