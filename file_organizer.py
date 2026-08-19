@@ -205,3 +205,13 @@ def move_without_overwrite(source: Path, destination: Path) -> None:
         raise FileExistsError(f"Destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
     os.rename(source, destination)
+
+
+def quarantine_destination(root: Path, source_relative: str) -> Path:
+    """Create a unique, confined destination for a conflicted file."""
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    quarantine = approved_child(root, DEFAULT_QUARANTINE_DIR)
+    destination = quarantine / stamp / Path(source_relative)
+    safe_relative_path(root, destination)
+    return destination
