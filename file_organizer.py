@@ -115,3 +115,8 @@ def build_plan(
         raise NotADirectoryError(f"Source directory is not available: {source}")
     actions: list[OrganizationAction] = []
     destinations: set[str] = set()
+    for path in iter_regular_files(source):
+        record = inventory_file(source, path)
+        destination = destination_for(root, target_dir, record)
+        source_rel = safe_relative_path(root, path).as_posix()
+        destination_rel = safe_relative_path(root, destination).as_posix()
