@@ -332,3 +332,33 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+__all__ = [
+    "ActionStatus",
+    "FileRecord",
+    "JournalEntry",
+    "OrganizationAction",
+    "OrganizationPlan",
+    "apply_plan",
+    "approved_child",
+    "build_parser",
+    "build_plan",
+    "category_for",
+    "destination_for",
+    "load_journal",
+    "main",
+    "move_without_overwrite",
+    "normalize_filename",
+    "plan_dict",
+    "quarantine_conflicts",
+    "quarantine_destination",
+    "render_plan",
+    "rollback_journal",
+    "write_journal",
+    "write_plan",
+]
