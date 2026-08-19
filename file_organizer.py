@@ -196,3 +196,12 @@ def write_journal(
     }
     destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return destination
+
+
+def move_without_overwrite(source: Path, destination: Path) -> None:
+    """Move one file only when its destination is still absent."""
+
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"Destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    os.rename(source, destination)
