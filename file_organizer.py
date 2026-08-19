@@ -237,3 +237,24 @@ def apply_plan(
             JournalEntry(action.source, action.destination, action.sha256 or "", "move")
         )
     return write_journal(root, entries, journal_path)
+
+
+def quarantine_conflicts(
+    plan: OrganizationPlan,
+    journal_path: Path | None = None,
+) -> Path:
+    """Move conflict actions to quarantine without deleting originals."""
+
+    root = resolve_approved_root(plan.root)
+    entries: list[JournalEntry] = []
+    for action in plan.actions:
+        if action.status != "conflict":
+            continue
+        source = root / action.source
+        destination = quarantine_destination(root, action.source)
+        safe_relative_path(root, source)
+        move_without_overwrite(source, destination)
+        entries.append(
+            JournalEntry(action.source, safe_relative_path(root, destination).as_posix(), action.sha256 or "", "quarantine")
+        )
+    return write_journal(root, entries, journal_path)
