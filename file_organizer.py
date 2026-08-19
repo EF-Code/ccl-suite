@@ -46,3 +46,8 @@ class OrganizationAction:
 
 @dataclass(frozen=True)
 class OrganizationPlan:
+    """Immutable dry-run plan for one approved root."""
+
+    root: str
+    created_at: str
+    actions: tuple[OrganizationAction, ...]
