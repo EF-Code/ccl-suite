@@ -18,6 +18,7 @@ from file_inventory import (
     iter_regular_files,
     resolve_approved_root,
     safe_relative_path,
+    sha256_file,
 )
 
 DEFAULT_SOURCE_DIR = "incoming"
@@ -268,3 +269,22 @@ def load_journal(path: Path) -> list[JournalEntry]:
     if not isinstance(entries, list):
         raise ValueError("Journal must contain an entries list.")
     return [JournalEntry(**entry) for entry in entries]
+
+
+def rollback_journal(approved_root: Path | str, journal_path: Path) -> int:
+    """Restore journaled files after verifying their recorded hashes."""
+
+    root = resolve_approved_root(approved_root)
+    restored = 0
+    for entry in reversed(load_journal(journal_path)):
+        current = root / entry.destination
+        original = root / entry.source
+        safe_relative_path(root, current)
+        safe_relative_path(root, original)
+        if not current.is_file():
+            raise FileNotFoundError(f"Journal target is missing: {entry.destination}")
+        if entry.sha256 and sha256_file(current) != entry.sha256:
+            raise ValueError(f"Journal target hash changed: {entry.destination}")
+        move_without_overwrite(current, original)
+        restored += 1
+    return restored
