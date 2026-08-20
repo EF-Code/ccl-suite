@@ -126,7 +126,7 @@ python folder_generator.py "Client Intake Q3" --root ./projects
 See [`docs/folder-standards.md`](docs/folder-standards.md) for the naming rules,
 layout, and safety boundary.
 
-## Week 3 Day 2: file inventory
+## File inventory
 
 Create a standard project folder first, then scan it with
 `file_inventory.py`:
@@ -153,7 +153,7 @@ python file_inventory.py \
 The scanner rejects symlinked or world-writable roots, skips symlinked files
 and directories, and refuses output paths outside the approved root.
 
-## Week 3 Day 3: safe file organisation
+## Safe file organisation
 
 `file_organizer.py` creates a deterministic plan for moving files from a
 project's `incoming` directory into category folders under `working`. The
@@ -192,22 +192,3 @@ The organiser refuses symlinked or world-writable roots, rejects path
 components in directory and file names, keeps all plan/journal/quarantine
 paths below the approved project root, and never performs permanent deletion.
 Rollback also refuses to move a file whose recorded hash has changed.
-
-## Week 3 remaining work
-
-The folder generator, inventory manifests, dry-run organiser, collision
-protection, quarantine, and rollback are complete. The remaining schedule
-items are:
-
-- **Day 4 — controlled conversion:** build an approved converter for CSV,
-  JSON, Markdown, and plain text, plus selected image conversions; validate
-  input and output formats, preserve originals, reject unsupported formats,
-  and return clear failure messages.
-- **Day 5 — MVP verification:** add tests for empty files, duplicate hashes,
-  invalid paths, collisions, interrupted operations, and failed conversions;
-  produce a test/coverage report and verify that failed operations cannot
-  damage the original file.
-
-The inventory already records SHA-256 values. A duplicate-hash grouping/report
-is still needed to close the weekly checkpoint explicitly; the organiser's
-collision check protects destination names independently of content hashes.
