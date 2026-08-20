@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
@@ -20,6 +21,16 @@ from api_schemas import (
     ConversionResponse,
     FileCreate,
     FileResponse,
+    FolderGenerateCreate,
+    FolderGenerateResponse,
+    InventoryRecordResponse,
+    InventoryResponse,
+    OrganizationActionResponse,
+    OrganizationApplyCreate,
+    OrganizationApplyResponse,
+    OrganizationPlanResponse,
+    OrganizationRollbackCreate,
+    OrganizationRollbackResponse,
     ProjectCreate,
     ProjectResponse,
     SecurityEventCreate,
@@ -38,8 +49,23 @@ from file_converter import (
     UnsupportedFormatError,
     convert_file,
 )
-from file_inventory import DEFAULT_PROJECT_ROOT, resolve_approved_root
-from folder_generator import normalize_project_name
+from file_inventory import (
+    DEFAULT_PROJECT_ROOT,
+    FileRecord,
+    resolve_approved_root,
+    safe_relative_path,
+    scan_files,
+    write_manifests,
+)
+from file_organizer import (
+    OrganizationPlan,
+    apply_plan,
+    build_plan,
+    quarantine_conflicts,
+    rollback_journal,
+    write_plan,
+)
+from folder_generator import create_project_folder, normalize_project_name
 from logger import logger
 from models import Approval, File, Project, SecurityEvent, User, Workflow, utc_now
 
@@ -159,6 +185,60 @@ def project_storage_root(project: Project) -> Path:
     return resolve_approved_root(approved_projects_root / project_name)
 
 
+def project_relative_path(root: Path, candidate: str, label: str) -> Path:
+    """Resolve one user-supplied project-relative path without traversal."""
+
+    path = Path(candidate)
+    if path.is_absolute() or any(part in {".", ".."} for part in path.parts):
+        raise ValueError(f"{label} must be a relative path without dot segments.")
+    candidate_path = root / path
+    if candidate_path.is_symlink():
+        raise ValueError(f"{label} must not be a symlink.")
+    resolved = candidate_path.resolve(strict=False)
+    safe_relative_path(root, resolved)
+    return resolved
+
+
+def organization_plan_response(
+    project_id: UUID,
+    plan: OrganizationPlan,
+    plan_path: Path,
+) -> OrganizationPlanResponse:
+    """Translate an internal organiser plan without exposing host paths."""
+
+    root = Path(plan.root)
+    return OrganizationPlanResponse(
+        project_id=project_id,
+        plan_path=safe_relative_path(root, plan_path).as_posix(),
+        created_at=datetime.fromisoformat(plan.created_at),
+        actions=[
+            OrganizationActionResponse(
+                source=action.source,
+                destination=action.destination,
+                status=action.status,
+                reason=action.reason,
+                sha256=action.sha256,
+            )
+            for action in plan.actions
+        ],
+    )
+
+
+def inventory_record_response(record: FileRecord) -> InventoryRecordResponse:
+    """Translate one scanner record into the API response contract."""
+
+    return InventoryRecordResponse(
+        relative_path=record.relative_path,
+        name=record.name,
+        extension=record.extension,
+        mime_type=record.mime_type,
+        size_bytes=record.size_bytes,
+        modified_at=datetime.fromisoformat(record.modified_at),
+        sha256=record.sha256,
+        extension_mime_match=record.extension_mime_match,
+    )
+
+
 async def reject_oversized_requests(request: Request) -> None:
     """Reject declared request bodies larger than the application accepts."""
 
@@ -180,6 +260,52 @@ async def reject_oversized_requests(request: Request) -> None:
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 async def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+@app.post(
+    "/project-folders",
+    response_model=FolderGenerateResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["file-automation"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def generate_project_folder(
+    request: FolderGenerateCreate,
+) -> FolderGenerateResponse:
+    """Create one standard project folder below the configured root."""
+
+    try:
+        folders = create_project_folder(request.project_name, PROJECT_ROOT)
+    except FileExistsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project folder already exists.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The configured projects root is not available for writing.",
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except OSError:
+        logger.error("Project folder creation failed.")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Project folder could not be created.",
+        )
+
+    return FolderGenerateResponse(
+        name=folders.name,
+        project_path=safe_relative_path(folders.root, folders.project).as_posix(),
+        subdirectories=[
+            safe_relative_path(folders.root, path).as_posix()
+            for path in folders.subdirectories
+        ],
+    )
 
 
 @app.post(
@@ -359,6 +485,201 @@ async def convert_project_file(
         source_format=result.source_format,
         destination_format=result.destination_format,
         bytes_written=result.bytes_written,
+    )
+
+
+@app.post(
+    "/projects/{project_id}/inventory",
+    response_model=InventoryResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["file-automation"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def inventory_project_files(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+) -> InventoryResponse:
+    """Scan one project folder and write confined JSON and CSV manifests."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    try:
+        root = project_storage_root(project)
+        records = scan_files(root)
+        json_path, csv_path = write_manifests(root, records)
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project storage was not found.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for scanning.",
+        )
+    except (OSError, ValueError):
+        logger.error("Inventory scan failed for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Project inventory could not be created.",
+        )
+
+    hash_counts = Counter(record.sha256 for record in records)
+    duplicate_counts = [count for count in hash_counts.values() if count > 1]
+    return InventoryResponse(
+        project_id=project_id,
+        files_scanned=len(records),
+        duplicate_groups=len(duplicate_counts),
+        duplicate_files=sum(duplicate_counts),
+        json_manifest=safe_relative_path(root, json_path).as_posix(),
+        csv_manifest=safe_relative_path(root, csv_path).as_posix(),
+        records=[inventory_record_response(record) for record in records],
+    )
+
+
+@app.post(
+    "/projects/{project_id}/organization/plan",
+    response_model=OrganizationPlanResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["file-automation"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def preview_project_organization(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+) -> OrganizationPlanResponse:
+    """Build and persist a no-mutation organisation plan."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    try:
+        root = project_storage_root(project)
+        plan = build_plan(root)
+        plan_path = write_plan(plan)
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project incoming directory was not found.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for organising.",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except OSError:
+        logger.error("Organisation planning failed for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Organisation plan could not be created.",
+        )
+
+    return organization_plan_response(project_id, plan, plan_path)
+
+
+@app.post(
+    "/projects/{project_id}/organization/apply",
+    response_model=OrganizationApplyResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["file-automation"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def apply_project_organization(
+    project_id: UUID,
+    request: OrganizationApplyCreate,
+    db: Session = Depends(get_db),
+) -> OrganizationApplyResponse:
+    """Apply conflict-free moves and optionally quarantine conflicts."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    try:
+        root = project_storage_root(project)
+        plan = build_plan(root)
+        plan_path = write_plan(plan)
+        journal_path = apply_plan(plan)
+        quarantine_journal_path: Path | None = None
+        conflict_count = sum(action.status == "conflict" for action in plan.actions)
+        if request.quarantine_conflicts and conflict_count:
+            quarantine_journal_path = quarantine_conflicts(plan)
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project incoming directory was not found.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for organising.",
+        )
+    except (FileExistsError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except OSError:
+        logger.error("Organisation apply failed for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Organisation could not be applied safely.",
+        )
+
+    return OrganizationApplyResponse(
+        project_id=project_id,
+        plan_path=safe_relative_path(root, plan_path).as_posix(),
+        action_count=len(plan.actions),
+        applied_count=sum(action.status == "planned" for action in plan.actions),
+        conflict_count=conflict_count,
+        journal_path=safe_relative_path(root, journal_path).as_posix(),
+        quarantine_journal_path=(
+            safe_relative_path(root, quarantine_journal_path).as_posix()
+            if quarantine_journal_path is not None
+            else None
+        ),
+    )
+
+
+@app.post(
+    "/projects/{project_id}/organization/rollback",
+    response_model=OrganizationRollbackResponse,
+    tags=["file-automation"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def rollback_project_organization(
+    project_id: UUID,
+    request: OrganizationRollbackCreate,
+    db: Session = Depends(get_db),
+) -> OrganizationRollbackResponse:
+    """Roll back one previously written organisation journal."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    try:
+        root = project_storage_root(project)
+        journal_path = project_relative_path(root, request.journal_path, "Journal path")
+        restored_count = rollback_journal(root, journal_path)
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project storage or journal was not found.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for rollback.",
+        )
+    except FileExistsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Rollback would overwrite an existing source file.",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except OSError:
+        logger.error("Organisation rollback failed for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Organisation rollback could not be completed.",
+        )
+
+    return OrganizationRollbackResponse(
+        project_id=project_id,
+        journal_path=safe_relative_path(root, journal_path).as_posix(),
+        restored_count=restored_count,
     )
 
 
