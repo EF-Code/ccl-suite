@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import TypeVar
 from uuid import UUID
 
@@ -14,6 +15,8 @@ from api_schemas import (
     ApprovalCreate,
     ApprovalDecisionRequest,
     ApprovalResponse,
+    ConversionCreate,
+    ConversionResponse,
     FileCreate,
     FileResponse,
     ProjectCreate,
@@ -27,6 +30,15 @@ from api_schemas import (
 )
 from config import ENVIRONMENT
 from database import get_db
+from file_converter import (
+    ConversionDestinationExistsError,
+    ConversionError,
+    UnsafeConversionPathError,
+    UnsupportedFormatError,
+    convert_file,
+)
+from file_inventory import DEFAULT_PROJECT_ROOT, resolve_approved_root
+from folder_generator import normalize_project_name
 from logger import logger
 from models import Approval, File, Project, SecurityEvent, User, Workflow, utc_now
 
@@ -34,6 +46,7 @@ MAX_REQUEST_BODY_BYTES = 1_048_576
 
 app = FastAPI(title="CCL AI Suite", version="0.1.0")
 Entity = TypeVar("Entity")
+PROJECT_ROOT = DEFAULT_PROJECT_ROOT
 
 
 class HealthResponse(BaseModel):
@@ -107,6 +120,14 @@ def require_development_provisioning() -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User provisioning is disabled outside development.",
         )
+
+
+def project_storage_root(project: Project) -> Path:
+    """Resolve one database project to its approved filesystem directory."""
+
+    approved_projects_root = resolve_approved_root(PROJECT_ROOT)
+    project_name = normalize_project_name(project.name)
+    return resolve_approved_root(approved_projects_root / project_name)
 
 
 async def reject_oversized_requests(request: Request) -> None:
@@ -239,6 +260,77 @@ async def list_files(
         .order_by(File.created_at, File.id),
     )
     return [FileResponse.model_validate(file_metadata) for file_metadata in files]
+
+
+@app.post(
+    "/projects/{project_id}/conversions",
+    response_model=ConversionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["conversions"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def convert_project_file(
+    project_id: UUID,
+    conversion: ConversionCreate,
+    db: Session = Depends(get_db),
+) -> ConversionResponse:
+    """Convert one file within a project's approved storage directory."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    try:
+        root = project_storage_root(project)
+        result = convert_file(
+            root,
+            conversion.source_path,
+            conversion.destination_path,
+        )
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversion source or project storage was not found.",
+        )
+    except ConversionDestinationExistsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conversion destination already exists.",
+        )
+    except UnsupportedFormatError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=str(exc),
+        )
+    except UnsafeConversionPathError as exc:
+        logger.warning("Rejected conversion path for project %s: %s", project_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Conversion paths must remain inside the approved project storage.",
+        )
+    except ConversionError:
+        logger.error("Conversion failed for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="File conversion failed validation.",
+        )
+    except ValueError as exc:
+        logger.warning("Rejected conversion request for project %s: %s", project_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Conversion paths must remain inside the approved project storage.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for conversion.",
+        )
+
+    return ConversionResponse(
+        project_id=project_id,
+        source_path=result.source_relative.as_posix(),
+        destination_path=result.destination_relative.as_posix(),
+        source_format=result.source_format,
+        destination_format=result.destination_format,
+        bytes_written=result.bytes_written,
+    )
 
 
 @app.post(

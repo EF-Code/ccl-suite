@@ -89,6 +89,24 @@ class FileResponse(BaseModel):
     created_at: datetime
 
 
+class ConversionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_path: str = Field(min_length=1, max_length=255)
+    destination_path: str = Field(min_length=1, max_length=255)
+
+
+class ConversionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    project_id: UUID
+    source_path: str
+    destination_path: str
+    source_format: str
+    destination_format: str
+    bytes_written: int = Field(ge=0)
+
+
 class WorkflowCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -165,6 +183,8 @@ __all__ = [
     "ApprovalCreate",
     "ApprovalDecisionRequest",
     "ApprovalResponse",
+    "ConversionCreate",
+    "ConversionResponse",
     "FileCreate",
     "FileResponse",
     "ProjectCreate",
