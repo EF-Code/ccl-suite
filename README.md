@@ -27,6 +27,7 @@ python -m venv .venv
 ```
 
 Open `http://127.0.0.1:8000/docs` for interactive API documentation.
+Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 
 ## API endpoints
 
