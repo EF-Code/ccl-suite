@@ -42,6 +42,14 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `POST` and `GET /projects/{project_id}/files` manage file metadata only.
 - `POST /projects/{project_id}/conversions` converts an approved project file
   without overwriting its source or an existing destination.
+- `POST /project-folders` creates the standard project folder layout below the
+  configured projects root.
+- `POST /projects/{project_id}/inventory` writes confined JSON/CSV manifests
+  and returns inventory metadata and duplicate-hash counts.
+- `POST /projects/{project_id}/organization/plan` previews file moves without
+  changing files.
+- `POST /projects/{project_id}/organization/apply` applies safe moves and can
+  quarantine conflicts; `/organization/rollback` restores a journal.
 - `POST` and `GET /projects/{project_id}/workflows` manage project workflows.
 - `POST` and `GET /workflows/{workflow_id}/approvals` manage workflow approvals.
 - `POST /approvals/{approval_id}/decision` records one approval decision.
@@ -195,6 +203,18 @@ The organiser refuses symlinked or world-writable roots, rejects path
 components in directory and file names, keeps all plan/journal/quarantine
 paths below the approved project root, and never performs permanent deletion.
 Rollback also refuses to move a file whose recorded hash has changed.
+
+## Operations dashboard
+
+The browser prototype at `http://127.0.0.1:8000/` exposes the current local
+operations in one screen: health checks, development owner and project setup,
+folder generation, inventory scanning, controlled conversion, and organiser
+preview/apply/rollback. Select a project in the project table to populate the
+inventory, conversion, and organisation forms.
+
+The dashboard is intentionally a local development interface. It does not add
+authentication, and it only exposes operations already implemented by the API
+and safe command-line modules.
 
 ## Controlled file conversion
 
