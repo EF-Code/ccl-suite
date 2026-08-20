@@ -200,6 +200,12 @@ class ConversionResult:
     bytes_written: int
 
     @property
+    def source_relative(self) -> Path:
+        """Return the source path relative to the approved root."""
+
+        return safe_relative_path(self.root, self.source)
+
+    @property
     def destination_relative(self) -> Path:
         """Return the output path relative to the approved root."""
 
