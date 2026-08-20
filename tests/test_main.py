@@ -233,6 +233,88 @@ def test_file_and_workflow_endpoints() -> None:
     assert len(listed_workflows.json()) == 1
 
 
+def test_project_conversion_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    incoming = project_root / "incoming"
+    incoming.mkdir(parents=True)
+    (incoming / "records.csv").write_text("name,total\nalpha,3\n", encoding="utf-8")
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/conversions",
+        json={
+            "source_path": "incoming/records.csv",
+            "destination_path": "output/records.json",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["project_id"] == project["id"]
+    assert response.json()["source_format"] == "csv"
+    assert response.json()["destination_format"] == "json"
+    assert (project_root / "output" / "records.json").is_file()
+
+
+def test_project_conversion_endpoint_rejects_unsafe_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    incoming = project_root / "incoming"
+    incoming.mkdir(parents=True)
+    (incoming / "records.csv").write_text("name\nalpha\n", encoding="utf-8")
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/conversions",
+        json={
+            "source_path": "../records.csv",
+            "destination_path": "output/records.json",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Conversion paths must remain inside the approved project storage."
+    }
+
+
+def test_project_conversion_endpoint_returns_conflict_for_existing_destination(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    incoming = project_root / "incoming"
+    output = project_root / "output"
+    incoming.mkdir(parents=True)
+    output.mkdir()
+    (incoming / "records.csv").write_text("name\nalpha\n", encoding="utf-8")
+    (output / "records.json").write_text("keep", encoding="utf-8")
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/conversions",
+        json={
+            "source_path": "incoming/records.csv",
+            "destination_path": "output/records.json",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Conversion destination already exists."}
+
+
 def test_approval_can_be_decided_once() -> None:
     project = create_project()
     workflow = create_workflow(str(project["id"]))
