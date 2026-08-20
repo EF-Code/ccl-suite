@@ -39,6 +39,8 @@ Open `http://127.0.0.1:8000/docs` for interactive API documentation.
   and existing user `owner_id`.
 - `GET /projects` lists projects persisted in the database.
 - `POST` and `GET /projects/{project_id}/files` manage file metadata only.
+- `POST /projects/{project_id}/conversions` converts an approved project file
+  without overwriting its source or an existing destination.
 - `POST` and `GET /projects/{project_id}/workflows` manage project workflows.
 - `POST` and `GET /workflows/{workflow_id}/approvals` manage workflow approvals.
 - `POST /approvals/{approval_id}/decision` records one approval decision.
@@ -192,3 +194,42 @@ The organiser refuses symlinked or world-writable roots, rejects path
 components in directory and file names, keeps all plan/journal/quarantine
 paths below the approved project root, and never performs permanent deletion.
 Rollback also refuses to move a file whose recorded hash has changed.
+
+## Controlled file conversion
+
+The conversion endpoint operates on paths relative to the project's generated
+folder. Create that folder below the approved projects root before calling the
+endpoint:
+
+```bash
+python folder_generator.py "Endpoint Project" --root ./projects
+```
+
+The database project's title is normalised to the same lowercase kebab-case
+folder name. The request accepts these approved pairs:
+
+- CSV to JSON and JSON to CSV
+- Markdown to plain text and plain text to Markdown
+- PNG to JPG and JPG to PNG
+
+Example request (replace `<PROJECT_ID>` with the project identifier):
+
+```bash
+curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/conversions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source_path": "incoming/records.csv",
+    "destination_path": "output/records.json"
+  }'
+```
+
+The response reports the source and destination paths, canonical formats, and
+number of bytes written. Text inputs must be UTF-8. Image conversion uses the
+declared Pillow dependency. The endpoint returns `400` for unsafe paths, `404`
+for missing project storage or source files, `409` for an existing destination,
+`415` for an unsupported format pair, and `422` for malformed content.
+
+Sources are never deleted or modified. Destination paths must remain below the
+project root, symlinks and path traversal are rejected, and output is created
+without replacing an existing file. Failed validation happens before output is
+created, so the original remains available for retry.
