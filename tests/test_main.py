@@ -70,6 +70,23 @@ def test_health_reports_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_serves_operations_web_prototype() -> None:
+    response = request("GET", "/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "CCL AI Suite" in response.text
+    assert "Controlled conversion" in response.text
+
+
+def test_serves_web_prototype_assets() -> None:
+    response = request("GET", "/static/app.js")
+
+    assert response.status_code == 200
+    assert "application/javascript" in response.headers["content-type"]
+    assert "refreshHealth" in response.text
+
+
 def test_create_then_list_projects() -> None:
     created = request(
         "POST",
