@@ -113,10 +113,48 @@
           </form>
         </article>
 
+        <article class="card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">04 · Filesystem</p>
+              <h2>Generate project folders</h2>
+            </div>
+            <span class="icon-tile" aria-hidden="true">▦</span>
+          </div>
+          <p class="muted">Create the safe incoming, working, output, and archive layout.</p>
+          <form id="folder-form" class="stack-form">
+            <label>
+              Project folder name
+              <input name="project_name" placeholder="Client Intake Q3" required maxlength="100" />
+            </label>
+            <button class="button button-primary" type="submit">Generate folder layout</button>
+          </form>
+          <div id="folder-result" class="result-box" hidden></div>
+        </article>
+
+        <article class="card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">05 · Inventory</p>
+              <h2>Scan project files</h2>
+            </div>
+            <span class="icon-tile" aria-hidden="true">≋</span>
+          </div>
+          <p class="muted">Create confined JSON and CSV manifests with MIME checks and SHA-256 hashes.</p>
+          <form id="inventory-form" class="stack-form">
+            <label>
+              Project ID
+              <input id="inventory-project-id" name="project_id" placeholder="Select a project below" required />
+            </label>
+            <button class="button button-secondary" type="submit">Scan project files</button>
+          </form>
+          <div id="inventory-result" class="result-box" hidden></div>
+        </article>
+
         <article class="card card-wide">
           <div class="card-heading card-heading-inline">
             <div>
-              <p class="eyebrow">04 · Workspaces</p>
+              <p class="eyebrow">06 · Workspaces</p>
               <h2>Registered projects</h2>
             </div>
             <button id="projects-refresh" class="button button-secondary" type="button">Refresh list</button>
@@ -129,7 +167,7 @@
         <article class="card card-wide conversion-card">
           <div class="card-heading">
             <div>
-              <p class="eyebrow">05 · Automation</p>
+              <p class="eyebrow">07 · Conversion</p>
               <h2>Controlled conversion</h2>
             </div>
             <span class="icon-tile" aria-hidden="true">↗</span>
@@ -164,15 +202,59 @@
           </div>
           <div id="conversion-result" class="result-box" hidden></div>
         </article>
+
+        <article class="card card-wide organizer-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">08 · Organisation</p>
+              <h2>Preview and apply file organisation</h2>
+            </div>
+            <span class="icon-tile" aria-hidden="true">⇢</span>
+          </div>
+          <div class="organizer-layout">
+            <div>
+              <p class="muted">
+                Preview moves from <code>incoming/</code> to categorised
+                <code>working/</code> folders. Applying creates a rollback journal
+                and can quarantine conflicts instead of deleting them.
+              </p>
+              <div class="format-list">
+                <span>Dry run first</span>
+                <span>No overwrite</span>
+                <span>Hash-checked rollback</span>
+              </div>
+            </div>
+            <form id="organizer-form" class="stack-form">
+              <label>
+                Project ID
+                <input id="organizer-project-id" name="project_id" placeholder="Select a project below" required />
+              </label>
+              <label class="checkbox-label">
+                <input id="quarantine-conflicts" name="quarantine_conflicts" type="checkbox" />
+                Quarantine conflicts when applying
+              </label>
+              <div class="button-row">
+                <button id="organizer-preview" class="button button-secondary" type="button">Preview plan</button>
+                <button id="organizer-apply" class="button button-accent" type="button">Apply safe moves</button>
+              </div>
+              <label>
+                Journal path for rollback
+                <input id="journal-path" name="journal_path" value="organization-journal.json" required maxlength="255" />
+              </label>
+              <button id="organizer-rollback" class="button button-quiet" type="button">Roll back journal</button>
+            </form>
+          </div>
+          <div id="organizer-result" class="result-box" hidden></div>
+        </article>
       </section>
 
       <section class="scope-note" aria-label="Prototype scope">
         <span class="scope-line" aria-hidden="true"></span>
         <p>
-          <strong>Prototype scope:</strong> folder generation, inventory scans,
-          and organiser dry-runs are currently command-line tools. This screen
-          exposes the API operations that exist today and does not pretend to
-          provide routes that have not been implemented.
+          <strong>Prototype scope:</strong> this screen now exposes the current
+          folder, inventory, organisation, conversion, and database API actions.
+          It does not add authentication or replace the richer command-line
+          options that remain available for advanced workflows.
         </p>
       </section>
     </main>
