@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="CCL AI Suite local operations dashboard" />
+    <title>CCL AI Suite | Operations</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="CCL AI Suite home">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span>
+          <strong>CCL AI Suite</strong>
+          <small>Local operations prototype</small>
+        </span>
+      </a>
+      <nav class="topbar-actions" aria-label="Application links">
+        <span id="health-badge" class="badge badge-muted">Checking API…</span>
+        <a class="button button-quiet" href="/docs" target="_blank" rel="noreferrer">API docs</a>
+      </nav>
+    </header>
+
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Secure file automation · prototype</p>
+          <h1>Operate your project workspace from one place.</h1>
+          <p class="hero-copy">
+            Create a local development owner, register a project, and run the
+            controlled file conversions already supported by the API.
+          </p>
+        </div>
+        <div class="hero-note">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div>
+            <strong>Development mode</strong>
+            <p>Use this interface only with trusted local files.</p>
+          </div>
+        </div>
+      </section>
+
+      <div id="flash" class="flash" role="status" aria-live="polite" hidden></div>
+
+      <section class="dashboard-grid" aria-label="Project operations">
+        <article class="card card-health">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">01 · Service</p>
+              <h2>System health</h2>
+            </div>
+            <span class="icon-tile" aria-hidden="true">✦</span>
+          </div>
+          <p class="muted">Confirm that the API is reachable before starting an operation.</p>
+          <div class="health-panel">
+            <span id="health-dot" class="health-dot health-dot-muted" aria-hidden="true"></span>
+            <div>
+              <strong id="health-text">Checking connection…</strong>
+              <span id="health-detail" class="muted">Waiting for /health</span>
+            </div>
+          </div>
+          <button id="health-refresh" class="button button-secondary" type="button">Refresh health</button>
+        </article>
+
+        <article class="card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">02 · Identity</p>
+              <h2>Development owner</h2>
+            </div>
+            <span class="icon-tile" aria-hidden="true">◎</span>
+          </div>
+          <p class="muted">Provision the opaque owner ID required when creating a project.</p>
+          <form id="user-form" class="stack-form">
+            <label>
+              External reference
+              <input name="external_ref" value="local-owner" required maxlength="128" />
+            </label>
+            <label>
+              Role
+              <input name="role" value="member" required maxlength="32" />
+            </label>
+            <button class="button button-primary" type="submit">Create development owner</button>
+          </form>
+          <div id="user-result" class="result-box" hidden></div>
+        </article>
+
+        <article class="card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">03 · Workspace</p>
+              <h2>Register a project</h2>
+            </div>
+            <span class="icon-tile" aria-hidden="true">＋</span>
+          </div>
+          <p class="muted">The title maps to the generated lowercase project folder.</p>
+          <form id="project-form" class="stack-form">
+            <label>
+              Project title
+              <input name="title" placeholder="Client Intake Q3" required maxlength="100" />
+            </label>
+            <label>
+              Description
+              <textarea name="description" rows="3" maxlength="500" placeholder="What will this workspace contain?"></textarea>
+            </label>
+            <label>
+              Owner ID
+              <input id="owner-id" name="owner_id" placeholder="Create an owner above" required />
+            </label>
+            <button class="button button-primary" type="submit">Register project</button>
+          </form>
+        </article>
+
+        <article class="card card-wide">
+          <div class="card-heading card-heading-inline">
+            <div>
+              <p class="eyebrow">04 · Workspaces</p>
+              <h2>Registered projects</h2>
+            </div>
+            <button id="projects-refresh" class="button button-secondary" type="button">Refresh list</button>
+          </div>
+          <div id="projects-list" class="projects-list">
+            <p class="empty-state">No projects loaded yet.</p>
+          </div>
+        </article>
+
+        <article class="card card-wide conversion-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">05 · Automation</p>
+              <h2>Controlled conversion</h2>
+            </div>
+            <span class="icon-tile" aria-hidden="true">↗</span>
+          </div>
+          <div class="conversion-layout">
+            <div>
+              <p class="muted">
+                Convert files already inside a generated project folder. The
+                source is preserved and existing destinations are never replaced.
+              </p>
+              <div class="format-list" aria-label="Supported conversion pairs">
+                <span>CSV ↔ JSON</span>
+                <span>Markdown ↔ text</span>
+                <span>PNG ↔ JPG</span>
+              </div>
+            </div>
+            <form id="conversion-form" class="stack-form">
+              <label>
+                Project ID
+                <input id="conversion-project-id" name="project_id" placeholder="Select a project below" required />
+              </label>
+              <label>
+                Source path
+                <input name="source_path" value="incoming/records.csv" required maxlength="255" />
+              </label>
+              <label>
+                Destination path
+                <input name="destination_path" value="output/records.json" required maxlength="255" />
+              </label>
+              <button class="button button-accent" type="submit">Run conversion</button>
+            </form>
+          </div>
+          <div id="conversion-result" class="result-box" hidden></div>
+        </article>
+      </section>
+
+      <section class="scope-note" aria-label="Prototype scope">
+        <span class="scope-line" aria-hidden="true"></span>
+        <p>
+          <strong>Prototype scope:</strong> folder generation, inventory scans,
+          and organiser dry-runs are currently command-line tools. This screen
+          exposes the API operations that exist today and does not pretend to
+          provide routes that have not been implemented.
+        </p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>CCL AI Suite</span>
+      <span>FastAPI local prototype</span>
+    </footer>
+  </body>
+</html>
