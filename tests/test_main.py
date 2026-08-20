@@ -332,6 +332,87 @@ def test_project_conversion_endpoint_returns_conflict_for_existing_destination(
     assert response.json() == {"detail": "Conversion destination already exists."}
 
 
+def test_project_folder_generation_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    projects_root = tmp_path / "projects"
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+
+    response = request(
+        "POST",
+        "/project-folders",
+        json={"project_name": "Browser Intake"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["name"] == "browser-intake"
+    assert response.json()["project_path"] == "browser-intake"
+    assert (projects_root / "browser-intake" / "incoming").is_dir()
+    assert (projects_root / "browser-intake" / "working").is_dir()
+
+
+def test_project_inventory_endpoint_writes_manifests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "incoming").mkdir()
+    (project_root / "incoming" / "notes.txt").write_text("hello", encoding="utf-8")
+
+    response = request("POST", f"/projects/{project['id']}/inventory")
+
+    assert response.status_code == 201
+    assert response.json()["files_scanned"] == 1
+    assert response.json()["duplicate_groups"] == 0
+    assert response.json()["json_manifest"] == "manifest.json"
+    assert response.json()["csv_manifest"] == "manifest.csv"
+    assert (project_root / "manifest.json").is_file()
+    assert (project_root / "manifest.csv").is_file()
+
+
+def test_project_organization_preview_apply_and_rollback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    incoming = project_root / "incoming"
+    (project_root / "working").mkdir(parents=True)
+    incoming.mkdir()
+    source = incoming / "Quarterly Report.csv"
+    source.write_text("name,total\nalpha,3\n", encoding="utf-8")
+
+    preview = request("POST", f"/projects/{project['id']}/organization/plan")
+    applied = request(
+        "POST",
+        f"/projects/{project['id']}/organization/apply",
+        json={"quarantine_conflicts": False},
+    )
+
+    assert preview.status_code == 201
+    assert preview.json()["actions"][0]["destination"] == (
+        "working/spreadsheets/quarterly-report.csv"
+    )
+    assert applied.status_code == 201
+    assert applied.json()["applied_count"] == 1
+    assert (project_root / "working" / "spreadsheets" / "quarterly-report.csv").is_file()
+    assert not source.exists()
+
+    rollback = request(
+        "POST",
+        f"/projects/{project['id']}/organization/rollback",
+        json={"journal_path": applied.json()["journal_path"]},
+    )
+
+    assert rollback.status_code == 200
+    assert rollback.json()["restored_count"] == 1
+    assert source.is_file()
+
+
 def test_approval_can_be_decided_once() -> None:
     project = create_project()
     workflow = create_workflow(str(project["id"]))
