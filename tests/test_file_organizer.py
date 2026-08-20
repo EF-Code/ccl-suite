@@ -123,3 +123,19 @@ def test_plan_rejects_unsafe_source_directory(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="single safe path components"):
         build_plan(root, source_dir="../outside")
+
+
+def test_plan_rejects_unsafe_target_directory(tmp_path: Path) -> None:
+    root, _, _ = make_project(tmp_path)
+
+    with pytest.raises(ValueError, match="single safe path components"):
+        build_plan(root, target_dir="../outside")
+
+
+def test_plan_rejects_symlinked_approved_root(tmp_path: Path) -> None:
+    root, _, _ = make_project(tmp_path)
+    alias = tmp_path / "project-alias"
+    alias.symlink_to(root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        build_plan(alias)
