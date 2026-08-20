@@ -7,6 +7,12 @@ destination, and format pair have passed these checks.
 
 from __future__ import annotations
 
+import csv
+import io
+import json
+import os
+import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
@@ -82,7 +88,7 @@ def normalize_format(value: str | Path) -> str:
     and ``md``.
     """
 
-    raw = value.suffix if isinstance(value, Path) else str(value)
+    raw = value.suffix if isinstance(value, Path) else (Path(str(value)).suffix or str(value))
     candidate = raw.lower().lstrip(".")
     canonical = FORMAT_ALIASES.get(candidate, candidate)
     if canonical not in SUPPORTED_FORMATS:
@@ -182,18 +188,222 @@ def build_conversion_request(
     )
 
 
+@dataclass(frozen=True)
+class ConversionResult:
+    """Details about one successfully written conversion output."""
+
+    root: Path
+    source: Path
+    destination: Path
+    source_format: str
+    destination_format: str
+    bytes_written: int
+
+    @property
+    def destination_relative(self) -> Path:
+        """Return the output path relative to the approved root."""
+
+        return safe_relative_path(self.root, self.destination)
+
+
+def _read_utf8(source: Path) -> str:
+    """Read a text source with a clear conversion error for invalid UTF-8."""
+
+    try:
+        return source.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ConversionError("Text conversion sources must be valid UTF-8.") from exc
+
+
+def _csv_to_json(source: Path) -> bytes:
+    """Convert a UTF-8 CSV document to an indented JSON list of objects."""
+
+    reader = csv.DictReader(io.StringIO(_read_utf8(source), newline=""))
+    fieldnames = reader.fieldnames
+    if not fieldnames or any(not name for name in fieldnames):
+        raise ConversionError("CSV input must contain a non-empty header row.")
+    if len(set(fieldnames)) != len(fieldnames):
+        raise ConversionError("CSV input must not contain duplicate column names.")
+
+    rows: list[dict[str, str]] = []
+    for row in reader:
+        if None in row:
+            raise ConversionError("CSV input contains a row with too many columns.")
+        rows.append({name: row.get(name, "") or "" for name in fieldnames})
+    return (json.dumps(rows, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
+def _json_to_csv(source: Path) -> bytes:
+    """Convert a JSON list of flat objects to a UTF-8 CSV document."""
+
+    try:
+        payload = json.loads(_read_utf8(source))
+    except json.JSONDecodeError as exc:
+        raise ConversionError("JSON input is malformed.") from exc
+    if not isinstance(payload, list) or any(not isinstance(row, dict) for row in payload):
+        raise ConversionError("JSON input must be a list of objects.")
+
+    fieldnames: list[str] = []
+    for row in payload:
+        for name, value in row.items():
+            if not isinstance(name, str) or not name:
+                raise ConversionError("JSON object keys must be non-empty strings.")
+            if isinstance(value, (dict, list)):
+                raise ConversionError("JSON values for CSV conversion must be scalar.")
+            if name not in fieldnames:
+                fieldnames.append(name)
+
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=fieldnames)
+    if fieldnames:
+        writer.writeheader()
+        writer.writerows(payload)
+    return stream.getvalue().encode("utf-8")
+
+
+_MARKDOWN_LINK_RE = re.compile(r"!?\[([^]]*)\]\([^)]*\)")
+_MARKDOWN_DECORATION_RE = re.compile(r"(```?|\*\*|__|\*|_)")
+
+
+def _markdown_to_text(source: Path) -> bytes:
+    """Remove common Markdown presentation markers while preserving content."""
+
+    lines: list[str] = []
+    for original_line in _read_utf8(source).splitlines():
+        line = original_line.strip()
+        if line.startswith("```"):
+            continue
+        line = re.sub(r"^#{1,6}\s+", "", line)
+        line = re.sub(r"^>\s?", "", line)
+        line = re.sub(r"^[-*+]\s+", "", line)
+        line = _MARKDOWN_LINK_RE.sub(r"\1", line)
+        line = _MARKDOWN_DECORATION_RE.sub("", line)
+        lines.append(line)
+    text = "\n".join(lines).rstrip()
+    return ((text + "\n") if text else "").encode("utf-8")
+
+
+def _text_to_markdown(source: Path) -> bytes:
+    """Write valid UTF-8 plain text as Markdown without changing its content."""
+
+    text = _read_utf8(source)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text.encode("utf-8")
+
+
+def _image_to_bytes(request: ConversionRequest) -> bytes:
+    """Convert one approved image pair through Pillow when available."""
+
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise ConversionError("Image conversion requires the Pillow dependency.") from exc
+
+    output = io.BytesIO()
+    try:
+        with Image.open(request.source) as image:
+            image.load()
+            if request.destination_format == "jpg" and image.mode not in {"RGB", "L"}:
+                image = image.convert("RGB")
+            image.save(output, format="JPEG" if request.destination_format == "jpg" else "PNG")
+    except (OSError, ValueError) as exc:
+        raise ConversionError("Image input could not be decoded or converted.") from exc
+    return output.getvalue()
+
+
+def _render_conversion(request: ConversionRequest) -> bytes:
+    """Render conversion output in memory before creating its destination."""
+
+    pair = (request.source_format, request.destination_format)
+    if pair == ("csv", "json"):
+        return _csv_to_json(request.source)
+    if pair == ("json", "csv"):
+        return _json_to_csv(request.source)
+    if pair == ("md", "txt"):
+        return _markdown_to_text(request.source)
+    if pair == ("txt", "md"):
+        return _text_to_markdown(request.source)
+    if request.kind == "image":
+        return _image_to_bytes(request)
+    raise UnsupportedFormatError(
+        f"Unsupported conversion: {request.source_format} to {request.destination_format}."
+    )
+
+
+def _write_without_overwrite(destination: Path, content: bytes) -> int:
+    """Write bytes through a temporary file and atomically link without overwrite."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=destination.parent,
+            prefix=".conversion-",
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary_path, destination)
+        except FileExistsError as exc:
+            raise ConversionDestinationExistsError(
+                f"Conversion destination already exists: {destination}"
+            ) from exc
+        return len(content)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def convert_request(request: ConversionRequest) -> ConversionResult:
+    """Convert a validated request without overwriting or deleting originals."""
+
+    try:
+        content = _render_conversion(request)
+        bytes_written = _write_without_overwrite(request.destination, content)
+    except ConversionError:
+        raise
+    except OSError as exc:
+        raise ConversionError("Conversion output could not be written safely.") from exc
+    return ConversionResult(
+        root=request.root,
+        source=request.source,
+        destination=request.destination,
+        source_format=request.source_format,
+        destination_format=request.destination_format,
+        bytes_written=bytes_written,
+    )
+
+
+def convert_file(
+    approved_root: Path | str,
+    source: Path | str,
+    destination: Path | str,
+) -> ConversionResult:
+    """Validate paths and formats, then perform one controlled conversion."""
+
+    return convert_request(build_conversion_request(approved_root, source, destination))
+
+
 __all__ = [
     "APPROVED_CONVERSION_PAIRS",
     "ConversionDestinationExistsError",
     "ConversionError",
     "ConversionKind",
     "ConversionRequest",
+    "ConversionResult",
     "IMAGE_FORMATS",
     "SUPPORTED_FORMATS",
     "TEXT_FORMATS",
     "UnsafeConversionPathError",
     "UnsupportedFormatError",
     "build_conversion_request",
+    "convert_file",
+    "convert_request",
     "format_kind",
     "normalize_format",
     "validate_conversion_paths",
