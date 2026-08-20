@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from pydantic import BaseModel
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -43,6 +44,7 @@ from logger import logger
 from models import Approval, File, Project, SecurityEvent, User, Workflow, utc_now
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="CCL AI Suite", version="0.1.0")
 Entity = TypeVar("Entity")
@@ -51,6 +53,33 @@ PROJECT_ROOT = DEFAULT_PROJECT_ROOT
 
 class HealthResponse(BaseModel):
     status: str
+
+
+@app.get("/", include_in_schema=False)
+async def web_app() -> HTMLResponse:
+    """Serve the browser prototype for the current API operations."""
+
+    return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
+
+
+@app.get("/static/styles.css", include_in_schema=False)
+async def web_styles() -> Response:
+    """Serve the prototype stylesheet."""
+
+    return Response(
+        (STATIC_DIR / "styles.css").read_text(encoding="utf-8"),
+        media_type="text/css",
+    )
+
+
+@app.get("/static/app.js", include_in_schema=False)
+async def web_script() -> Response:
+    """Serve the prototype browser logic."""
+
+    return Response(
+        (STATIC_DIR / "app.js").read_text(encoding="utf-8"),
+        media_type="application/javascript",
+    )
 
 
 def require_record(
