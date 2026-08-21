@@ -122,6 +122,22 @@ curl -X POST http://127.0.0.1:8000/users \
 .venv/bin/python -m pytest
 ```
 
+The dashboard workflow smoke test is opt-in because it needs a running local
+API and a Chromium-compatible browser. Install the browser once, start the API
+with an isolated development database and project root, then run:
+
+```bash
+.venv/bin/python -m playwright install chromium
+RUN_BROWSER_TESTS=1 \
+  DASHBOARD_BASE_URL=http://127.0.0.1:8000 \
+  .venv/bin/python -m pytest -m browser tests/test_dashboard_browser.py
+```
+
+The test follows the browser flow from the health check through owner and
+project creation, folder generation, inventory scanning, organisation preview
+and apply, and journal rollback. It skips during the normal suite unless
+`RUN_BROWSER_TESTS=1` is set.
+
 ## Folder Standards
 
 The standalone `folder_generator.py` script creates the standard project layout
