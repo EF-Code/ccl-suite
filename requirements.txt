@@ -4,6 +4,7 @@ uvicorn[standard]>=0.52,<1.0
 httpx>=0.28,<1.0
 pytest>=9.0,<10.0
 Pillow>=11.0,<13.0
+playwright>=1.50,<2.0
 
 # Database and migration dependencies
 SQLAlchemy>=2.0.36,<3.0
