@@ -28,5 +28,5 @@ browser. The default suite remains self-contained and does not require Docker.
 ## Next improvement
 
 The current command enforces a reviewed 90% coverage floor. The remaining
-uncovered paths are primarily API/database failure translation and a few
-environment-only command branches.
+uncovered paths are primarily optional image-dependency handling and a few
+environment-only filesystem race branches.
