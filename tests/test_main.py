@@ -1,16 +1,26 @@
 import asyncio
 from collections.abc import AsyncIterator, Generator
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database import Base, get_db
-from main import MAX_REQUEST_BODY_BYTES, app
-from models import User
+from file_converter import ConversionError
+from main import (
+    MAX_REQUEST_BODY_BYTES,
+    app,
+    list_records,
+    persist_record,
+    require_record,
+)
+from models import Project, User
 
 
 TEST_ENGINE = create_engine(
@@ -87,6 +97,70 @@ def test_serves_web_prototype_assets() -> None:
     assert "refreshHealth" in response.text
 
 
+def test_serves_stylesheet_asset() -> None:
+    response = request("GET", "/static/styles.css")
+
+    assert response.status_code == 200
+    assert "text/css" in response.headers["content-type"]
+    assert ".dashboard-grid" in response.text
+
+
+def test_database_lookup_failure_is_translated_to_503() -> None:
+    class BrokenSession:
+        def get(self, model: object, record_id: object) -> object:
+            raise SQLAlchemyError("database unavailable")
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_record(BrokenSession(), User, uuid4(), "User missing")  # type: ignore[arg-type]
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Database temporarily unavailable."
+
+
+def test_database_write_failures_are_translated_to_safe_errors() -> None:
+    class BrokenSession:
+        def __init__(self, error: Exception) -> None:
+            self.error = error
+            self.rolled_back = False
+
+        def add(self, record: object) -> None:
+            pass
+
+        def commit(self) -> None:
+            raise self.error
+
+        def refresh(self, record: object) -> None:
+            pass
+
+        def rollback(self) -> None:
+            self.rolled_back = True
+
+    constraint_session = BrokenSession(
+        IntegrityError("insert", {}, Exception("duplicate"))
+    )
+    with pytest.raises(HTTPException) as constraint_error:
+        persist_record(constraint_session, User(external_ref="constraint"), "User")  # type: ignore[arg-type]
+    assert constraint_error.value.status_code == 409
+    assert constraint_session.rolled_back is True
+
+    unavailable_session = BrokenSession(SQLAlchemyError("database down"))
+    with pytest.raises(HTTPException) as unavailable_error:
+        persist_record(unavailable_session, User(external_ref="unavailable"), "User")  # type: ignore[arg-type]
+    assert unavailable_error.value.status_code == 503
+    assert unavailable_error.value.detail == "Database temporarily unavailable."
+
+
+def test_database_listing_failure_is_translated_to_503() -> None:
+    class BrokenSession:
+        def scalars(self, statement: object) -> object:
+            raise SQLAlchemyError("database unavailable")
+
+    with pytest.raises(HTTPException) as exc_info:
+        list_records(BrokenSession(), object())  # type: ignore[arg-type]
+
+    assert exc_info.value.status_code == 503
+
+
 def test_create_then_list_projects() -> None:
     created = request(
         "POST",
@@ -152,6 +226,18 @@ def test_rejects_oversized_request_body() -> None:
 
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body is too large."}
+
+
+def test_rejects_invalid_content_length_header() -> None:
+    response = request(
+        "POST",
+        "/projects",
+        headers={"Content-Length": "not-a-number"},
+        content=b"{}",
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid Content-Length header."}
 
 
 def create_project() -> dict[str, object]:
@@ -250,6 +336,24 @@ def test_file_and_workflow_endpoints() -> None:
     assert len(listed_workflows.json()) == 1
 
 
+def test_file_endpoint_allows_metadata_without_uploader() -> None:
+    project = create_project()
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/files",
+        json={
+            "storage_key": "projects/one/no-uploader.txt",
+            "media_type": "text/plain",
+            "size_bytes": 4,
+            "checksum_sha256": "B" * 64,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["uploaded_by_id"] is None
+
+
 def test_project_conversion_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     projects_root = tmp_path / "projects"
     projects_root.mkdir()
@@ -332,6 +436,77 @@ def test_project_conversion_endpoint_returns_conflict_for_existing_destination(
     assert response.json() == {"detail": "Conversion destination already exists."}
 
 
+def test_project_conversion_endpoint_maps_missing_and_unsupported_inputs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    projects_root = tmp_path / "projects"
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    incoming = project_root / "incoming"
+    incoming.mkdir(parents=True)
+    (incoming / "records.csv").write_text("name\nalpha\n", encoding="utf-8")
+
+    missing = request(
+        "POST",
+        f"/projects/{project['id']}/conversions",
+        json={
+            "source_path": "incoming/missing.csv",
+            "destination_path": "output/missing.json",
+        },
+    )
+    unsupported = request(
+        "POST",
+        f"/projects/{project['id']}/conversions",
+        json={
+            "source_path": "incoming/records.csv",
+            "destination_path": "output/records.txt",
+        },
+    )
+
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "Conversion source or project storage was not found."}
+    assert unsupported.status_code == 415
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "detail"),
+    [
+        (ConversionError("invalid content"), 422, "File conversion failed validation."),
+        (ValueError("bad path"), 400, "Conversion paths must remain inside the approved project storage."),
+        (PermissionError("locked"), 403, "Project storage is not available for conversion."),
+    ],
+)
+def test_project_conversion_endpoint_maps_conversion_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error: Exception,
+    expected_status: int,
+    detail: str,
+) -> None:
+    projects_root = tmp_path / "projects"
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    (project_root / "incoming").mkdir(parents=True)
+
+    def fail(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("main.convert_file", fail)
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/conversions",
+        json={
+            "source_path": "incoming/records.csv",
+            "destination_path": "output/records.json",
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": detail}
+
+
 def test_project_folder_generation_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     projects_root = tmp_path / "projects"
     monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
@@ -347,6 +522,45 @@ def test_project_folder_generation_endpoint(monkeypatch: pytest.MonkeyPatch, tmp
     assert response.json()["project_path"] == "browser-intake"
     assert (projects_root / "browser-intake" / "incoming").is_dir()
     assert (projects_root / "browser-intake" / "working").is_dir()
+
+
+def test_project_folder_generation_returns_conflict_on_duplicate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    projects_root = tmp_path / "projects"
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+
+    first = request("POST", "/project-folders", json={"project_name": "Duplicate"})
+    second = request("POST", "/project-folders", json={"project_name": "Duplicate"})
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert second.json() == {"detail": "Project folder already exists."}
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "detail"),
+    [
+        (PermissionError("permission"), 403, "The configured projects root is not available for writing."),
+        (ValueError("invalid"), 400, "invalid"),
+        (OSError("write failed"), 422, "Project folder could not be created."),
+    ],
+)
+def test_project_folder_generation_maps_creation_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    expected_status: int,
+    detail: str,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("main.create_project_folder", fail)
+
+    response = request("POST", "/project-folders", json={"project_name": "Failure"})
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": detail}
 
 
 def test_project_inventory_endpoint_writes_manifests(
@@ -370,6 +584,47 @@ def test_project_inventory_endpoint_writes_manifests(
     assert response.json()["csv_manifest"] == "manifest.csv"
     assert (project_root / "manifest.json").is_file()
     assert (project_root / "manifest.csv").is_file()
+
+
+def test_project_inventory_endpoint_returns_not_found_without_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr("main.PROJECT_ROOT", tmp_path / "projects")
+    project = create_project()
+
+    response = request("POST", f"/projects/{project['id']}/inventory")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Project storage was not found."}
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "detail"),
+    [
+        (PermissionError("locked"), 403, "Project storage is not available for scanning."),
+        (ValueError("manifest path"), 422, "Project inventory could not be created."),
+        (OSError("scan failed"), 422, "Project inventory could not be created."),
+    ],
+)
+def test_project_inventory_endpoint_maps_scan_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error: Exception,
+    expected_status: int,
+    detail: str,
+) -> None:
+    project = create_project()
+
+    monkeypatch.setattr("main.project_storage_root", lambda project: tmp_path)
+
+    def fail(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("main.scan_files", fail)
+    response = request("POST", f"/projects/{project['id']}/inventory")
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": detail}
 
 
 def test_project_organization_preview_apply_and_rollback(
@@ -413,6 +668,202 @@ def test_project_organization_preview_apply_and_rollback(
     assert source.is_file()
 
 
+def test_project_organization_preview_returns_not_found_without_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr("main.PROJECT_ROOT", tmp_path / "projects")
+    project = create_project()
+
+    response = request("POST", f"/projects/{project['id']}/organization/plan")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Project incoming directory was not found."}
+
+
+def test_project_organization_apply_returns_not_found_without_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr("main.PROJECT_ROOT", tmp_path / "projects")
+    project = create_project()
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/organization/apply",
+        json={"quarantine_conflicts": False},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Project incoming directory was not found."}
+
+
+def test_project_organization_apply_can_quarantine_conflicts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    incoming = project_root / "incoming"
+    (project_root / "working").mkdir(parents=True)
+    incoming.mkdir()
+    (incoming / "Plan.csv").write_text("first", encoding="utf-8")
+    (incoming / "plan.csv").write_text("second", encoding="utf-8")
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/organization/apply",
+        json={"quarantine_conflicts": True},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["conflict_count"] == 1
+    assert response.json()["quarantine_journal_path"] is not None
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "detail"),
+    [
+        (PermissionError("locked"), 403, "Project storage is not available for organising."),
+        (ValueError("unsafe"), 400, "unsafe"),
+        (OSError("planning failed"), 422, "Organisation plan could not be created."),
+    ],
+)
+def test_project_organization_preview_maps_planning_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error: Exception,
+    expected_status: int,
+    detail: str,
+) -> None:
+    project = create_project()
+    monkeypatch.setattr("main.project_storage_root", lambda project: tmp_path)
+
+    def fail(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("main.build_plan", fail)
+    response = request("POST", f"/projects/{project['id']}/organization/plan")
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": detail}
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "detail"),
+    [
+        (PermissionError("locked"), 403, "Project storage is not available for organising."),
+        (FileExistsError("collision"), 409, "collision"),
+        (OSError("apply failed"), 422, "Organisation could not be applied safely."),
+    ],
+)
+def test_project_organization_apply_maps_apply_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error: Exception,
+    expected_status: int,
+    detail: str,
+) -> None:
+    project = create_project()
+    project_root = tmp_path / "endpoint-project"
+    (project_root / "incoming").mkdir(parents=True)
+    (project_root / "working").mkdir()
+    monkeypatch.setattr("main.project_storage_root", lambda project: project_root)
+
+    def fail(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("main.apply_plan", fail)
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/organization/apply",
+        json={"quarantine_conflicts": False},
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": detail}
+
+
+def test_project_organization_rollback_maps_missing_and_unsafe_journals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr("main.PROJECT_ROOT", tmp_path / "projects")
+    project = create_project()
+    project_root = tmp_path / "projects" / "endpoint-project"
+    (project_root / "incoming").mkdir(parents=True)
+    (project_root / "working").mkdir()
+
+    missing = request(
+        "POST",
+        f"/projects/{project['id']}/organization/rollback",
+        json={"journal_path": "missing.json"},
+    )
+    unsafe = request(
+        "POST",
+        f"/projects/{project['id']}/organization/rollback",
+        json={"journal_path": "../outside.json"},
+    )
+
+    assert missing.status_code == 404
+    assert unsafe.status_code == 409
+
+
+def test_project_organization_rollback_rejects_symlink_journal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr("main.PROJECT_ROOT", tmp_path / "projects")
+    project = create_project()
+    project_root = tmp_path / "projects" / "endpoint-project"
+    (project_root / "incoming").mkdir(parents=True)
+    (project_root / "working").mkdir()
+    target = project_root / "journal.json"
+    target.write_text("{}", encoding="utf-8")
+    (project_root / "journal-link.json").symlink_to(target)
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/organization/rollback",
+        json={"journal_path": "journal-link.json"},
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "detail"),
+    [
+        (PermissionError("locked"), 403, "Project storage is not available for rollback."),
+        (FileExistsError("source exists"), 409, "Rollback would overwrite an existing source file."),
+        (OSError("rollback failed"), 422, "Organisation rollback could not be completed."),
+    ],
+)
+def test_project_organization_rollback_maps_rollback_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error: Exception,
+    expected_status: int,
+    detail: str,
+) -> None:
+    project = create_project()
+    project_root = tmp_path / "endpoint-project"
+    (project_root / "incoming").mkdir(parents=True)
+    (project_root / "working").mkdir()
+    monkeypatch.setattr("main.project_storage_root", lambda project: project_root)
+
+    def fail(*args: object, **kwargs: object) -> int:
+        raise error
+
+    monkeypatch.setattr("main.rollback_journal", fail)
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/organization/rollback",
+        json={"journal_path": "journal.json"},
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": detail}
+
+
 def test_approval_can_be_decided_once() -> None:
     project = create_project()
     workflow = create_workflow(str(project["id"]))
@@ -445,6 +896,28 @@ def test_approval_can_be_decided_once() -> None:
     assert repeated.status_code == 409
 
 
+def test_workflow_and_approval_endpoints_allow_optional_actor_ids() -> None:
+    project = create_project()
+    workflow = request(
+        "POST",
+        f"/projects/{project['id']}/workflows",
+        json={"name": "Optional actors"},
+    )
+    approval = request(
+        "POST",
+        f"/workflows/{workflow.json()['id']}/approvals",
+        json={},
+    )
+    listed = request("GET", f"/workflows/{workflow.json()['id']}/approvals")
+
+    assert workflow.status_code == 201
+    assert workflow.json()["created_by_id"] is None
+    assert approval.status_code == 201
+    assert approval.json()["requested_by_id"] is None
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+
+
 def test_security_events_are_structured_and_limited() -> None:
     created = request(
         "POST",
@@ -464,3 +937,14 @@ def test_security_events_are_structured_and_limited() -> None:
     assert listed.status_code == 200
     assert len(listed.json()) == 1
     assert listed.json()[0]["event_code"] == "project.created"
+
+
+def test_security_event_can_omit_actor() -> None:
+    response = request(
+        "POST",
+        "/security-events",
+        json={"event_code": "system.started", "outcome": "success"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["actor_id"] is None
