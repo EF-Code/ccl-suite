@@ -11,6 +11,8 @@ from file_converter import (
     UnsafeConversionPathError,
     build_conversion_request,
     convert_file,
+    format_kind,
+    normalize_format,
 )
 
 
@@ -168,3 +170,98 @@ def test_conversion_rejects_existing_destination_and_path_escape(tmp_path: Path)
 
     with pytest.raises(UnsafeConversionPathError):
         build_conversion_request(root, source, "../outside.json")
+
+
+def test_conversion_validation_rejects_unsupported_missing_same_and_symlink_paths(
+    tmp_path: Path,
+) -> None:
+    root, incoming, output = make_project(tmp_path)
+    source = incoming / "records.csv"
+    source.write_text("name\nalpha\n", encoding="utf-8")
+
+    with pytest.raises(ConversionError, match="Unsupported conversion format"):
+        normalize_format("doc")
+    assert format_kind("markdown") == "text"
+
+    with pytest.raises(FileNotFoundError, match="regular file"):
+        build_conversion_request(root, incoming / "missing.csv", output / "missing.json")
+    with pytest.raises(UnsafeConversionPathError, match="must differ"):
+        build_conversion_request(root, source, source)
+
+    source_alias = incoming / "alias.csv"
+    source_alias.symlink_to(source)
+    with pytest.raises(UnsafeConversionPathError, match="must not be a symlink"):
+        build_conversion_request(root, source_alias, output / "alias.json")
+
+    with pytest.raises(ConversionError, match="Unsupported conversion"):
+        build_conversion_request(root, source, output / "records.txt")
+
+
+def test_csv_conversion_rejects_duplicate_headers_and_extra_columns(tmp_path: Path) -> None:
+    root, incoming, output = make_project(tmp_path)
+    duplicate = incoming / "duplicate.csv"
+    duplicate.write_text("name,name\nalpha,beta\n", encoding="utf-8")
+    extra = incoming / "extra.csv"
+    extra.write_text("name\nalpha,beta\n", encoding="utf-8")
+
+    with pytest.raises(ConversionError, match="duplicate column"):
+        convert_file(root, duplicate, output / "duplicate.json")
+    with pytest.raises(ConversionError, match="too many columns"):
+        convert_file(root, extra, output / "extra.json")
+
+
+def test_json_conversion_rejects_non_objects_and_nested_values(tmp_path: Path) -> None:
+    root, incoming, output = make_project(tmp_path)
+    not_objects = incoming / "not-objects.json"
+    not_objects.write_text('["value"]', encoding="utf-8")
+    nested = incoming / "nested.json"
+    nested.write_text('[{"name": {"nested": true}}]', encoding="utf-8")
+
+    with pytest.raises(ConversionError, match="list of objects"):
+        convert_file(root, not_objects, output / "not-objects.csv")
+    with pytest.raises(ConversionError, match="scalar"):
+        convert_file(root, nested, output / "nested.csv")
+
+
+def test_markdown_code_fences_and_text_newline_are_normalized(tmp_path: Path) -> None:
+    root, incoming, output = make_project(tmp_path)
+    markdown = incoming / "fenced.md"
+    markdown.write_text("```\n# Heading\n```\n", encoding="utf-8")
+    text = incoming / "plain.txt"
+    text.write_text("without newline", encoding="utf-8")
+
+    convert_file(root, markdown, output / "fenced.txt")
+    convert_file(root, text, output / "plain.md")
+
+    assert (output / "fenced.txt").read_text(encoding="utf-8") == "Heading\n"
+    assert (output / "plain.md").read_text(encoding="utf-8") == "without newline\n"
+
+
+def test_invalid_image_is_rejected_without_creating_output(tmp_path: Path) -> None:
+    root, incoming, output = make_project(tmp_path)
+    source = incoming / "broken.png"
+    source.write_bytes(b"not-an-image")
+
+    with pytest.raises(ConversionError, match="could not be decoded"):
+        convert_file(root, source, output / "broken.jpg")
+
+    assert not (output / "broken.jpg").exists()
+
+
+def test_racing_destination_creation_is_reported_as_conflict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, incoming, output = make_project(tmp_path)
+    source = incoming / "records.csv"
+    source.write_text("name\nalpha\n", encoding="utf-8")
+
+    def destination_created(*_: object) -> None:
+        raise FileExistsError("destination created concurrently")
+
+    monkeypatch.setattr("file_converter.os.link", destination_created)
+
+    with pytest.raises(ConversionDestinationExistsError, match="already exists"):
+        convert_file(root, source, output / "records.json")
+
+    assert source.is_file()
+    assert list(output.glob(".conversion-*")) == []

@@ -6,11 +6,18 @@ from pathlib import Path
 import pytest
 
 from file_organizer import (
+    JournalEntry,
+    OrganizationAction,
+    OrganizationPlan,
     apply_plan,
     build_plan,
+    load_journal,
+    move_without_overwrite,
     normalize_filename,
     quarantine_conflicts,
+    render_plan,
     rollback_journal,
+    write_journal,
     write_plan,
 )
 
@@ -176,3 +183,95 @@ def test_plan_rejects_symlinked_approved_root(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="must not be a symlink"):
         build_plan(alias)
+
+
+def test_plan_rejects_missing_source_directory(tmp_path: Path) -> None:
+    root, source, _ = make_project(tmp_path)
+    source.rmdir()
+
+    with pytest.raises(NotADirectoryError, match="Source directory"):
+        build_plan(root)
+
+
+def test_plan_marks_source_as_conflict_when_target_is_same_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, source, _ = make_project(tmp_path)
+    (source / "notes.md").write_text("notes", encoding="utf-8")
+    monkeypatch.setattr(
+        "file_organizer.destination_for",
+        lambda current_root, target_dir, record: current_root / "incoming" / record.name,
+    )
+
+    plan = build_plan(root)
+
+    assert plan.actions[0].status == "conflict"
+    assert plan.actions[0].reason == "source already has the destination path"
+
+
+def test_move_rejects_existing_symlink_destination(tmp_path: Path) -> None:
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "destination.txt"
+    source.write_text("source", encoding="utf-8")
+    destination.symlink_to(source)
+
+    with pytest.raises(FileExistsError, match="Destination already exists"):
+        move_without_overwrite(source, destination)
+
+    assert source.read_text(encoding="utf-8") == "source"
+
+
+def test_render_plan_includes_action_details(tmp_path: Path) -> None:
+    root, source, _ = make_project(tmp_path)
+    source_file = source / "notes.md"
+    source_file.write_text("notes", encoding="utf-8")
+
+    rendered = render_plan(build_plan(root))
+
+    assert "1 action(s)" in rendered
+    assert "[planned] incoming/notes.md" in rendered
+
+
+def test_load_journal_rejects_non_list_entries(tmp_path: Path) -> None:
+    journal = tmp_path / "invalid.json"
+    journal.write_text('{"entries": {}}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="entries list"):
+        load_journal(journal)
+
+
+def test_rollback_rejects_missing_journal_target(tmp_path: Path) -> None:
+    root, _, _ = make_project(tmp_path)
+    journal = write_journal(
+        root,
+        [JournalEntry("incoming/missing.md", "working/documents/missing.md", "", "move")],
+    )
+
+    with pytest.raises(FileNotFoundError, match="Journal target is missing"):
+        rollback_journal(root, journal)
+
+
+def test_rollback_rejects_existing_original_source(tmp_path: Path) -> None:
+    root, source, _ = make_project(tmp_path)
+    original = source / "notes.md"
+    original.write_text("original", encoding="utf-8")
+    journal = apply_plan(build_plan(root))
+    destination = root / "working" / "documents" / "notes.md"
+    original.write_text("already restored", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="Destination already exists"):
+        rollback_journal(root, journal)
+
+    assert destination.read_text(encoding="utf-8") == "original"
+
+
+def test_organization_plan_response_model_can_render_conflict() -> None:
+    action = OrganizationAction(
+        source="incoming/report.csv",
+        destination="working/spreadsheets/report.csv",
+        status="conflict",
+        reason="destination name already exists",
+    )
+    plan = OrganizationPlan("/tmp/project", "2026-01-01T00:00:00+00:00", (action,))
+
+    assert "[conflict]" in render_plan(plan)

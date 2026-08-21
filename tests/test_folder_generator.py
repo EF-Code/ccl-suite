@@ -1,4 +1,5 @@
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,9 @@ def test_rejects_path_instructions() -> None:
     for unsafe_name in ("", ".", "..", "../outside", r"client\outside", "\x00bad"):
         with pytest.raises((TypeError, ValueError)):
             normalize_project_name(unsafe_name)
+
+    with pytest.raises(TypeError, match="must be text"):
+        normalize_project_name(123)  # type: ignore[arg-type]
 
 
 def test_rejects_names_that_normalize_to_empty_or_are_too_long() -> None:
@@ -68,3 +72,18 @@ def test_rejects_file_as_approved_root(tmp_path) -> None:
 
     with pytest.raises(NotADirectoryError):
         create_project_folder("Safe Project", root)
+
+
+def test_rejects_symlinked_approved_root(tmp_path) -> None:
+    root = tmp_path / "approved"
+    root.mkdir()
+    alias = tmp_path / "approved-alias"
+    alias.symlink_to(root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        create_project_folder("Safe Project", alias)
+
+
+def test_rejects_filesystem_root_as_approved_location() -> None:
+    with pytest.raises(ValueError, match="filesystem root"):
+        create_project_folder("Safe Project", Path("/"))
