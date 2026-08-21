@@ -85,6 +85,76 @@ def test_invalid_json_does_not_create_output_or_change_source(tmp_path: Path) ->
     assert not (output / "broken.csv").exists()
 
 
+def test_empty_csv_is_rejected_without_creating_output(tmp_path: Path) -> None:
+    root, incoming, output = make_project(tmp_path)
+    source = incoming / "empty.csv"
+    source.touch()
+
+    with pytest.raises(ConversionError, match="header row"):
+        convert_file(root, source, output / "empty.json")
+
+    assert source.stat().st_size == 0
+    assert not (output / "empty.json").exists()
+
+
+def test_empty_json_is_rejected_without_creating_output(tmp_path: Path) -> None:
+    root, incoming, output = make_project(tmp_path)
+    source = incoming / "empty.json"
+    source.touch()
+
+    with pytest.raises(ConversionError, match="malformed"):
+        convert_file(root, source, output / "empty.csv")
+
+    assert source.stat().st_size == 0
+    assert not (output / "empty.csv").exists()
+
+
+def test_empty_markdown_and_text_are_valid_empty_outputs(tmp_path: Path) -> None:
+    root, incoming, output = make_project(tmp_path)
+    markdown = incoming / "empty.md"
+    text = incoming / "empty.txt"
+    markdown.touch()
+    text.touch()
+
+    convert_file(root, markdown, output / "empty.txt")
+    convert_file(root, text, output / "empty.md")
+
+    assert (output / "empty.txt").read_bytes() == b""
+    assert (output / "empty.md").read_bytes() == b""
+
+
+def test_invalid_utf8_is_rejected_without_creating_output(tmp_path: Path) -> None:
+    root, incoming, output = make_project(tmp_path)
+    source = incoming / "invalid.md"
+    source.write_bytes(b"\xff\xfe\xfd")
+
+    with pytest.raises(ConversionError, match="UTF-8"):
+        convert_file(root, source, output / "invalid.txt")
+
+    assert source.read_bytes() == b"\xff\xfe\xfd"
+    assert not (output / "invalid.txt").exists()
+
+
+def test_interrupted_output_write_cleans_temporary_file_and_preserves_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, incoming, output = make_project(tmp_path)
+    source = incoming / "records.csv"
+    source.write_text("name\nalpha\n", encoding="utf-8")
+
+    def interrupted_link(*_: object) -> None:
+        raise OSError("simulated interrupted output")
+
+    monkeypatch.setattr("file_converter.os.link", interrupted_link)
+
+    with pytest.raises(ConversionError, match="written safely"):
+        convert_file(root, source, output / "records.json")
+
+    assert source.read_text(encoding="utf-8") == "name\nalpha\n"
+    assert not (output / "records.json").exists()
+    assert list(output.glob(".conversion-*")) == []
+
+
 def test_conversion_rejects_existing_destination_and_path_escape(tmp_path: Path) -> None:
     root, incoming, output = make_project(tmp_path)
     source = incoming / "records.csv"
