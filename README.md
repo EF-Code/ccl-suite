@@ -127,6 +127,7 @@ API and a Chromium-compatible browser. Install the browser once, start the API
 with an isolated development database and project root, then run:
 
 ```bash
+.venv/bin/python -m pip install -r requirements-browser.txt
 .venv/bin/python -m playwright install chromium
 RUN_BROWSER_TESTS=1 \
   DASHBOARD_BASE_URL=http://127.0.0.1:8000 \
