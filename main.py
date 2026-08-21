@@ -294,7 +294,7 @@ async def generate_project_folder(
     except OSError:
         logger.error("Project folder creation failed.")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Project folder could not be created.",
         )
 
@@ -463,7 +463,7 @@ async def convert_project_file(
     except ConversionError:
         logger.error("Conversion failed for project %s.", project_id)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="File conversion failed validation.",
         )
     except ValueError as exc:
@@ -519,7 +519,7 @@ async def inventory_project_files(
     except (OSError, ValueError):
         logger.error("Inventory scan failed for project %s.", project_id)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Project inventory could not be created.",
         )
 
@@ -569,7 +569,7 @@ async def preview_project_organization(
     except OSError:
         logger.error("Organisation planning failed for project %s.", project_id)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Organisation plan could not be created.",
         )
 
@@ -615,7 +615,7 @@ async def apply_project_organization(
     except OSError:
         logger.error("Organisation apply failed for project %s.", project_id)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Organisation could not be applied safely.",
         )
 
@@ -672,7 +672,7 @@ async def rollback_project_organization(
     except OSError:
         logger.error("Organisation rollback failed for project %s.", project_id)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Organisation rollback could not be completed.",
         )
 
