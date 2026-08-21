@@ -72,6 +72,43 @@ def test_collision_is_reported_and_apply_does_not_overwrite(tmp_path: Path) -> N
     assert json.loads(journal_path.read_text(encoding="utf-8"))["entries"]
 
 
+def test_existing_destination_is_a_conflict_and_is_not_overwritten(tmp_path: Path) -> None:
+    root, source, target = make_project(tmp_path)
+    destination = target / "spreadsheets" / "report.csv"
+    destination.parent.mkdir()
+    destination.write_text("keep", encoding="utf-8")
+    original = source / "report.csv"
+    original.write_text("replace me", encoding="utf-8")
+
+    plan = build_plan(root)
+
+    assert plan.actions[0].status == "conflict"
+    assert plan.actions[0].reason == "destination name already exists"
+    apply_plan(plan)
+    assert original.read_text(encoding="utf-8") == "replace me"
+    assert destination.read_text(encoding="utf-8") == "keep"
+
+
+def test_interrupted_organizer_move_keeps_source_and_writes_no_journal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, source, _ = make_project(tmp_path)
+    original = source / "Notes.md"
+    original.write_text("keep me", encoding="utf-8")
+
+    def interrupted_move(*_: object) -> None:
+        raise OSError("simulated interrupted move")
+
+    monkeypatch.setattr("file_organizer.os.rename", interrupted_move)
+
+    with pytest.raises(OSError, match="interrupted move"):
+        apply_plan(build_plan(root))
+
+    assert original.read_text(encoding="utf-8") == "keep me"
+    assert not (root / "working" / "documents" / "notes.md").exists()
+    assert not (root / "organization-journal.json").exists()
+
+
 def test_quarantine_moves_only_conflicts_without_deleting_them(tmp_path: Path) -> None:
     root, source, _ = make_project(tmp_path)
     (source / "Plan.csv").write_text("first", encoding="utf-8")
