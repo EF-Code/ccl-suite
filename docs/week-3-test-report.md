@@ -4,19 +4,19 @@
 
 | Area | Result | Evidence |
 | --- | --- | --- |
-| Unit and API suite | 87 passed, 2 skipped | `python -m pytest` |
+| Unit and API suite | 121 passed, 2 skipped | `python -m pytest` |
 | Browser dashboard workflow | 1 passed | Opt-in Playwright smoke test covering the complete local workflow |
 | PostgreSQL integration | 1 passed | Round trip against the Compose PostgreSQL service |
 | Docker Compose health | Passed | PostgreSQL healthy; API `/health` returned `200` |
-| Branch coverage | 91% | Coverage run across the application modules |
+| Branch coverage | 97% | Coverage run across the application modules |
 
 ## Coverage detail
 
-The measured 91% total includes branch coverage for the current application
-modules. The strongest-covered areas are the API schemas, configuration,
-logging, and models. The remaining uncovered paths are mostly command-line
-entry points, database-session fallback handling, and additional filesystem
-failure branches.
+The measured 97% total includes branch coverage for the current application
+modules. `main.py` now measures 99% after adding explicit tests for database
+failures and API error translation. The remaining uncovered paths are mostly
+environment-only branches such as optional image dependencies and filesystem
+race cleanup.
 
 ## Test boundaries
 
