@@ -127,7 +127,7 @@ To measure branch coverage locally:
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m coverage run --branch --source=api_schemas,config,database,file_converter,file_inventory,file_organizer,folder_generator,logger,main,models -m pytest
-.venv/bin/python -m coverage report -m
+.venv/bin/python -m coverage report -m --fail-under=90
 ```
 
 The dashboard workflow smoke test is opt-in because it needs a running local
