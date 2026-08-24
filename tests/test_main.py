@@ -662,6 +662,44 @@ def test_project_file_search_rejects_unknown_status() -> None:
     assert response.json() == {"detail": "Unsupported file status."}
 
 
+def test_project_file_lookup_is_project_scoped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "incoming").mkdir()
+    (project_root / "incoming" / "notes.txt").write_text("hello", encoding="utf-8")
+
+    inventory = request("POST", f"/projects/{project['id']}/inventory")
+    record_sha256 = inventory.json()["records"][0]["sha256"]
+    search = request("GET", f"/projects/{project['id']}/files/search?query=notes")
+    stored_file_id = search.json()[0]["id"]
+
+    found = request("GET", f"/projects/{project['id']}/files/{stored_file_id}")
+    other_project = create_project()
+    hidden = request(
+        "GET", f"/projects/{other_project['id']}/files/{stored_file_id}"
+    )
+
+    assert found.status_code == 200
+    assert found.json()["id"] == stored_file_id
+    assert record_sha256 == found.json()["checksum_sha256"]
+    assert hidden.status_code == 404
+
+
+def test_project_file_lookup_returns_not_found_for_unknown_file() -> None:
+    project = create_project()
+
+    response = request("GET", f"/projects/{project['id']}/files/{uuid4()}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "File was not found."}
+
+
 def test_project_inventory_endpoint_returns_not_found_without_storage(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
