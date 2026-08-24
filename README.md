@@ -201,6 +201,9 @@ scan is marked `missing`; if it reappears, it is marked `active` and a
 `restored` history snapshot is recorded. Generated manifests are excluded from
 the asset database so repeated scans do not create false file history.
 
+See [`docs/file-records.md`](docs/file-records.md) for search and history
+examples.
+
 ## Safe file organisation
 
 `file_organizer.py` creates a deterministic plan for moving files from a
