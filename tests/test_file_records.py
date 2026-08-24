@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+
+from database import Base
+from file_inventory import FileRecord
+from file_records import (
+    build_file_search_statement,
+    sync_inventory_records,
+    validate_storage_key,
+)
+from models import File, FileHistory, Project, User
+
+
+def make_session(tmp_path: Path) -> Session:
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'records.sqlite3'}")
+    Base.metadata.create_all(engine)
+    return Session(engine)
+
+
+def make_project(session: Session) -> Project:
+    owner = User(external_ref="records-owner")
+    project = Project(owner=owner, name="Records Project")
+    session.add(project)
+    session.commit()
+    return project
+
+
+def inventory_record(
+    relative_path: str = "incoming/report.txt",
+    *,
+    contents_hash: str = "a" * 64,
+    size_bytes: int = 4,
+) -> FileRecord:
+    return FileRecord(
+        relative_path=relative_path,
+        name=Path(relative_path).name,
+        extension=Path(relative_path).suffix,
+        mime_type="text/plain",
+        size_bytes=size_bytes,
+        modified_at=datetime.now(timezone.utc).isoformat(),
+        sha256=contents_hash,
+        extension_mime_match=True,
+    )
+
+
+def test_sync_persists_metadata_and_creation_history(tmp_path: Path) -> None:
+    with make_session(tmp_path) as session:
+        project = make_project(session)
+
+        result = sync_inventory_records(
+            session,
+            project.id,
+            [inventory_record()],
+        )
+        session.commit()
+
+        assert result.history_events == 1
+        file_record = session.scalar(select(File))
+        assert file_record is not None
+        assert file_record.storage_key == "incoming/report.txt"
+        assert file_record.name == "report.txt"
+        assert file_record.status == "active"
+        history = session.scalars(select(FileHistory)).all()
+        assert [entry.event_code for entry in history] == ["created"]
+
+
+def test_sync_records_updates_missing_and_restores_files(tmp_path: Path) -> None:
+    with make_session(tmp_path) as session:
+        project = make_project(session)
+        original = inventory_record()
+        sync_inventory_records(session, project.id, [original])
+        session.commit()
+
+        missing_result = sync_inventory_records(session, project.id, [])
+        session.commit()
+        file_record = session.scalar(select(File))
+        assert file_record is not None
+        assert file_record.status == "missing"
+        assert missing_result.history_events == 1
+
+        restored_result = sync_inventory_records(
+            session,
+            project.id,
+            [inventory_record(contents_hash="b" * 64, size_bytes=5)],
+        )
+        session.commit()
+        assert restored_result.history_events == 1
+        assert file_record.status == "active"
+        assert file_record.checksum_sha256 == "b" * 64
+        assert [entry.event_code for entry in session.scalars(select(FileHistory)).all()] == [
+            "created",
+            "missing",
+            "restored",
+        ]
+
+
+def test_search_statement_is_project_scoped_and_filterable(tmp_path: Path) -> None:
+    with make_session(tmp_path) as session:
+        project = make_project(session)
+        other_project = Project(name="Other Project", owner_id=project.owner_id)
+        session.add(other_project)
+        session.commit()
+        sync_inventory_records(
+            session,
+            project.id,
+            [inventory_record()],
+        )
+        sync_inventory_records(
+            session,
+            other_project.id,
+            [inventory_record(relative_path="incoming/report.txt", contents_hash="c" * 64)],
+        )
+        session.commit()
+
+        results = session.scalars(
+            build_file_search_statement(project.id, query="report", file_status="active")
+        ).all()
+
+        assert len(results) == 1
+        assert results[0].project_id == project.id
+        assert results[0].checksum_sha256 == "a" * 64
+
+
+@pytest.mark.parametrize("value", ["/absolute.txt", "../outside.txt", "incoming\\file.txt", ""])
+def test_validate_storage_key_rejects_unsafe_paths(value: str) -> None:
+    with pytest.raises(ValueError):
+        validate_storage_key(value)

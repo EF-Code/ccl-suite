@@ -354,6 +354,26 @@ def test_file_endpoint_allows_metadata_without_uploader() -> None:
     assert response.json()["uploaded_by_id"] is None
 
 
+def test_file_endpoint_rejects_storage_path_escape() -> None:
+    project = create_project()
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/files",
+        json={
+            "storage_key": "../outside.txt",
+            "media_type": "text/plain",
+            "size_bytes": 4,
+            "checksum_sha256": "B" * 64,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Storage key must remain inside the approved project root."
+    }
+
+
 def test_project_conversion_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     projects_root = tmp_path / "projects"
     projects_root.mkdir()
@@ -584,6 +604,62 @@ def test_project_inventory_endpoint_writes_manifests(
     assert response.json()["csv_manifest"] == "manifest.csv"
     assert (project_root / "manifest.json").is_file()
     assert (project_root / "manifest.csv").is_file()
+
+    search = request(
+        "GET",
+        f"/projects/{project['id']}/files/search?query=notes&status=active",
+    )
+    assert search.status_code == 200
+    assert len(search.json()) == 1
+    assert search.json()[0]["name"] == "notes.txt"
+    assert search.json()[0]["status"] == "active"
+
+    history = request(
+        "GET",
+        f"/projects/{project['id']}/files/{search.json()[0]['id']}/history",
+    )
+    assert history.status_code == 200
+    assert [entry["event_code"] for entry in history.json()] == ["created"]
+
+
+def test_project_inventory_endpoint_updates_file_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "incoming").mkdir()
+    source = project_root / "incoming" / "notes.txt"
+    source.write_text("first", encoding="utf-8")
+
+    first = request("POST", f"/projects/{project['id']}/inventory")
+    assert first.status_code == 201
+    source.write_text("second", encoding="utf-8")
+    second = request("POST", f"/projects/{project['id']}/inventory")
+
+    assert second.status_code == 201
+    assert second.json()["history_events"] == 1
+    file_id = request(
+        "GET", f"/projects/{project['id']}/files/search?query=notes"
+    ).json()[0]["id"]
+    history = request(
+        "GET", f"/projects/{project['id']}/files/{file_id}/history"
+    )
+    assert [entry["event_code"] for entry in history.json()] == ["created", "updated"]
+
+
+def test_project_file_search_rejects_unknown_status() -> None:
+    project = create_project()
+
+    response = request(
+        "GET", f"/projects/{project['id']}/files/search?status=unknown"
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Unsupported file status."}
 
 
 def test_project_inventory_endpoint_returns_not_found_without_storage(
