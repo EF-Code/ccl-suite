@@ -39,13 +39,20 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `POST /projects` creates a database-backed project from a title, description,
   and existing user `owner_id`.
 - `GET /projects` lists projects persisted in the database.
-- `POST` and `GET /projects/{project_id}/files` manage file metadata only.
+- `POST` and `GET /projects/{project_id}/files` manage searchable file
+  metadata. Inventory scans persist file names, extensions, MIME types, sizes,
+  modification times, SHA-256 hashes, and lifecycle status.
+- `GET /projects/{project_id}/files/search` searches file name/path, MIME type,
+  checksum, and status with project scoping and bounded pagination.
+- `GET /projects/{project_id}/files/{file_id}/history` returns immutable
+  inventory snapshots for created, updated, missing, and restored events.
 - `POST /projects/{project_id}/conversions` converts an approved project file
   without overwriting its source or an existing destination.
 - `POST /project-folders` creates the standard project folder layout below the
   configured projects root.
-- `POST /projects/{project_id}/inventory` writes confined JSON/CSV manifests
-  and returns inventory metadata and duplicate-hash counts.
+- `POST /projects/{project_id}/inventory` writes confined JSON/CSV manifests,
+  synchronizes searchable file records, records metadata history, and returns
+  inventory metadata and duplicate-hash counts.
 - `POST /projects/{project_id}/organization/plan` previews file moves without
   changing files.
 - `POST /projects/{project_id}/organization/apply` applies safe moves and can
@@ -188,6 +195,11 @@ python file_inventory.py \
 
 The scanner rejects symlinked or world-writable roots, skips symlinked files
 and directories, and refuses output paths outside the approved root.
+
+Inventory persistence is project-scoped. A file that disappears from a later
+scan is marked `missing`; if it reappears, it is marked `active` and a
+`restored` history snapshot is recorded. Generated manifests are excluded from
+the asset database so repeated scans do not create false file history.
 
 ## Safe file organisation
 

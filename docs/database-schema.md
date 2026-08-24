@@ -1,8 +1,8 @@
 # Database schema
 
 Normalized PostgreSQL-compatible schema. Foreign keys express
-ownership and lifecycle, while indexes support the list and audit queries that
-the API will need.
+ownership and lifecycle, while indexes support searchable file records and
+audit queries.
 
 ```mermaid
 erDiagram
@@ -13,6 +13,7 @@ erDiagram
     USER ||--o{ APPROVAL : decides
     USER ||--o{ SECURITY_EVENT : causes
     PROJECT ||--o{ FILE : contains
+    FILE ||--o{ FILE_HISTORY : records
     PROJECT ||--o{ WORKFLOW : defines
     WORKFLOW ||--o{ APPROVAL : requires
 
@@ -36,11 +37,30 @@ erDiagram
         UUID id PK
         UUID project_id FK
         UUID uploaded_by_id FK
-        string storage_key UK
+        string storage_key
+        string name
+        string extension
         string media_type
         bigint size_bytes
         string checksum_sha256
+        datetime modified_at
+        string status
         datetime created_at
+        datetime updated_at
+    }
+    FILE_HISTORY {
+        UUID id PK
+        UUID file_id FK
+        string event_code
+        string storage_key
+        string name
+        string extension
+        string media_type
+        bigint size_bytes
+        string checksum_sha256
+        datetime modified_at
+        string status
+        datetime observed_at
     }
     WORKFLOW {
         UUID id PK
@@ -78,8 +98,10 @@ erDiagram
 
 - `users.external_ref` is an opaque identity reference. The database does not
   store passwords, access tokens, email addresses, or profile records.
-- `files` stores object metadata and a checksum only. File contents and original
-  filenames stay in the object-storage boundary.
+- `files` stores searchable metadata, the latest SHA-256 checksum, and a
+  lifecycle status. File contents remain in the approved filesystem boundary.
+- `file_history` stores immutable metadata snapshots for `created`, `updated`,
+  `missing`, and `restored` inventory events; it never stores file contents.
 - `workflows` are versioned per project with a unique `(project_id, name,
   version)` key. `approvals` are separate records so each decision has its own
   lifecycle and actor references.
@@ -89,14 +111,14 @@ erDiagram
 - Project, file, and workflow relationships use cascading deletion within a
   project. Actor references use `SET NULL` so an identity record can be removed
   without destroying audit history.
-- Indexes cover project ownership/status, file lookup by project and time,
-  workflow status, approval status, and security-event lookups by actor/code
-  and time.
+- Indexes cover project ownership/status, file lookup by project/status,
+  file-history lookup by file/time, workflow status, approval status, and
+  security-event lookups by actor/code and time.
 
 ## Migration
 
 Set `DATABASE_URL` in the shell or a local environment file, then apply the
-first migration:
+latest migrations:
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://localhost/ccl_suite'
