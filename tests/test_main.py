@@ -736,6 +736,31 @@ def test_project_file_search_supports_checksum_type_and_pagination() -> None:
     assert invalid_checksum.status_code == 422
 
 
+def test_project_file_history_is_project_scoped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "incoming").mkdir()
+    (project_root / "incoming" / "notes.txt").write_text("hello", encoding="utf-8")
+    inventory = request("POST", f"/projects/{project['id']}/inventory")
+    file_id = request(
+        "GET", f"/projects/{project['id']}/files/search?query=notes"
+    ).json()[0]["id"]
+    other_project = create_project()
+
+    history = request(
+        "GET", f"/projects/{other_project['id']}/files/{file_id}/history"
+    )
+
+    assert inventory.status_code == 201
+    assert history.status_code == 404
+
+
 def test_project_inventory_endpoint_returns_not_found_without_storage(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
