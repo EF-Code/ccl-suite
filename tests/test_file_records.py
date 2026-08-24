@@ -127,6 +127,15 @@ def test_search_statement_is_project_scoped_and_filterable(tmp_path: Path) -> No
         assert results[0].checksum_sha256 == "a" * 64
 
 
+def test_sync_rejects_duplicate_inventory_paths(tmp_path: Path) -> None:
+    with make_session(tmp_path) as session:
+        project = make_project(session)
+        duplicate = inventory_record()
+
+        with pytest.raises(ValueError, match="Duplicate inventory path"):
+            sync_inventory_records(session, project.id, [duplicate, duplicate])
+
+
 @pytest.mark.parametrize("value", ["/absolute.txt", "../outside.txt", "incoming\\file.txt", ""])
 def test_validate_storage_key_rejects_unsafe_paths(value: str) -> None:
     with pytest.raises(ValueError):
