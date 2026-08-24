@@ -470,6 +470,25 @@ async def search_project_files(
 
 
 @app.get(
+    "/projects/{project_id}/files/{file_id}",
+    response_model=FileResponse,
+    tags=["files"],
+)
+async def get_project_file(
+    project_id: UUID,
+    file_id: UUID,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """Return one file record without exposing files from another project."""
+
+    require_record(db, Project, project_id, "Project was not found.")
+    file_record = require_record(db, File, file_id, "File was not found.")
+    if file_record.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File was not found.")
+    return FileResponse.model_validate(file_record)
+
+
+@app.get(
     "/projects/{project_id}/files/{file_id}/history",
     response_model=list[FileHistoryResponse],
     tags=["files"],
