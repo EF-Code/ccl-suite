@@ -20,6 +20,7 @@ from api_schemas import (
     ConversionCreate,
     ConversionResponse,
     FileCreate,
+    FileHistoryResponse,
     FileResponse,
     FolderGenerateCreate,
     FolderGenerateResponse,
@@ -56,6 +57,12 @@ from file_inventory import (
     safe_relative_path,
     scan_files,
     write_manifests,
+)
+from file_records import (
+    build_file_history_statement,
+    build_file_search_statement,
+    sync_inventory_records,
+    validate_storage_key,
 )
 from file_organizer import (
     OrganizationPlan,
@@ -383,13 +390,19 @@ async def create_file(
     require_record(db, Project, project_id, "Project was not found.")
     if file_metadata.uploaded_by_id is not None:
         require_record(db, User, file_metadata.uploaded_by_id, "Uploader was not found.")
+    try:
+        storage_key = validate_storage_key(file_metadata.storage_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     created_file = persist_record(
         db,
         File(
             project_id=project_id,
             uploaded_by_id=file_metadata.uploaded_by_id,
-            storage_key=file_metadata.storage_key,
+            storage_key=storage_key,
+            name=file_metadata.name or Path(storage_key).name,
+            extension=file_metadata.extension or Path(storage_key).suffix.lower(),
             media_type=file_metadata.media_type,
             size_bytes=file_metadata.size_bytes,
             checksum_sha256=file_metadata.checksum_sha256.lower(),
@@ -415,6 +428,65 @@ async def list_files(
         .order_by(File.created_at, File.id),
     )
     return [FileResponse.model_validate(file_metadata) for file_metadata in files]
+
+
+@app.get(
+    "/projects/{project_id}/files/search",
+    response_model=list[FileResponse],
+    tags=["files"],
+)
+async def search_project_files(
+    project_id: UUID,
+    query: str | None = Query(default=None, max_length=255),
+    checksum_sha256: str | None = Query(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    ),
+    media_type: str | None = Query(default=None, max_length=127),
+    file_status: str | None = Query(default=None, alias="status", max_length=24),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[FileResponse]:
+    """Search only the metadata belonging to one project."""
+
+    require_record(db, Project, project_id, "Project was not found.")
+    try:
+        statement = build_file_search_statement(
+            project_id,
+            query=query,
+            checksum_sha256=checksum_sha256,
+            media_type=media_type,
+            file_status=file_status,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    files = list_records(db, statement)
+    return [FileResponse.model_validate(file_metadata) for file_metadata in files]
+
+
+@app.get(
+    "/projects/{project_id}/files/{file_id}/history",
+    response_model=list[FileHistoryResponse],
+    tags=["files"],
+)
+async def list_project_file_history(
+    project_id: UUID,
+    file_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[FileHistoryResponse]:
+    """Return immutable inventory snapshots for one project file."""
+
+    require_record(db, Project, project_id, "Project was not found.")
+    file_record = require_record(db, File, file_id, "File was not found.")
+    if file_record.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File was not found.")
+    history = list_records(db, build_file_history_statement(project_id, file_id))
+    return [FileHistoryResponse.model_validate(entry) for entry in history]
 
 
 @app.post(
@@ -505,7 +577,31 @@ async def inventory_project_files(
     try:
         root = project_storage_root(project)
         records = scan_files(root)
+        manifest_paths = {
+            "manifest.json",
+            "manifest.csv",
+        }
+        # The scanner can see manifests from an earlier run.  They are
+        # generated evidence, not project assets, so keep them out of the
+        # searchable file-record database and duplicate counts.
+        records = [record for record in records if record.relative_path not in manifest_paths]
         json_path, csv_path = write_manifests(root, records)
+        sync_result = sync_inventory_records(db, project_id, records)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        logger.error("Inventory records violated a database constraint for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project inventory could not be saved.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Inventory records could not be saved for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
     except (FileNotFoundError, NotADirectoryError):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -533,6 +629,8 @@ async def inventory_project_files(
         json_manifest=safe_relative_path(root, json_path).as_posix(),
         csv_manifest=safe_relative_path(root, csv_path).as_posix(),
         records=[inventory_record_response(record) for record in records],
+        records_persisted=len(sync_result.records),
+        history_events=sync_result.history_events,
     )
 
 

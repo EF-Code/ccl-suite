@@ -108,14 +108,28 @@ class Project(Base):
 
 
 class File(Base):
-    """Metadata for an object stored outside the relational database."""
+    """Metadata for an object stored outside the relational database.
+
+    The file contents remain on the approved filesystem.  This record stores
+    searchable metadata, the latest integrity hash, and lifecycle state.
+    """
 
     __tablename__ = "files"
     __table_args__ = (
         Index("ix_files_project_created_at", "project_id", "created_at"),
+        Index("ix_files_project_status", "project_id", "status"),
+        UniqueConstraint(
+            "project_id",
+            "storage_key",
+            name="uq_files_project_storage_key",
+        ),
         CheckConstraint("size_bytes >= 0", name="ck_files_size_non_negative"),
         CheckConstraint(
             "length(checksum_sha256) = 64", name="ck_files_checksum_sha256_length"
+        ),
+        CheckConstraint(
+            "status IN ('active', 'missing', 'archived')",
+            name="ck_files_status",
         ),
     )
 
@@ -126,12 +140,21 @@ class File(Base):
     uploaded_by_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    storage_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    extension: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     media_type: Mapped[str] = mapped_column(String(127), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    modified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
 
     project: Mapped[Project] = relationship(back_populates="files")
@@ -139,6 +162,48 @@ class File(Base):
         back_populates="uploaded_files",
         foreign_keys=[uploaded_by_id],
     )
+    history: Mapped[list[FileHistory]] = relationship(
+        back_populates="file", cascade="all, delete-orphan", order_by="FileHistory.observed_at"
+    )
+
+
+class FileHistory(Base):
+    """Immutable metadata snapshots observed during inventory scans."""
+
+    __tablename__ = "file_history"
+    __table_args__ = (
+        Index("ix_file_history_file_observed_at", "file_id", "observed_at"),
+        CheckConstraint("size_bytes >= 0", name="ck_file_history_size_non_negative"),
+        CheckConstraint(
+            "length(checksum_sha256) = 64",
+            name="ck_file_history_checksum_sha256_length",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'missing', 'archived')",
+            name="ck_file_history_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    file_id: Mapped[UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), nullable=False
+    )
+    event_code: Mapped[str] = mapped_column(String(24), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    extension: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    media_type: Mapped[str] = mapped_column(String(127), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    modified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    file: Mapped[File] = relationship(back_populates="history")
 
 
 class Workflow(Base):
@@ -256,6 +321,7 @@ class SecurityEvent(Base):
 __all__ = [
     "Approval",
     "File",
+    "FileHistory",
     "Project",
     "SecurityEvent",
     "User",

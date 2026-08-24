@@ -6,7 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from database import Base, get_database_url
-from models import Approval, File, Project, SecurityEvent, User, Workflow  # noqa: F401
+from models import Approval, File, FileHistory, Project, SecurityEvent, User, Workflow  # noqa: F401
 
 config = context.config
 

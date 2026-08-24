@@ -65,7 +65,9 @@ class ProjectResponse(BaseModel):
 class FileCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    storage_key: str = Field(min_length=1, max_length=255)
+    storage_key: str = Field(min_length=1, max_length=512)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    extension: str | None = Field(default=None, max_length=32)
     media_type: str = Field(min_length=1, max_length=127)
     size_bytes: int = Field(ge=0)
     checksum_sha256: str = Field(
@@ -83,10 +85,32 @@ class FileResponse(BaseModel):
     project_id: UUID
     uploaded_by_id: UUID | None
     storage_key: str
+    name: str
+    extension: str
     media_type: str
     size_bytes: int
     checksum_sha256: str
+    modified_at: datetime
+    status: str
     created_at: datetime
+    updated_at: datetime
+
+
+class FileHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    file_id: UUID
+    event_code: str
+    storage_key: str
+    name: str
+    extension: str
+    media_type: str
+    size_bytes: int
+    checksum_sha256: str
+    modified_at: datetime
+    status: str
+    observed_at: datetime
 
 
 class ConversionCreate(BaseModel):
@@ -137,6 +161,8 @@ class InventoryResponse(BaseModel):
     duplicate_files: int = Field(ge=0)
     json_manifest: str
     csv_manifest: str
+    records_persisted: int = Field(default=0, ge=0)
+    history_events: int = Field(default=0, ge=0)
     records: list[InventoryRecordResponse]
 
 
@@ -264,6 +290,7 @@ __all__ = [
     "FolderGenerateCreate",
     "FolderGenerateResponse",
     "FileCreate",
+    "FileHistoryResponse",
     "FileResponse",
     "InventoryRecordResponse",
     "InventoryResponse",
