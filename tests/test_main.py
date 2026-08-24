@@ -700,6 +700,42 @@ def test_project_file_lookup_returns_not_found_for_unknown_file() -> None:
     assert response.json() == {"detail": "File was not found."}
 
 
+def test_project_file_search_supports_checksum_type_and_pagination() -> None:
+    project = create_project()
+    checksums = ["1" * 64, "2" * 64, "3" * 64]
+    for index, checksum in enumerate(checksums):
+        created = request(
+            "POST",
+            f"/projects/{project['id']}/files",
+            json={
+                "storage_key": f"incoming/report-{index}.txt",
+                "media_type": "text/plain",
+                "size_bytes": index + 1,
+                "checksum_sha256": checksum,
+            },
+        )
+        assert created.status_code == 201
+
+    checksum_search = request(
+        "GET",
+        f"/projects/{project['id']}/files/search?checksum_sha256={checksums[1].upper()}",
+    )
+    type_search = request(
+        "GET",
+        f"/projects/{project['id']}/files/search?media_type=text/plain&limit=2&offset=1",
+    )
+    invalid_checksum = request(
+        "GET", f"/projects/{project['id']}/files/search?checksum_sha256=invalid"
+    )
+
+    assert checksum_search.status_code == 200
+    assert len(checksum_search.json()) == 1
+    assert checksum_search.json()[0]["checksum_sha256"] == checksums[1]
+    assert type_search.status_code == 200
+    assert len(type_search.json()) == 2
+    assert invalid_checksum.status_code == 422
+
+
 def test_project_inventory_endpoint_returns_not_found_without_storage(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
