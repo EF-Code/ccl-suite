@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from file_uploads import (
+    MAX_UPLOAD_BYTES,
     UploadDestinationExistsError,
     UploadLengthMismatchError,
     UploadTooLargeError,
@@ -147,4 +148,22 @@ def test_store_upload_cleans_temporary_file_after_interruption(tmp_path: Path) -
         )
 
     assert not (root / "incoming" / "notes.txt").exists()
+    assert not list((root / "incoming").glob(".upload-*"))
+
+
+def test_store_upload_enforces_limit_for_unknown_length_stream(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+
+    with pytest.raises(UploadTooLargeError):
+        asyncio.run(
+            store_upload(
+                root,
+                "incoming/large.txt",
+                "text/plain",
+                chunks(b"x" * (MAX_UPLOAD_BYTES + 1)),
+            )
+        )
+
+    assert not (root / "incoming" / "large.txt").exists()
     assert not list((root / "incoming").glob(".upload-*"))
