@@ -18,6 +18,7 @@ DEFAULT_CHUNK_SIZE = 1024 * 1024
 DEFAULT_PROJECT_ROOT = Path(os.getenv("CCL_PROJECT_ROOT", "projects"))
 DEFAULT_JSON_NAME = "manifest.json"
 DEFAULT_CSV_NAME = "manifest.csv"
+INTERNAL_DIRECTORY_NAMES = frozenset({".ccl-versions"})
 MIME_COMMAND = ("file", "--brief", "--mime-type")
 
 
@@ -63,7 +64,8 @@ def iter_regular_files(root: Path) -> Iterable[Path]:
     for current, directories, filenames in os.walk(root, followlinks=False):
         directories[:] = sorted(
             name for name in directories
-            if not (Path(current) / name).is_symlink()
+            if name not in INTERNAL_DIRECTORY_NAMES
+            and not (Path(current) / name).is_symlink()
         )
         for name in sorted(filenames):
             path = Path(current) / name
@@ -213,6 +215,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "DEFAULT_PROJECT_ROOT",
+    "INTERNAL_DIRECTORY_NAMES",
     "FileRecord",
     "build_parser",
     "detect_mime_type",

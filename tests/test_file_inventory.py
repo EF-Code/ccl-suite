@@ -127,3 +127,17 @@ def test_manifest_paths_reject_symlink_same_and_external_outputs(tmp_path: Path)
 
     with pytest.raises(ValueError, match="inside the approved root"):
         write_manifests(root, [], json_path=tmp_path / "outside.json")
+
+
+def test_scanner_excludes_private_version_archives(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    visible = root / "incoming" / "notes.txt"
+    hidden = root / ".ccl-versions" / "file-id" / "1"
+    visible.parent.mkdir(parents=True)
+    hidden.parent.mkdir(parents=True)
+    visible.write_text("visible", encoding="utf-8")
+    hidden.write_text("archived", encoding="utf-8")
+
+    records = scan_files(root)
+
+    assert [record.relative_path for record in records] == ["incoming/notes.txt"]

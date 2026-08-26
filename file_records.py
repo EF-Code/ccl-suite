@@ -11,6 +11,7 @@ from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.orm import Session
 
 from file_inventory import FileRecord
+from file_restore import archive_version_content
 from models import File, FileHistory, FileVersion
 
 
@@ -132,21 +133,24 @@ def _add_version(
     file_record: File,
     values: dict[str, object],
     version_number: int,
-) -> None:
+) -> FileVersion:
     """Append one immutable metadata version for a file."""
 
-    db.add(
-        FileVersion(
-            file=file_record,
-            version_number=version_number,
-            storage_key=str(values["storage_key"]),
-            media_type=str(values["media_type"]),
-            size_bytes=int(values["size_bytes"]),
-            checksum_sha256=str(values["checksum_sha256"]),
-            modified_at=values["modified_at"],  # type: ignore[arg-type]
-            is_original=version_number == 1,
-        )
+    modified_at = values["modified_at"]
+    if not isinstance(modified_at, datetime):
+        raise TypeError("Version modified_at must be a datetime.")
+    version = FileVersion(
+        file=file_record,
+        version_number=version_number,
+        storage_key=str(values["storage_key"]),
+        media_type=str(values["media_type"]),
+        size_bytes=int(values["size_bytes"]),
+        checksum_sha256=str(values["checksum_sha256"]),
+        modified_at=modified_at,
+        is_original=version_number == 1,
     )
+    db.add(version)
+    return version
 
 
 def _next_version_number(file_record: File) -> int:
@@ -162,11 +166,15 @@ def sync_inventory_records(
     db: Session,
     project_id: UUID,
     records: list[FileRecord],
+    *,
+    approved_root: Path | str | None = None,
 ) -> InventorySyncResult:
     """Upsert scanned metadata and record changes without storing file contents.
 
     Records absent from a later scan are marked ``missing`` and receive a
     history event.  Existing records that reappear are restored to ``active``.
+    When ``approved_root`` is provided, each new version's bytes are archived
+    below the private project version directory before the caller commits.
     The caller owns the transaction and must commit or roll back the session.
     """
 
@@ -194,7 +202,10 @@ def sync_inventory_records(
             db.add(file_record)
             persisted.append(file_record)
             _add_history(db, file_record, "created")
-            _add_version(db, file_record, values, 1)
+            version = _add_version(db, file_record, values, 1)
+            if approved_root is not None:
+                db.flush()
+                archive_version_content(approved_root, version)
             history_events += 1
             versions_created += 1
             continue
@@ -208,7 +219,15 @@ def sync_inventory_records(
             _add_history(db, file_record, event_code)
             history_events += 1
             if version_changed:
-                _add_version(db, file_record, values, _next_version_number(file_record))
+                version = _add_version(
+                    db,
+                    file_record,
+                    values,
+                    _next_version_number(file_record),
+                )
+                if approved_root is not None:
+                    db.flush()
+                    archive_version_content(approved_root, version)
                 versions_created += 1
         persisted.append(file_record)
 
