@@ -61,6 +61,7 @@ def test_sync_persists_metadata_and_creation_history(tmp_path: Path) -> None:
         session.commit()
 
         assert result.history_events == 1
+        assert result.versions_created == 1
         file_record = session.scalar(select(File))
         assert file_record is not None
         assert file_record.storage_key == "incoming/report.txt"
@@ -77,30 +78,19 @@ def test_file_versions_are_linked_and_ordered_per_file(tmp_path: Path) -> None:
         session.commit()
         file_record = session.scalar(select(File))
         assert file_record is not None
+        assert [version.version_number for version in file_record.versions] == [1]
 
-        session.add_all(
-            [
-                FileVersion(
-                    file=file_record,
-                    version_number=2,
-                    storage_key=file_record.storage_key,
-                    media_type=file_record.media_type,
-                    size_bytes=8,
-                    checksum_sha256="b" * 64,
-                    modified_at=file_record.modified_at,
-                    is_original=False,
-                ),
-                FileVersion(
-                    file=file_record,
-                    version_number=1,
-                    storage_key=file_record.storage_key,
-                    media_type=file_record.media_type,
-                    size_bytes=file_record.size_bytes,
-                    checksum_sha256=file_record.checksum_sha256,
-                    modified_at=file_record.modified_at,
-                    is_original=True,
-                ),
-            ]
+        session.add(
+            FileVersion(
+                file=file_record,
+                version_number=2,
+                storage_key=file_record.storage_key,
+                media_type=file_record.media_type,
+                size_bytes=8,
+                checksum_sha256="b" * 64,
+                modified_at=file_record.modified_at,
+                is_original=False,
+            )
         )
         session.commit()
         session.refresh(file_record)
@@ -136,6 +126,41 @@ def test_sync_records_updates_missing_and_restores_files(tmp_path: Path) -> None
             "created",
             "missing",
             "restored",
+        ]
+        versions = session.scalars(
+            select(FileVersion).order_by(FileVersion.version_number)
+        ).all()
+        assert [version.version_number for version in versions] == [1, 2]
+        assert versions[0].checksum_sha256 == "a" * 64
+        assert versions[1].checksum_sha256 == "b" * 64
+
+
+def test_sync_creates_versions_only_for_changed_snapshots(tmp_path: Path) -> None:
+    with make_session(tmp_path) as session:
+        project = make_project(session)
+        first = inventory_record()
+        initial = sync_inventory_records(session, project.id, [first])
+        session.commit()
+
+        unchanged = sync_inventory_records(session, project.id, [first])
+        session.commit()
+        changed = sync_inventory_records(
+            session,
+            project.id,
+            [inventory_record(contents_hash="c" * 64, size_bytes=7)],
+        )
+        session.commit()
+
+        assert initial.versions_created == 1
+        assert unchanged.versions_created == 0
+        assert changed.versions_created == 1
+        versions = session.scalars(
+            select(FileVersion).order_by(FileVersion.version_number)
+        ).all()
+        assert [version.version_number for version in versions] == [1, 2]
+        assert [version.checksum_sha256 for version in versions] == [
+            "a" * 64,
+            "c" * 64,
         ]
 
 

@@ -11,7 +11,7 @@ from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.orm import Session
 
 from file_inventory import FileRecord
-from models import File, FileHistory
+from models import File, FileHistory, FileVersion
 
 
 ALLOWED_FILE_STATUSES = frozenset({"active", "missing", "archived"})
@@ -23,6 +23,7 @@ class InventorySyncResult:
 
     records: tuple[File, ...]
     history_events: int
+    versions_created: int
 
 
 def utc_now() -> datetime:
@@ -67,10 +68,43 @@ def _record_values(record: FileRecord) -> dict[str, object]:
     }
 
 
+def _values_equal(left: object, right: object) -> bool:
+    """Compare persisted and scanned values without SQLite timezone noise."""
+
+    if isinstance(left, datetime) and isinstance(right, datetime):
+        if left.tzinfo is None:
+            left = left.replace(tzinfo=timezone.utc)
+        if right.tzinfo is None:
+            right = right.replace(tzinfo=timezone.utc)
+        return left.astimezone(timezone.utc) == right.astimezone(timezone.utc)
+    return left == right
+
+
 def _snapshot_changed(file_record: File, values: dict[str, object]) -> bool:
     """Return whether a newly observed scanner record differs from its snapshot."""
 
-    return any(getattr(file_record, key) != value for key, value in values.items())
+    return any(
+        not _values_equal(getattr(file_record, key), value)
+        for key, value in values.items()
+    )
+
+
+def _version_snapshot_changed(file_record: File, values: dict[str, object]) -> bool:
+    """Return whether a new content/metadata version is required."""
+
+    version_fields = (
+        "storage_key",
+        "name",
+        "extension",
+        "media_type",
+        "size_bytes",
+        "checksum_sha256",
+        "modified_at",
+    )
+    return any(
+        not _values_equal(getattr(file_record, key), values[key])
+        for key in version_fields
+    )
 
 
 def _add_history(db: Session, file_record: File, event_code: str) -> None:
@@ -91,6 +125,37 @@ def _add_history(db: Session, file_record: File, event_code: str) -> None:
             observed_at=utc_now(),
         )
     )
+
+
+def _add_version(
+    db: Session,
+    file_record: File,
+    values: dict[str, object],
+    version_number: int,
+) -> None:
+    """Append one immutable metadata version for a file."""
+
+    db.add(
+        FileVersion(
+            file=file_record,
+            version_number=version_number,
+            storage_key=str(values["storage_key"]),
+            media_type=str(values["media_type"]),
+            size_bytes=int(values["size_bytes"]),
+            checksum_sha256=str(values["checksum_sha256"]),
+            modified_at=values["modified_at"],  # type: ignore[arg-type]
+            is_original=version_number == 1,
+        )
+    )
+
+
+def _next_version_number(file_record: File) -> int:
+    """Return the next version number without reusing an old number."""
+
+    return max(
+        (version.version_number for version in file_record.versions),
+        default=0,
+    ) + 1
 
 
 def sync_inventory_records(
@@ -114,6 +179,7 @@ def sync_inventory_records(
     seen_keys: set[str] = set()
     persisted: list[File] = []
     history_events = 0
+    versions_created = 0
 
     for record in records:
         values = _record_values(record)
@@ -128,16 +194,22 @@ def sync_inventory_records(
             db.add(file_record)
             persisted.append(file_record)
             _add_history(db, file_record, "created")
+            _add_version(db, file_record, values, 1)
             history_events += 1
+            versions_created += 1
             continue
 
         if _snapshot_changed(file_record, values):
             event_code = "restored" if file_record.status == "missing" else "updated"
+            version_changed = _version_snapshot_changed(file_record, values)
             for key, value in values.items():
                 setattr(file_record, key, value)
             file_record.updated_at = utc_now()
             _add_history(db, file_record, event_code)
             history_events += 1
+            if version_changed:
+                _add_version(db, file_record, values, _next_version_number(file_record))
+                versions_created += 1
         persisted.append(file_record)
 
     for file_record in existing.values():
@@ -148,7 +220,7 @@ def sync_inventory_records(
             history_events += 1
 
     db.flush()
-    return InventorySyncResult(tuple(persisted), history_events)
+    return InventorySyncResult(tuple(persisted), history_events, versions_created)
 
 
 def build_file_search_statement(
@@ -214,11 +286,23 @@ def build_file_history_statement(project_id: UUID, file_id: UUID) -> Select[tupl
     )
 
 
+def build_file_versions_statement(project_id: UUID, file_id: UUID) -> Select[tuple[FileVersion]]:
+    """Build a project-scoped version query for one file."""
+
+    return (
+        select(FileVersion)
+        .join(File, File.id == FileVersion.file_id)
+        .where(File.project_id == project_id, FileVersion.file_id == file_id)
+        .order_by(FileVersion.version_number)
+    )
+
+
 __all__ = [
     "ALLOWED_FILE_STATUSES",
     "InventorySyncResult",
     "build_file_history_statement",
     "build_file_search_statement",
+    "build_file_versions_statement",
     "parse_inventory_timestamp",
     "sync_inventory_records",
     "validate_storage_key",
