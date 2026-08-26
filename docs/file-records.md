@@ -94,3 +94,7 @@ unsupported types, oversized bodies, and existing destinations. Accepted
 uploads are written atomically, indexed as file metadata, and receive an
 initial immutable version. Rejected attempts are logged with the
 `file.upload.rejected` security-event code without storing the request body.
+
+Upload failures use predictable responses: `400` for policy violations such as
+unsafe paths or MIME mismatches, `409` for an existing destination, `413` for
+an oversized body, and `503` when the metadata transaction cannot be saved.

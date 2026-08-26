@@ -57,6 +57,8 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `PUT /projects/{project_id}/uploads/{storage_key}` streams an allow-listed
   upload, indexes its metadata, and records rejected attempts as security
   events.
+- `GET /upload-policy` describes the upload size, filename, extension, and MIME
+  allowlists used by the upload endpoint.
 - The `file_versions` table is linked to each file record and stores the
   per-file version number, checksum, size, storage reference, and original-file
   marker for the version-control work.
