@@ -56,4 +56,22 @@ curl http://127.0.0.1:8000/projects/<PROJECT_ID>/files/<FILE_ID>/versions
 
 Each version includes its storage key, media type, size, SHA-256 checksum,
 modification time, original marker, and creation time. These immutable
-metadata records are the foundation for a later safe-restore operation.
+metadata records are backed by a private `.ccl-versions/` archive that is
+excluded from normal inventory scans.
+
+## Restore a version safely
+
+Restore a numbered version to a new project-relative path:
+
+```bash
+curl -X POST \
+  http://127.0.0.1:8000/projects/<PROJECT_ID>/files/<FILE_ID>/versions/1/restore \
+  -H 'Content-Type: application/json' \
+  -d '{"destination_path":"output/notes-v1.txt"}'
+```
+
+The service verifies the archived bytes against the stored size and SHA-256
+checksum before writing. It creates parent directories as needed, but refuses
+path traversal, symlinks, the original storage path, and an existing
+destination. A failed restore leaves both the original and destination
+unchanged.

@@ -49,6 +49,9 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `GET /projects/{project_id}/files/{file_id}/versions` returns numbered,
   immutable metadata snapshots; inventory reports how many new versions it
   created in `versions_created`.
+- `POST /projects/{project_id}/files/{file_id}/versions/{version_number}/restore`
+  restores a verified version to a new destination without overwriting the
+  original or an existing file.
 - The `file_versions` table is linked to each file record and stores the
   per-file version number, checksum, size, storage reference, and original-file
   marker for the version-control work.
@@ -139,7 +142,7 @@ To measure branch coverage locally:
 
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m coverage run --branch --source=api_schemas,config,database,file_converter,file_inventory,file_organizer,folder_generator,logger,main,models -m pytest
+.venv/bin/python -m coverage run --branch --source=api_schemas,config,database,file_converter,file_inventory,file_organizer,file_restore,folder_generator,logger,main,models -m pytest
 .venv/bin/python -m coverage report -m --fail-under=90
 ```
 
