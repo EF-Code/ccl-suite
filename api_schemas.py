@@ -128,6 +128,21 @@ class FileVersionResponse(BaseModel):
     created_at: datetime
 
 
+class FileRestoreCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    destination_path: str = Field(min_length=1, max_length=512)
+
+
+class FileRestoreResponse(BaseModel):
+    project_id: UUID
+    file_id: UUID
+    version_number: int = Field(gt=0)
+    destination_path: str
+    checksum_sha256: str
+    bytes_restored: int = Field(ge=0)
+
+
 class ConversionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -307,6 +322,8 @@ __all__ = [
     "FolderGenerateResponse",
     "FileCreate",
     "FileHistoryResponse",
+    "FileRestoreCreate",
+    "FileRestoreResponse",
     "FileVersionResponse",
     "FileResponse",
     "InventoryRecordResponse",

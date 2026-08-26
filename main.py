@@ -21,6 +21,8 @@ from api_schemas import (
     ConversionResponse,
     FileCreate,
     FileHistoryResponse,
+    FileRestoreCreate,
+    FileRestoreResponse,
     FileResponse,
     FileVersionResponse,
     FolderGenerateCreate,
@@ -66,6 +68,13 @@ from file_records import (
     sync_inventory_records,
     validate_storage_key,
 )
+from file_restore import (
+    RestoreDestinationExistsError,
+    RestoreError,
+    RestoreSourceUnavailableError,
+    UnsafeRestorePathError,
+    restore_version_content,
+)
 from file_organizer import (
     OrganizationPlan,
     apply_plan,
@@ -76,7 +85,7 @@ from file_organizer import (
 )
 from folder_generator import create_project_folder, normalize_project_name
 from logger import logger
-from models import Approval, File, Project, SecurityEvent, User, Workflow, utc_now
+from models import Approval, File, FileVersion, Project, SecurityEvent, User, Workflow, utc_now
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -531,6 +540,81 @@ async def list_project_file_versions(
 
 
 @app.post(
+    "/projects/{project_id}/files/{file_id}/versions/{version_number}/restore",
+    response_model=FileRestoreResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["files"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def restore_project_file_version(
+    project_id: UUID,
+    file_id: UUID,
+    version_number: int,
+    restore_request: FileRestoreCreate,
+    db: Session = Depends(get_db),
+) -> FileRestoreResponse:
+    """Restore one archived version to a new, non-overwriting destination."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    file_record = require_record(db, File, file_id, "File was not found.")
+    if file_record.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File was not found.")
+    if version_number < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Version number must be positive.")
+    version = db.scalar(
+        select(FileVersion).where(
+            FileVersion.file_id == file_id,
+            FileVersion.version_number == version_number,
+        )
+    )
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File version was not found.")
+
+    try:
+        result = restore_version_content(
+            project_storage_root(project),
+            version,
+            restore_request.destination_path,
+        )
+    except (FileNotFoundError, NotADirectoryError, RestoreSourceUnavailableError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The requested file version is unavailable.",
+        )
+    except RestoreDestinationExistsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Restore destination already exists.",
+        )
+    except UnsafeRestorePathError as exc:
+        logger.warning("Rejected restore path for project %s: %s", project_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Restore destination must remain inside project storage and differ from the original.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for restoration.",
+        )
+    except RestoreError:
+        logger.error("File version restore failed for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="File version could not be restored safely.",
+        )
+
+    return FileRestoreResponse(
+        project_id=project_id,
+        file_id=file_id,
+        version_number=result.version_number,
+        destination_path=result.destination_relative.as_posix(),
+        checksum_sha256=result.checksum_sha256,
+        bytes_restored=result.bytes_restored,
+    )
+
+
+@app.post(
     "/projects/{project_id}/conversions",
     response_model=ConversionResponse,
     status_code=status.HTTP_201_CREATED,
@@ -627,7 +711,12 @@ async def inventory_project_files(
         # searchable file-record database and duplicate counts.
         records = [record for record in records if record.relative_path not in manifest_paths]
         json_path, csv_path = write_manifests(root, records)
-        sync_result = sync_inventory_records(db, project_id, records)
+        sync_result = sync_inventory_records(
+            db,
+            project_id,
+            records,
+            approved_root=root,
+        )
         db.commit()
     except IntegrityError:
         db.rollback()

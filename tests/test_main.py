@@ -669,6 +669,56 @@ def test_project_inventory_endpoint_updates_file_history(
     assert versions.json()[0]["checksum_sha256"] != versions.json()[1]["checksum_sha256"]
 
 
+def test_project_file_version_restore_endpoint_preserves_original(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "incoming").mkdir()
+    source = project_root / "incoming" / "notes.txt"
+    source.write_text("first", encoding="utf-8")
+
+    first = request("POST", f"/projects/{project['id']}/inventory")
+    assert first.status_code == 201
+    source.write_text("second", encoding="utf-8")
+    second = request("POST", f"/projects/{project['id']}/inventory")
+    assert second.status_code == 201
+
+    file_id = request(
+        "GET", f"/projects/{project['id']}/files/search?query=notes"
+    ).json()[0]["id"]
+    restored = request(
+        "POST",
+        f"/projects/{project['id']}/files/{file_id}/versions/1/restore",
+        json={"destination_path": "output/notes-v1.txt"},
+    )
+
+    assert restored.status_code == 201
+    assert restored.json()["version_number"] == 1
+    assert restored.json()["destination_path"] == "output/notes-v1.txt"
+    assert restored.json()["bytes_restored"] == len("first")
+    assert (project_root / "output" / "notes-v1.txt").read_text(encoding="utf-8") == "first"
+    assert source.read_text(encoding="utf-8") == "second"
+
+    conflict = request(
+        "POST",
+        f"/projects/{project['id']}/files/{file_id}/versions/1/restore",
+        json={"destination_path": "output/notes-v1.txt"},
+    )
+    original = request(
+        "POST",
+        f"/projects/{project['id']}/files/{file_id}/versions/1/restore",
+        json={"destination_path": "incoming/notes.txt"},
+    )
+    assert conflict.status_code == 409
+    assert original.status_code == 400
+    assert source.read_text(encoding="utf-8") == "second"
+
+
 def test_project_file_search_rejects_unknown_status() -> None:
     project = create_project()
 
