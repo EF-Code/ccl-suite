@@ -358,6 +358,17 @@ def record_rejected_upload(
         logger.error("Rejected upload could not be recorded for project %s.", project_id)
 
 
+def cleanup_failed_upload(upload_result: UploadResult | None) -> None:
+    """Remove an upload when its metadata transaction cannot be completed."""
+
+    if upload_result is None:
+        return
+    try:
+        upload_result.destination.unlink(missing_ok=True)
+    except OSError:
+        logger.error("Failed upload cleanup could not remove its destination.")
+
+
 async def reject_oversized_requests(request: Request) -> None:
     """Reject declared request bodies larger than the application accepts."""
 
@@ -628,18 +639,21 @@ async def upload_project_file(
         )
     except (FileNotFoundError, NotADirectoryError):
         db.rollback()
+        cleanup_failed_upload(upload_result)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project storage was not found.",
         )
     except PermissionError:
         db.rollback()
+        cleanup_failed_upload(upload_result)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Project storage is not available for uploads.",
         )
     except (IntegrityError, SQLAlchemyError):
         db.rollback()
+        cleanup_failed_upload(upload_result)
         logger.error("Upload metadata could not be saved for project %s.", project_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -647,6 +661,7 @@ async def upload_project_file(
         )
     except (OSError, UploadWriteError, ValueError):
         db.rollback()
+        cleanup_failed_upload(upload_result)
         logger.error("Upload failed for project %s.", project_id)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

@@ -505,6 +505,31 @@ def test_secure_upload_rejects_oversized_body(
     assert not (projects_root / "endpoint-project" / "incoming" / "large.txt").exists()
 
 
+def test_secure_upload_cleans_file_when_metadata_save_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+
+    def fail_sync(*args: object, **kwargs: object) -> object:
+        raise SQLAlchemyError("database unavailable")
+
+    monkeypatch.setattr("main.sync_inventory_records", fail_sync)
+    response = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/incoming/notes.txt",
+        content=b"hello",
+        headers={"content-type": "text/plain"},
+    )
+
+    assert response.status_code == 503
+    assert not (project_root / "incoming" / "notes.txt").exists()
+
+
 def test_project_conversion_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     projects_root = tmp_path / "projects"
     projects_root.mkdir()
