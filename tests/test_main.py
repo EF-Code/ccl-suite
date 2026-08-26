@@ -530,6 +530,34 @@ def test_secure_upload_cleans_file_when_metadata_save_fails(
     assert not (project_root / "incoming" / "notes.txt").exists()
 
 
+def test_secure_upload_rejects_path_traversal_and_missing_mime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+
+    traversal = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/%2E%2E%2Foutside.txt",
+        content=b"blocked",
+        headers={"content-type": "text/plain"},
+    )
+    missing_mime = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/incoming/notes.txt",
+        content=b"blocked",
+    )
+
+    assert traversal.status_code == 400
+    assert missing_mime.status_code == 400
+    assert not (tmp_path / "outside.txt").exists()
+    assert not (project_root / "incoming" / "notes.txt").exists()
+
+
 def test_project_conversion_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     projects_root = tmp_path / "projects"
     projects_root.mkdir()
