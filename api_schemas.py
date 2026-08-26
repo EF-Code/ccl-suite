@@ -113,6 +113,21 @@ class FileHistoryResponse(BaseModel):
     observed_at: datetime
 
 
+class FileVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    file_id: UUID
+    version_number: int = Field(gt=0)
+    storage_key: str
+    media_type: str
+    size_bytes: int = Field(ge=0)
+    checksum_sha256: str
+    modified_at: datetime
+    is_original: bool
+    created_at: datetime
+
+
 class ConversionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -163,6 +178,7 @@ class InventoryResponse(BaseModel):
     csv_manifest: str
     records_persisted: int = Field(default=0, ge=0)
     history_events: int = Field(default=0, ge=0)
+    versions_created: int = Field(default=0, ge=0)
     records: list[InventoryRecordResponse]
 
 
@@ -291,6 +307,7 @@ __all__ = [
     "FolderGenerateResponse",
     "FileCreate",
     "FileHistoryResponse",
+    "FileVersionResponse",
     "FileResponse",
     "InventoryRecordResponse",
     "InventoryResponse",

@@ -22,6 +22,7 @@ from api_schemas import (
     FileCreate,
     FileHistoryResponse,
     FileResponse,
+    FileVersionResponse,
     FolderGenerateCreate,
     FolderGenerateResponse,
     InventoryRecordResponse,
@@ -61,6 +62,7 @@ from file_inventory import (
 from file_records import (
     build_file_history_statement,
     build_file_search_statement,
+    build_file_versions_statement,
     sync_inventory_records,
     validate_storage_key,
 )
@@ -508,6 +510,26 @@ async def list_project_file_history(
     return [FileHistoryResponse.model_validate(entry) for entry in history]
 
 
+@app.get(
+    "/projects/{project_id}/files/{file_id}/versions",
+    response_model=list[FileVersionResponse],
+    tags=["files"],
+)
+async def list_project_file_versions(
+    project_id: UUID,
+    file_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[FileVersionResponse]:
+    """Return numbered immutable metadata versions for one project file."""
+
+    require_record(db, Project, project_id, "Project was not found.")
+    file_record = require_record(db, File, file_id, "File was not found.")
+    if file_record.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File was not found.")
+    versions = list_records(db, build_file_versions_statement(project_id, file_id))
+    return [FileVersionResponse.model_validate(version) for version in versions]
+
+
 @app.post(
     "/projects/{project_id}/conversions",
     response_model=ConversionResponse,
@@ -650,6 +672,7 @@ async def inventory_project_files(
         records=[inventory_record_response(record) for record in records],
         records_persisted=len(sync_result.records),
         history_events=sync_result.history_events,
+        versions_created=sync_result.versions_created,
     )
 
 

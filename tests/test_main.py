@@ -600,6 +600,7 @@ def test_project_inventory_endpoint_writes_manifests(
     assert response.status_code == 201
     assert response.json()["files_scanned"] == 1
     assert response.json()["duplicate_groups"] == 0
+    assert response.json()["versions_created"] == 1
     assert response.json()["json_manifest"] == "manifest.json"
     assert response.json()["csv_manifest"] == "manifest.csv"
     assert (project_root / "manifest.json").is_file()
@@ -620,6 +621,15 @@ def test_project_inventory_endpoint_writes_manifests(
     )
     assert history.status_code == 200
     assert [entry["event_code"] for entry in history.json()] == ["created"]
+
+    versions = request(
+        "GET",
+        f"/projects/{project['id']}/files/{search.json()[0]['id']}/versions",
+    )
+    assert versions.status_code == 200
+    assert len(versions.json()) == 1
+    assert versions.json()[0]["version_number"] == 1
+    assert versions.json()[0]["is_original"] is True
 
 
 def test_project_inventory_endpoint_updates_file_history(
@@ -642,6 +652,7 @@ def test_project_inventory_endpoint_updates_file_history(
 
     assert second.status_code == 201
     assert second.json()["history_events"] == 1
+    assert second.json()["versions_created"] == 1
     file_id = request(
         "GET", f"/projects/{project['id']}/files/search?query=notes"
     ).json()[0]["id"]
@@ -649,6 +660,13 @@ def test_project_inventory_endpoint_updates_file_history(
         "GET", f"/projects/{project['id']}/files/{file_id}/history"
     )
     assert [entry["event_code"] for entry in history.json()] == ["created", "updated"]
+    versions = request(
+        "GET", f"/projects/{project['id']}/files/{file_id}/versions"
+    )
+    assert versions.status_code == 200
+    assert [entry["version_number"] for entry in versions.json()] == [1, 2]
+    assert [entry["is_original"] for entry in versions.json()] == [True, False]
+    assert versions.json()[0]["checksum_sha256"] != versions.json()[1]["checksum_sha256"]
 
 
 def test_project_file_search_rejects_unknown_status() -> None:
