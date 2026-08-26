@@ -483,6 +483,8 @@ def test_secure_upload_endpoint_indexes_file_and_logs_rejection(
     assert rejected.status_code == 400
     assert events.status_code == 200
     assert {event["event_code"] for event in events.json()} == {"file.upload.rejected"}
+    assert "bad" not in events.text
+    assert "replace" not in events.text
 
 
 def test_secure_upload_rejects_oversized_body(
