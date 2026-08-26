@@ -75,3 +75,22 @@ checksum before writing. It creates parent directories as needed, but refuses
 path traversal, symlinks, the original storage path, and an existing
 destination. A failed restore leaves both the original and destination
 unchanged.
+
+## Upload a file safely
+
+Uploads use a raw request body so the server can enforce a bounded stream
+without buffering an untrusted multipart payload:
+
+```bash
+curl -X PUT \
+  http://127.0.0.1:8000/projects/<PROJECT_ID>/uploads/incoming/notes.txt \
+  -H 'Content-Type: text/plain' \
+  --data-binary @notes.txt
+```
+
+The upload policy allowlists filenames, one extension, MIME type, and a
+maximum size. It rejects path traversal, symlinks, double extensions,
+unsupported types, oversized bodies, and existing destinations. Accepted
+uploads are written atomically, indexed as file metadata, and receive an
+initial immutable version. Rejected attempts are logged with the
+`file.upload.rejected` security-event code without storing the request body.
