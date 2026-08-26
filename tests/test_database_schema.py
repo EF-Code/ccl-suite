@@ -2,7 +2,16 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import configure_mappers
 
 from database import Base
-from models import Approval, File, FileHistory, Project, SecurityEvent, User, Workflow
+from models import (
+    Approval,
+    File,
+    FileHistory,
+    FileVersion,
+    Project,
+    SecurityEvent,
+    User,
+    Workflow,
+)
 
 
 REQUIRED_TABLES = {
@@ -10,6 +19,7 @@ REQUIRED_TABLES = {
     "projects",
     "files",
     "file_history",
+    "file_versions",
     "workflows",
     "approvals",
     "security_events",
@@ -26,6 +36,7 @@ def test_relationship_mappers_configure() -> None:
     assert User.projects.property.mapper.class_ is Project
     assert Project.files.property.mapper.class_ is File
     assert File.history.property.mapper.class_ is FileHistory
+    assert File.versions.property.mapper.class_ is FileVersion
     assert Project.workflows.property.mapper.class_ is Workflow
     assert Workflow.approvals.property.mapper.class_ is Approval
     assert User.security_events.property.mapper.class_ is SecurityEvent
@@ -52,6 +63,9 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     assert "ix_file_history_file_observed_at" in {
         index.name for index in FileHistory.__table__.indexes
     }
+    assert "ix_file_versions_file_created_at" in {
+        index.name for index in FileVersion.__table__.indexes
+    }
     assert "ix_workflows_project_status" in {
         index.name for index in Workflow.__table__.indexes
     }
@@ -68,9 +82,11 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     project_owner_fk = next(iter(Project.__table__.c.owner_id.foreign_keys))
     file_project_fk = next(iter(File.__table__.c.project_id.foreign_keys))
     history_file_fk = next(iter(FileHistory.__table__.c.file_id.foreign_keys))
+    version_file_fk = next(iter(FileVersion.__table__.c.file_id.foreign_keys))
     assert project_owner_fk.ondelete == "RESTRICT"
     assert file_project_fk.ondelete == "CASCADE"
     assert history_file_fk.ondelete == "CASCADE"
+    assert version_file_fk.ondelete == "CASCADE"
 
 
 def test_sensitive_payload_columns_are_not_stored() -> None:
