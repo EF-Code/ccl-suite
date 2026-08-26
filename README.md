@@ -46,6 +46,9 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
   checksum, and status with project scoping and bounded pagination.
 - `GET /projects/{project_id}/files/{file_id}/history` returns immutable
   inventory snapshots for created, updated, missing, and restored events.
+- The `file_versions` table is linked to each file record and stores the
+  per-file version number, checksum, size, storage reference, and original-file
+  marker for the version-control work.
 - `POST /projects/{project_id}/conversions` converts an approved project file
   without overwriting its source or an existing destination.
 - `POST /project-folders` creates the standard project folder layout below the

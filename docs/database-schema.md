@@ -14,6 +14,7 @@ erDiagram
     USER ||--o{ SECURITY_EVENT : causes
     PROJECT ||--o{ FILE : contains
     FILE ||--o{ FILE_HISTORY : records
+    FILE ||--o{ FILE_VERSION : versions
     PROJECT ||--o{ WORKFLOW : defines
     WORKFLOW ||--o{ APPROVAL : requires
 
@@ -62,6 +63,18 @@ erDiagram
         string status
         datetime observed_at
     }
+    FILE_VERSION {
+        UUID id PK
+        UUID file_id FK
+        int version_number
+        string storage_key
+        string media_type
+        bigint size_bytes
+        string checksum_sha256
+        datetime modified_at
+        boolean is_original
+        datetime created_at
+    }
     WORKFLOW {
         UUID id PK
         UUID project_id FK
@@ -102,6 +115,9 @@ erDiagram
   lifecycle status. File contents remain in the approved filesystem boundary.
 - `file_history` stores immutable metadata snapshots for `created`, `updated`,
   `missing`, and `restored` inventory events; it never stores file contents.
+- `file_versions` provides a per-file version number and immutable metadata
+  reference. Each file can have one original version and later versions without
+  changing the original record.
 - `workflows` are versioned per project with a unique `(project_id, name,
   version)` key. `approvals` are separate records so each decision has its own
   lifecycle and actor references.
