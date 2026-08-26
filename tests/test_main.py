@@ -295,6 +295,15 @@ def test_permission_matrix_endpoint_lists_roles() -> None:
     }
 
 
+def test_upload_policy_endpoint_describes_allowlist() -> None:
+    response = request("GET", "/upload-policy")
+
+    assert response.status_code == 200
+    assert response.json()["max_size_bytes"] == 1_048_576
+    assert "text/plain" in response.json()["allowed_extensions"][".txt"]
+    assert response.json()["filename_pattern"]
+
+
 def test_gets_one_user_by_id() -> None:
     response = request("GET", f"/users/{TEST_OWNER_ID}")
 

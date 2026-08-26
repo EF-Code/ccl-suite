@@ -120,6 +120,19 @@ def validate_content_length(content_length: int | None) -> None:
         raise UploadTooLargeError("Upload exceeds the maximum allowed size.")
 
 
+def upload_policy() -> dict[str, object]:
+    """Return the public, non-secret upload policy for clients."""
+
+    return {
+        "max_size_bytes": MAX_UPLOAD_BYTES,
+        "allowed_extensions": {
+            extension: sorted(media_types)
+            for extension, media_types in ALLOWED_UPLOAD_MEDIA_TYPES.items()
+        },
+        "filename_pattern": UPLOAD_FILENAME_PATTERN.pattern,
+    }
+
+
 def _resolve_destination(root: Path, storage_key: str) -> Path:
     """Resolve a new, non-symlink destination below the approved root."""
 
@@ -216,6 +229,7 @@ __all__ = [
     "UploadWriteError",
     "normalize_media_type",
     "store_upload",
+    "upload_policy",
     "validate_content_length",
     "validate_upload_metadata",
     "validate_upload_name",

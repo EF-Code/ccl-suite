@@ -43,6 +43,7 @@ from api_schemas import (
     UserCreate,
     UserResponse,
     UploadResponse,
+    UploadPolicyResponse,
     WorkflowCreate,
     WorkflowResponse,
 )
@@ -84,6 +85,7 @@ from file_uploads import (
     UploadValidationError,
     UploadWriteError,
     store_upload,
+    upload_policy,
 )
 from file_organizer import (
     OrganizationPlan,
@@ -384,6 +386,13 @@ async def list_permissions() -> PermissionMatrixResponse:
     """Return the static role-permission matrix used by authorization checks."""
 
     return PermissionMatrixResponse(roles=permission_matrix())
+
+
+@app.get("/upload-policy", response_model=UploadPolicyResponse, tags=["files"])
+async def get_upload_policy() -> UploadPolicyResponse:
+    """Return the allowlisted upload types and size limit."""
+
+    return UploadPolicyResponse(**upload_policy())
 
 
 @app.post(

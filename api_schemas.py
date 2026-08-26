@@ -159,6 +159,12 @@ class PermissionMatrixResponse(BaseModel):
     roles: dict[str, list[str]]
 
 
+class UploadPolicyResponse(BaseModel):
+    max_size_bytes: int = Field(gt=0)
+    allowed_extensions: dict[str, list[str]]
+    filename_pattern: str
+
+
 class ConversionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -358,6 +364,7 @@ __all__ = [
     "UserCreate",
     "UserResponse",
     "UploadResponse",
+    "UploadPolicyResponse",
     "WorkflowCreate",
     "WorkflowResponse",
 ]
