@@ -10,6 +10,7 @@ from file_uploads import (
     UploadLengthMismatchError,
     UploadTooLargeError,
     UploadValidationError,
+    UploadWriteError,
     store_upload,
     validate_upload_metadata,
 )
@@ -18,6 +19,11 @@ from file_uploads import (
 async def chunks(payload: bytes):
     for start in range(0, len(payload), 2):
         yield payload[start : start + 2]
+
+
+async def interrupted_chunks():
+    yield b"partial"
+    raise OSError("simulated client disconnect")
 
 
 def test_store_upload_validates_and_hashes_content(tmp_path: Path) -> None:
@@ -119,6 +125,24 @@ def test_store_upload_rejects_declared_length_mismatch(tmp_path: Path) -> None:
                 "text/plain",
                 chunks(b"hello"),
                 content_length=6,
+            )
+        )
+
+    assert not (root / "incoming" / "notes.txt").exists()
+    assert not list((root / "incoming").glob(".upload-*"))
+
+
+def test_store_upload_cleans_temporary_file_after_interruption(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+
+    with pytest.raises(UploadWriteError):
+        asyncio.run(
+            store_upload(
+                root,
+                "incoming/notes.txt",
+                "text/plain",
+                interrupted_chunks(),
             )
         )
 
