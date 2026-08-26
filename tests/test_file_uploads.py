@@ -51,6 +51,31 @@ def test_store_upload_rejects_unsafe_names_and_mime_types(tmp_path: Path) -> Non
         validate_upload_metadata("incoming/report.json", "text/plain")
 
 
+def test_upload_metadata_accepts_allowed_mime_parameters() -> None:
+    assert validate_upload_metadata(
+        "incoming/report.csv", "text/csv; charset=utf-8"
+    ) == ("incoming/report.csv", ".csv", "text/csv")
+    assert validate_upload_metadata(
+        "incoming/notes.md", "text/markdown"
+    ) == ("incoming/notes.md", ".md", "text/markdown")
+
+
+@pytest.mark.parametrize(
+    ("storage_key", "content_type"),
+    [
+        ("incoming/", "text/plain"),
+        ("incoming/report", "text/plain"),
+        ("incoming/report.txt ", "text/plain"),
+        ("incoming/report.exe", "application/octet-stream"),
+    ],
+)
+def test_upload_metadata_rejects_invalid_names(
+    storage_key: str, content_type: str
+) -> None:
+    with pytest.raises(UploadValidationError):
+        validate_upload_metadata(storage_key, content_type)
+
+
 def test_store_upload_rejects_oversized_and_existing_destinations(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
