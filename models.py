@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -165,6 +166,11 @@ class File(Base):
     history: Mapped[list[FileHistory]] = relationship(
         back_populates="file", cascade="all, delete-orphan", order_by="FileHistory.observed_at"
     )
+    versions: Mapped[list[FileVersion]] = relationship(
+        back_populates="file",
+        cascade="all, delete-orphan",
+        order_by="FileVersion.version_number",
+    )
 
 
 class FileHistory(Base):
@@ -204,6 +210,48 @@ class FileHistory(Base):
     )
 
     file: Mapped[File] = relationship(back_populates="history")
+
+
+class FileVersion(Base):
+    """Immutable metadata for one version of a project file."""
+
+    __tablename__ = "file_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "file_id",
+            "version_number",
+            name="uq_file_versions_file_version",
+        ),
+        Index("ix_file_versions_file_created_at", "file_id", "created_at"),
+        CheckConstraint(
+            "version_number > 0",
+            name="ck_file_versions_version_positive",
+        ),
+        CheckConstraint("size_bytes >= 0", name="ck_file_versions_size_non_negative"),
+        CheckConstraint(
+            "length(checksum_sha256) = 64",
+            name="ck_file_versions_checksum_sha256_length",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    file_id: Mapped[UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(127), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    modified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    is_original: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    file: Mapped[File] = relationship(back_populates="versions")
 
 
 class Workflow(Base):
@@ -322,6 +370,7 @@ __all__ = [
     "Approval",
     "File",
     "FileHistory",
+    "FileVersion",
     "Project",
     "SecurityEvent",
     "User",
