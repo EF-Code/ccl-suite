@@ -7,6 +7,7 @@ import pytest
 
 from file_uploads import (
     UploadDestinationExistsError,
+    UploadLengthMismatchError,
     UploadTooLargeError,
     UploadValidationError,
     store_upload,
@@ -104,3 +105,22 @@ def test_store_upload_rejects_oversized_and_existing_destinations(tmp_path: Path
             )
         )
     assert existing.read_text(encoding="utf-8") == "keep"
+
+
+def test_store_upload_rejects_declared_length_mismatch(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+
+    with pytest.raises(UploadLengthMismatchError):
+        asyncio.run(
+            store_upload(
+                root,
+                "incoming/notes.txt",
+                "text/plain",
+                chunks(b"hello"),
+                content_length=6,
+            )
+        )
+
+    assert not (root / "incoming" / "notes.txt").exists()
+    assert not list((root / "incoming").glob(".upload-*"))

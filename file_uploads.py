@@ -40,6 +40,10 @@ class UploadTooLargeError(UploadValidationError):
     """Raised when an upload exceeds the configured byte limit."""
 
 
+class UploadLengthMismatchError(UploadValidationError):
+    """Raised when a declared content length differs from received bytes."""
+
+
 class UploadWriteError(UploadValidationError):
     """Raised when validated upload bytes cannot be stored safely."""
 
@@ -107,6 +111,15 @@ def validate_upload_metadata(storage_key: str, content_type: str | None) -> tupl
     return normalized_key, extension, media_type
 
 
+def validate_content_length(content_length: int | None) -> None:
+    """Validate an optional declared length before streaming the body."""
+
+    if content_length is not None and content_length < 0:
+        raise UploadValidationError("Upload Content-Length must not be negative.")
+    if content_length is not None and content_length > MAX_UPLOAD_BYTES:
+        raise UploadTooLargeError("Upload exceeds the maximum allowed size.")
+
+
 def _resolve_destination(root: Path, storage_key: str) -> Path:
     """Resolve a new, non-symlink destination below the approved root."""
 
@@ -136,8 +149,7 @@ async def store_upload(
     normalized_key, extension, media_type = validate_upload_metadata(
         storage_key, content_type
     )
-    if content_length is not None and content_length > MAX_UPLOAD_BYTES:
-        raise UploadTooLargeError("Upload exceeds the maximum allowed size.")
+    validate_content_length(content_length)
 
     root = resolve_approved_root(approved_root)
     destination = _resolve_destination(root, normalized_key)
@@ -161,6 +173,10 @@ async def store_upload(
                     raise UploadTooLargeError("Upload exceeds the maximum allowed size.")
                 digest.update(chunk)
                 stream.write(chunk)
+            if content_length is not None and size_bytes != content_length:
+                raise UploadLengthMismatchError(
+                    "Upload Content-Length does not match received bytes."
+                )
             stream.flush()
             os.fsync(stream.fileno())
         try:
@@ -193,12 +209,14 @@ __all__ = [
     "MAX_UPLOAD_BYTES",
     "UPLOAD_FILENAME_MAX_LENGTH",
     "UploadDestinationExistsError",
+    "UploadLengthMismatchError",
     "UploadResult",
     "UploadTooLargeError",
     "UploadValidationError",
     "UploadWriteError",
     "normalize_media_type",
     "store_upload",
+    "validate_content_length",
     "validate_upload_metadata",
     "validate_upload_name",
 ]
