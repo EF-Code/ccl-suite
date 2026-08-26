@@ -32,6 +32,8 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 ## API endpoints
 
 - `GET /health` returns the service status.
+- `GET /permissions` returns the administrator, supervisor, staff, and intern
+  role-permission matrix.
 - `POST /users` provisions an opaque development user reference. It is disabled
   when `CCL_ENVIRONMENT` is not `development`.
 - `GET /users/{user_id}` returns one development user by opaque ID and is
@@ -73,6 +75,11 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `POST` and `GET /workflows/{workflow_id}/approvals` manage workflow approvals.
 - `POST /approvals/{approval_id}/decision` records one approval decision.
 - `POST` and `GET /security-events` manage structured security audit events.
+
+Protected routes accept the authenticated user ID in the `X-User-ID` header.
+Development requests without the header use the first provisioned user for
+the local prototype; non-development deployments require the header. Denied
+decisions are recorded as `access.denied` security events.
 
 Request bodies are limited to 1 MiB. The API returns `404` when the supplied
 `owner_id` does not identify an existing user. User creation and authentication
@@ -145,7 +152,7 @@ To measure branch coverage locally:
 
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m coverage run --branch --source=api_schemas,config,database,file_converter,file_inventory,file_organizer,file_restore,file_uploads,folder_generator,logger,main,models -m pytest
+.venv/bin/python -m coverage run --branch --source=api_schemas,config,database,file_converter,file_inventory,file_organizer,file_restore,file_uploads,folder_generator,logger,main,models,permissions -m pytest
 .venv/bin/python -m coverage report -m --fail-under=90
 ```
 
@@ -213,8 +220,9 @@ scan is marked `missing`; if it reappears, it is marked `active` and a
 `restored` history snapshot is recorded. Generated manifests are excluded from
 the asset database so repeated scans do not create false file history.
 
-See [`docs/file-records.md`](docs/file-records.md) for search and history
-examples.
+See [`docs/file-records.md`](docs/file-records.md) for search, history, upload,
+and restoration examples. See [`docs/permissions.md`](docs/permissions.md) for
+the role-permission matrix and authorization behavior.
 
 ## Safe file organisation
 
