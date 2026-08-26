@@ -143,6 +143,18 @@ class FileRestoreResponse(BaseModel):
     bytes_restored: int = Field(ge=0)
 
 
+class UploadResponse(BaseModel):
+    project_id: UUID
+    file_id: UUID
+    storage_key: str
+    name: str
+    extension: str
+    media_type: str
+    size_bytes: int = Field(ge=0)
+    checksum_sha256: str
+    status: str
+
+
 class ConversionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -340,6 +352,7 @@ __all__ = [
     "SecurityEventResponse",
     "UserCreate",
     "UserResponse",
+    "UploadResponse",
     "WorkflowCreate",
     "WorkflowResponse",
 ]

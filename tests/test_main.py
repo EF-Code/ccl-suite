@@ -374,6 +374,71 @@ def test_file_endpoint_rejects_storage_path_escape() -> None:
     }
 
 
+def test_secure_upload_endpoint_indexes_file_and_logs_rejection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+
+    uploaded = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/incoming/notes.txt",
+        content=b"hello",
+        headers={"content-type": "text/plain"},
+    )
+
+    assert uploaded.status_code == 201
+    assert uploaded.json()["storage_key"] == "incoming/notes.txt"
+    assert uploaded.json()["size_bytes"] == 5
+    assert (project_root / "incoming" / "notes.txt").read_bytes() == b"hello"
+    search = request("GET", f"/projects/{project['id']}/files/search?query=notes")
+    assert search.status_code == 200
+    assert search.json()[0]["checksum_sha256"] == uploaded.json()["checksum_sha256"]
+
+    conflict = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/incoming/notes.txt",
+        content=b"replace",
+        headers={"content-type": "text/plain"},
+    )
+    rejected = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/incoming/report.csv.exe",
+        content=b"bad",
+        headers={"content-type": "application/octet-stream"},
+    )
+    events = request("GET", "/security-events")
+
+    assert conflict.status_code == 409
+    assert rejected.status_code == 400
+    assert events.status_code == 200
+    assert {event["event_code"] for event in events.json()} == {"file.upload.rejected"}
+
+
+def test_secure_upload_rejects_oversized_body(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    (projects_root / "endpoint-project").mkdir()
+
+    response = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/incoming/large.txt",
+        content=b"x" * (MAX_REQUEST_BODY_BYTES + 1),
+        headers={"content-type": "text/plain"},
+    )
+
+    assert response.status_code == 413
+    assert not (projects_root / "endpoint-project" / "incoming" / "large.txt").exists()
+
+
 def test_project_conversion_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     projects_root = tmp_path / "projects"
     projects_root.mkdir()

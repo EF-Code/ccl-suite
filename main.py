@@ -41,6 +41,7 @@ from api_schemas import (
     SecurityEventResponse,
     UserCreate,
     UserResponse,
+    UploadResponse,
     WorkflowCreate,
     WorkflowResponse,
 )
@@ -74,6 +75,14 @@ from file_restore import (
     RestoreSourceUnavailableError,
     UnsafeRestorePathError,
     restore_version_content,
+)
+from file_uploads import (
+    UploadDestinationExistsError,
+    UploadResult,
+    UploadTooLargeError,
+    UploadValidationError,
+    UploadWriteError,
+    store_upload,
 )
 from file_organizer import (
     OrganizationPlan,
@@ -257,6 +266,30 @@ def inventory_record_response(record: FileRecord) -> InventoryRecordResponse:
     )
 
 
+def record_rejected_upload(
+    db: Session,
+    project_id: UUID,
+    storage_key: str,
+    reason: str,
+) -> None:
+    """Log a rejected upload without storing its request body."""
+
+    logger.warning("Rejected upload for project %s: %s", project_id, reason)
+    try:
+        db.add(
+            SecurityEvent(
+                event_code="file.upload.rejected",
+                outcome="denied",
+                resource_type="file",
+                resource_ref=storage_key[:128] or "unknown",
+            )
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Rejected upload could not be recorded for project %s.", project_id)
+
+
 async def reject_oversized_requests(request: Request) -> None:
     """Reject declared request bodies larger than the application accepts."""
 
@@ -421,6 +454,118 @@ async def create_file(
         "File metadata",
     )
     return FileResponse.model_validate(created_file)
+
+
+@app.put(
+    "/projects/{project_id}/uploads/{storage_key:path}",
+    response_model=UploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["files"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def upload_project_file(
+    project_id: UUID,
+    storage_key: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> UploadResponse:
+    """Stream one allow-listed file into project storage and index its metadata."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    upload_result: UploadResult | None = None
+    try:
+        raw_content_length = request.headers.get("content-length")
+        content_length = int(raw_content_length) if raw_content_length is not None else None
+        root = project_storage_root(project)
+        upload_result = await store_upload(
+            root,
+            storage_key,
+            request.headers.get("content-type"),
+            request.stream(),
+            content_length=content_length,
+        )
+        record = FileRecord(
+            relative_path=upload_result.storage_key,
+            name=upload_result.name,
+            extension=upload_result.extension,
+            mime_type=upload_result.media_type,
+            size_bytes=upload_result.size_bytes,
+            modified_at=upload_result.modified_at.isoformat(),
+            sha256=upload_result.checksum_sha256,
+            extension_mime_match=True,
+        )
+        sync_result = sync_inventory_records(
+            db,
+            project_id,
+            [record],
+            approved_root=root,
+        )
+        db.commit()
+    except UploadDestinationExistsError as exc:
+        db.rollback()
+        record_rejected_upload(db, project_id, storage_key, str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload destination already exists.",
+        )
+    except UploadTooLargeError as exc:
+        db.rollback()
+        record_rejected_upload(db, project_id, storage_key, str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Uploaded file exceeds the maximum allowed size.",
+        )
+    except UploadValidationError as exc:
+        db.rollback()
+        record_rejected_upload(db, project_id, storage_key, str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload was rejected by the file safety policy.",
+        )
+    except (FileNotFoundError, NotADirectoryError):
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project storage was not found.",
+        )
+    except PermissionError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for uploads.",
+        )
+    except (IntegrityError, SQLAlchemyError):
+        db.rollback()
+        logger.error("Upload metadata could not be saved for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Upload metadata could not be saved.",
+        )
+    except (OSError, UploadWriteError, ValueError):
+        db.rollback()
+        logger.error("Upload failed for project %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Upload could not be stored safely.",
+        )
+
+    if upload_result is None or not sync_result.records:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Upload metadata was not created.",
+        )
+    file_record = sync_result.records[0]
+    return UploadResponse(
+        project_id=project_id,
+        file_id=file_record.id,
+        storage_key=upload_result.storage_key,
+        name=upload_result.name,
+        extension=upload_result.extension,
+        media_type=upload_result.media_type,
+        size_bytes=upload_result.size_bytes,
+        checksum_sha256=upload_result.checksum_sha256,
+        status=file_record.status,
+    )
 
 
 @app.get(
