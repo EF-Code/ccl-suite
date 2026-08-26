@@ -14,7 +14,7 @@ from file_records import (
     sync_inventory_records,
     validate_storage_key,
 )
-from models import File, FileHistory, Project, User
+from models import File, FileHistory, FileVersion, Project, User
 
 
 def make_session(tmp_path: Path) -> Session:
@@ -68,6 +68,45 @@ def test_sync_persists_metadata_and_creation_history(tmp_path: Path) -> None:
         assert file_record.status == "active"
         history = session.scalars(select(FileHistory)).all()
         assert [entry.event_code for entry in history] == ["created"]
+
+
+def test_file_versions_are_linked_and_ordered_per_file(tmp_path: Path) -> None:
+    with make_session(tmp_path) as session:
+        project = make_project(session)
+        sync_inventory_records(session, project.id, [inventory_record()])
+        session.commit()
+        file_record = session.scalar(select(File))
+        assert file_record is not None
+
+        session.add_all(
+            [
+                FileVersion(
+                    file=file_record,
+                    version_number=2,
+                    storage_key=file_record.storage_key,
+                    media_type=file_record.media_type,
+                    size_bytes=8,
+                    checksum_sha256="b" * 64,
+                    modified_at=file_record.modified_at,
+                    is_original=False,
+                ),
+                FileVersion(
+                    file=file_record,
+                    version_number=1,
+                    storage_key=file_record.storage_key,
+                    media_type=file_record.media_type,
+                    size_bytes=file_record.size_bytes,
+                    checksum_sha256=file_record.checksum_sha256,
+                    modified_at=file_record.modified_at,
+                    is_original=True,
+                ),
+            ]
+        )
+        session.commit()
+        session.refresh(file_record)
+
+        assert [version.version_number for version in file_record.versions] == [1, 2]
+        assert file_record.versions[0].is_original is True
 
 
 def test_sync_records_updates_missing_and_restores_files(tmp_path: Path) -> None:
