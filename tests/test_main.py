@@ -272,6 +272,29 @@ def test_provisions_development_user() -> None:
     assert response.json()["role"] == "reviewer"
 
 
+def test_rejects_unknown_user_roles() -> None:
+    response = request(
+        "POST",
+        "/users",
+        json={"external_ref": "unsupported-role", "role": "operator"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "User role is not supported."}
+
+
+def test_permission_matrix_endpoint_lists_roles() -> None:
+    response = request("GET", "/permissions")
+
+    assert response.status_code == 200
+    assert set(response.json()["roles"]) == {
+        "administrator",
+        "supervisor",
+        "staff",
+        "intern",
+    }
+
+
 def test_gets_one_user_by_id() -> None:
     response = request("GET", f"/users/{TEST_OWNER_ID}")
 
@@ -279,6 +302,40 @@ def test_gets_one_user_by_id() -> None:
     assert response.json()["id"] == TEST_OWNER_ID
     assert response.json()["external_ref"] == "test-owner"
     assert response.json()["role"] == "member"
+
+
+def test_intern_can_read_but_cannot_create_projects() -> None:
+    intern = request(
+        "POST",
+        "/users",
+        json={"external_ref": "intern-user", "role": "intern"},
+    )
+    intern_id = intern.json()["id"]
+
+    listed = request("GET", "/projects", headers={"X-User-ID": intern_id})
+    denied = request(
+        "POST",
+        "/projects",
+        headers={"X-User-ID": intern_id},
+        json={"title": "Denied project", "owner_id": TEST_OWNER_ID},
+    )
+    events = request("GET", "/security-events")
+
+    assert intern.status_code == 201
+    assert listed.status_code == 200
+    assert denied.status_code == 403
+    assert any(event["event_code"] == "access.denied" for event in events.json())
+
+
+def test_protected_routes_require_identity_outside_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("main.ENVIRONMENT", "production")
+
+    response = request("GET", "/projects")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "An authenticated user is required."}
 
 
 def test_get_user_returns_not_found_for_unknown_id() -> None:

@@ -155,6 +155,10 @@ class UploadResponse(BaseModel):
     status: str
 
 
+class PermissionMatrixResponse(BaseModel):
+    roles: dict[str, list[str]]
+
+
 class ConversionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -346,6 +350,7 @@ __all__ = [
     "OrganizationPlanResponse",
     "OrganizationRollbackCreate",
     "OrganizationRollbackResponse",
+    "PermissionMatrixResponse",
     "ProjectCreate",
     "ProjectResponse",
     "SecurityEventCreate",

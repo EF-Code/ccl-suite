@@ -35,6 +35,7 @@ from api_schemas import (
     OrganizationPlanResponse,
     OrganizationRollbackCreate,
     OrganizationRollbackResponse,
+    PermissionMatrixResponse,
     ProjectCreate,
     ProjectResponse,
     SecurityEventCreate,
@@ -95,6 +96,7 @@ from file_organizer import (
 from folder_generator import create_project_folder, normalize_project_name
 from logger import logger
 from models import Approval, File, FileVersion, Project, SecurityEvent, User, Workflow, utc_now
+from permissions import ROLES, canonical_role, permission_matrix, role_can
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -202,6 +204,70 @@ def require_development_provisioning() -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User provisioning is disabled outside development.",
         )
+
+
+def _record_access_denial(db: Session, request: Request, actor: User, permission: str) -> None:
+    """Record a denied authorization decision without request payload data."""
+
+    logger.warning(
+        "Denied %s for role %s on %s",
+        permission,
+        actor.role,
+        request.url.path,
+    )
+    try:
+        db.add(
+            SecurityEvent(
+                actor_id=actor.id,
+                event_code="access.denied",
+                outcome="denied",
+                resource_type="permission",
+                resource_ref=request.url.path[:128],
+            )
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Access denial could not be recorded.")
+
+
+def require_permission(permission: str):
+    """Build a dependency that enforces one role permission.
+
+    The local development fallback uses the first provisioned user when no
+    ``X-User-ID`` header is supplied, preserving the prototype workflow. A
+    production deployment must always provide the header.
+    """
+
+    async def dependency(request: Request, db: Session = Depends(get_db)) -> User:
+        raw_actor_id = request.headers.get("x-user-id")
+        actor: User | None = None
+        if raw_actor_id:
+            try:
+                actor_id = UUID(raw_actor_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="X-User-ID must be a valid user identifier.",
+                )
+            actor = require_record(db, User, actor_id, "User was not found.")
+        elif ENVIRONMENT.lower() == "development":
+            actor = db.scalar(select(User).order_by(User.created_at, User.id))
+
+        if actor is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="An authenticated user is required.",
+            )
+        if not role_can(actor.role, permission):
+            _record_access_denial(db, request, actor, permission)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to perform this action.",
+            )
+        return actor
+
+    return dependency
 
 
 def project_storage_root(project: Project) -> Path:
@@ -313,12 +379,22 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+@app.get("/permissions", response_model=PermissionMatrixResponse, tags=["users"])
+async def list_permissions() -> PermissionMatrixResponse:
+    """Return the static role-permission matrix used by authorization checks."""
+
+    return PermissionMatrixResponse(roles=permission_matrix())
+
+
 @app.post(
     "/project-folders",
     response_model=FolderGenerateResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["file-automation"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("project.create")),
+    ],
 )
 async def generate_project_folder(
     request: FolderGenerateCreate,
@@ -370,6 +446,11 @@ async def create_user(
     user: UserCreate, db: Session = Depends(get_db)
 ) -> UserResponse:
     require_development_provisioning()
+    if canonical_role(user.role) not in ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User role is not supported.",
+        )
     created_user = persist_record(
         db,
         User(external_ref=user.external_ref, role=user.role),
@@ -392,7 +473,10 @@ async def get_user(user_id: UUID, db: Session = Depends(get_db)) -> UserResponse
     response_model=ProjectResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["projects"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("project.create")),
+    ],
 )
 async def create_project(
     project: ProjectCreate, db: Session = Depends(get_db)
@@ -410,7 +494,12 @@ async def create_project(
     return ProjectResponse.from_model(created_project)
 
 
-@app.get("/projects", response_model=list[ProjectResponse], tags=["projects"])
+@app.get(
+    "/projects",
+    response_model=list[ProjectResponse],
+    tags=["projects"],
+    dependencies=[Depends(require_permission("project.read"))],
+)
 async def list_projects(db: Session = Depends(get_db)) -> list[ProjectResponse]:
     projects = list_records(
         db,
@@ -424,7 +513,10 @@ async def list_projects(db: Session = Depends(get_db)) -> list[ProjectResponse]:
     response_model=FileResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["files"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("file.upload")),
+    ],
 )
 async def create_file(
     project_id: UUID,
@@ -461,7 +553,10 @@ async def create_file(
     response_model=UploadResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["files"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("file.upload")),
+    ],
 )
 async def upload_project_file(
     project_id: UUID,
@@ -572,6 +667,7 @@ async def upload_project_file(
     "/projects/{project_id}/files",
     response_model=list[FileResponse],
     tags=["files"],
+    dependencies=[Depends(require_permission("file.read"))],
 )
 async def list_files(
     project_id: UUID, db: Session = Depends(get_db)
@@ -590,6 +686,7 @@ async def list_files(
     "/projects/{project_id}/files/search",
     response_model=list[FileResponse],
     tags=["files"],
+    dependencies=[Depends(require_permission("file.read"))],
 )
 async def search_project_files(
     project_id: UUID,
@@ -629,6 +726,7 @@ async def search_project_files(
     "/projects/{project_id}/files/{file_id}",
     response_model=FileResponse,
     tags=["files"],
+    dependencies=[Depends(require_permission("file.read"))],
 )
 async def get_project_file(
     project_id: UUID,
@@ -648,6 +746,7 @@ async def get_project_file(
     "/projects/{project_id}/files/{file_id}/history",
     response_model=list[FileHistoryResponse],
     tags=["files"],
+    dependencies=[Depends(require_permission("file.read"))],
 )
 async def list_project_file_history(
     project_id: UUID,
@@ -668,6 +767,7 @@ async def list_project_file_history(
     "/projects/{project_id}/files/{file_id}/versions",
     response_model=list[FileVersionResponse],
     tags=["files"],
+    dependencies=[Depends(require_permission("file.read"))],
 )
 async def list_project_file_versions(
     project_id: UUID,
@@ -689,7 +789,10 @@ async def list_project_file_versions(
     response_model=FileRestoreResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["files"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("file.restore")),
+    ],
 )
 async def restore_project_file_version(
     project_id: UUID,
@@ -764,7 +867,10 @@ async def restore_project_file_version(
     response_model=ConversionResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["conversions"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("conversion.run")),
+    ],
 )
 async def convert_project_file(
     project_id: UUID,
@@ -835,7 +941,10 @@ async def convert_project_file(
     response_model=InventoryResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["file-automation"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("file.read")),
+    ],
 )
 async def inventory_project_files(
     project_id: UUID,
@@ -915,7 +1024,10 @@ async def inventory_project_files(
     response_model=OrganizationPlanResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["file-automation"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("file.read")),
+    ],
 )
 async def preview_project_organization(
     project_id: UUID,
@@ -955,7 +1067,10 @@ async def preview_project_organization(
     response_model=OrganizationApplyResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["file-automation"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("file.organize")),
+    ],
 )
 async def apply_project_organization(
     project_id: UUID,
@@ -1012,7 +1127,10 @@ async def apply_project_organization(
     "/projects/{project_id}/organization/rollback",
     response_model=OrganizationRollbackResponse,
     tags=["file-automation"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("file.organize")),
+    ],
 )
 async def rollback_project_organization(
     project_id: UUID,
@@ -1062,7 +1180,10 @@ async def rollback_project_organization(
     response_model=WorkflowResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["workflows"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("workflow.manage")),
+    ],
 )
 async def create_workflow(
     project_id: UUID,
@@ -1090,6 +1211,7 @@ async def create_workflow(
     "/projects/{project_id}/workflows",
     response_model=list[WorkflowResponse],
     tags=["workflows"],
+    dependencies=[Depends(require_permission("workflow.manage"))],
 )
 async def list_workflows(
     project_id: UUID, db: Session = Depends(get_db)
@@ -1109,7 +1231,10 @@ async def list_workflows(
     response_model=ApprovalResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["approvals"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("workflow.manage")),
+    ],
 )
 async def create_approval(
     workflow_id: UUID,
@@ -1135,6 +1260,7 @@ async def create_approval(
     "/workflows/{workflow_id}/approvals",
     response_model=list[ApprovalResponse],
     tags=["approvals"],
+    dependencies=[Depends(require_permission("workflow.manage"))],
 )
 async def list_approvals(
     workflow_id: UUID, db: Session = Depends(get_db)
@@ -1153,7 +1279,10 @@ async def list_approvals(
     "/approvals/{approval_id}/decision",
     response_model=ApprovalResponse,
     tags=["approvals"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("approval.decide")),
+    ],
 )
 async def decide_approval(
     approval_id: UUID,
@@ -1181,7 +1310,10 @@ async def decide_approval(
     response_model=SecurityEventResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["security-events"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("security.write")),
+    ],
 )
 async def create_security_event(
     event: SecurityEventCreate, db: Session = Depends(get_db)
@@ -1208,6 +1340,7 @@ async def create_security_event(
     "/security-events",
     response_model=list[SecurityEventResponse],
     tags=["security-events"],
+    dependencies=[Depends(require_permission("security.read"))],
 )
 async def list_security_events(
     limit: int = Query(default=100, ge=1, le=1000),
