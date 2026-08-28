@@ -778,17 +778,20 @@ async def verify_project_backup(
             expected_project_ref=project_id,
         )
     except BackupIntegrityError:
+        record_backup_event(db, actor.id, backup.id, "backup.verification_failed", "failure")
         logger.warning("Backup integrity verification failed for %s.", backup_id)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Backup failed integrity verification.",
         )
     except BackupArtifactError:
+        record_backup_event(db, actor.id, backup.id, "backup.verification_failed", "failure")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Backup artifact was not found.",
         )
     except (BackupPathError, FileNotFoundError, NotADirectoryError, OSError):
+        record_backup_event(db, actor.id, backup.id, "backup.verification_failed", "failure")
         logger.error("Backup storage could not be verified for %s.", backup_id)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -847,39 +850,46 @@ async def restore_project_backup(
             expected_project_ref=project_id,
         )
     except BackupDestinationExistsError:
+        record_backup_event(db, actor.id, backup.id, "backup.restore_failed", "failure")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Restore destination already exists.",
         )
     except BackupIntegrityError:
+        record_backup_event(db, actor.id, backup.id, "backup.restore_failed", "failure")
         logger.warning("Project backup integrity check failed for %s.", backup_id)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Backup failed integrity verification.",
         )
     except BackupPathError:
+        record_backup_event(db, actor.id, backup.id, "backup.restore_failed", "failure")
         logger.warning("Rejected backup restore path for %s.", backup_id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Restore destination must remain inside project storage.",
         )
     except BackupArtifactError:
+        record_backup_event(db, actor.id, backup.id, "backup.restore_failed", "failure")
         logger.error("Project backup artifact could not be restored for %s.", backup_id)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Project backup could not be restored safely.",
         )
     except (FileNotFoundError, NotADirectoryError):
+        record_backup_event(db, actor.id, backup.id, "backup.restore_failed", "failure")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project or backup storage was not found.",
         )
     except PermissionError:
+        record_backup_event(db, actor.id, backup.id, "backup.restore_failed", "failure")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Project storage is not available for restoration.",
         )
     except OSError:
+        record_backup_event(db, actor.id, backup.id, "backup.restore_failed", "failure")
         logger.error("Project backup restore failed for %s.", backup_id)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
