@@ -726,6 +726,7 @@ async def create_project_backup(
             detail="Project backup could not be created safely.",
         )
 
+    record_backup_event(db, actor.id, backup.id, "backup.created", "success")
     return BackupResponse.model_validate(backup)
 
 
@@ -763,6 +764,7 @@ async def list_project_backups(
 async def verify_project_backup(
     project_id: UUID,
     backup_id: UUID,
+    actor: User = Depends(require_permission("backup.verify")),
     db: Session = Depends(get_db),
 ) -> BackupVerifyResponse:
     """Recheck a persisted backup archive and update its verification time."""
@@ -805,6 +807,7 @@ async def verify_project_backup(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database temporarily unavailable.",
         )
+    record_backup_event(db, actor.id, backup.id, "backup.verified", "success")
     return BackupVerifyResponse(
         project_id=project_id,
         backup=BackupResponse.model_validate(backup),
@@ -833,8 +836,7 @@ async def restore_project_backup(
 ) -> BackupRestoreResponse:
     """Restore a verified project backup to a new path below project storage."""
 
-    project, backup = require_project_backup(db, project_id, backup_id)
-    del actor  # Authorization is enforced by the dependency; no caller ID is accepted.
+    _project, backup = require_project_backup(db, project_id, backup_id)
     try:
         result = restore_backup(
             backup_storage_for_record(backup),
@@ -896,6 +898,7 @@ async def restore_project_backup(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database temporarily unavailable.",
         )
+    record_backup_event(db, actor.id, backup.id, "backup.restored", "success")
     return BackupRestoreResponse(
         project_id=project_id,
         backup_id=backup_id,

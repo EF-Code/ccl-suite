@@ -603,6 +603,17 @@ def test_project_backup_endpoint_creates_and_reverifies_archive(
         projects_root / "restored" / "endpoint-project" / "notes.txt"
     ).read_text(encoding="utf-8") == "backup me"
     assert (project_root / "notes.txt").read_text(encoding="utf-8") == "backup me"
+    events = request("GET", "/security-events")
+    backup_events = [
+        event for event in events.json() if event["resource_ref"] == payload["id"]
+    ]
+    assert {event["event_code"] for event in backup_events} == {
+        "backup.created",
+        "backup.verified",
+        "backup.restored",
+    }
+    assert {event["actor_id"] for event in backup_events} == {TEST_OWNER_ID}
+    assert all(event["request_ref"] is None for event in backup_events)
 
 
 def test_secure_upload_rejects_oversized_body(
