@@ -544,8 +544,12 @@ def test_secure_upload_endpoint_indexes_file_and_logs_rejection(
     assert events.status_code == 200
     assert {event["event_code"] for event in events.json()} == {"file.upload.rejected"}
     assert {event["actor_id"] for event in events.json()} == {TEST_OWNER_ID}
-    assert "bad" not in events.text
-    assert "replace" not in events.text
+    events_payload = events.json()
+    assert all(event["request_ref"] is None for event in events_payload)
+    assert {
+        event["resource_ref"]
+        for event in events_payload
+    } == {"incoming/notes.txt", "incoming/report.csv.exe"}
 
 
 def test_secure_upload_rejects_oversized_body(
