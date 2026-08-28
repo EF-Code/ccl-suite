@@ -4,7 +4,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from pydantic import BaseModel
@@ -17,6 +17,11 @@ from api_schemas import (
     ApprovalCreate,
     ApprovalDecisionRequest,
     ApprovalResponse,
+    BackupCreate,
+    BackupResponse,
+    BackupRestoreCreate,
+    BackupRestoreResponse,
+    BackupVerifyResponse,
     ConversionCreate,
     ConversionResponse,
     FileCreate,
@@ -64,6 +69,21 @@ from file_inventory import (
     scan_files,
     write_manifests,
 )
+from file_backups import (
+    BackupArtifact,
+    BackupArtifactError,
+    BackupDestinationExistsError,
+    BackupIntegrityError,
+    BackupPathError,
+    BackupSourceError,
+    BackupStoragePaths,
+    DEFAULT_BACKUP_ROOT,
+    backup_storage_paths,
+    create_backup,
+    remove_backup_artifacts,
+    restore_backup,
+    verify_backup,
+)
 from file_records import (
     build_file_history_statement,
     build_file_search_statement,
@@ -97,7 +117,17 @@ from file_organizer import (
 )
 from folder_generator import create_project_folder, normalize_project_name
 from logger import logger
-from models import Approval, File, FileVersion, Project, SecurityEvent, User, Workflow, utc_now
+from models import (
+    Approval,
+    Backup,
+    File,
+    FileVersion,
+    Project,
+    SecurityEvent,
+    User,
+    Workflow,
+    utc_now,
+)
 from permissions import ROLES, canonical_role, permission_matrix, role_can
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
@@ -106,6 +136,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 app = FastAPI(title="CCL AI Suite", version="0.1.0")
 Entity = TypeVar("Entity")
 PROJECT_ROOT = DEFAULT_PROJECT_ROOT
+BACKUP_ROOT = DEFAULT_BACKUP_ROOT
 
 
 class HealthResponse(BaseModel):
@@ -296,6 +327,18 @@ def project_storage_root(project: Project) -> Path:
     approved_projects_root = resolve_approved_root(PROJECT_ROOT)
     project_name = normalize_project_name(project.name)
     return resolve_approved_root(approved_projects_root / project_name)
+
+
+def backup_storage_for_record(backup: Backup) -> BackupStoragePaths:
+    """Resolve a persisted backup through generated keys, never raw path text."""
+
+    storage = backup_storage_paths(BACKUP_ROOT, backup.project_id, backup.id)
+    if (
+        storage.artifact_key != backup.artifact_key
+        or storage.manifest_key != backup.manifest_key
+    ):
+        raise BackupIntegrityError("Backup metadata does not match generated storage paths.")
+    return storage
 
 
 def project_relative_path(root: Path, candidate: str, label: str) -> Path:
