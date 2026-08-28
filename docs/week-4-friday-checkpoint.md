@@ -42,6 +42,15 @@ checksums, response counts, source/restored file comparisons, destination, and
 the authenticated actor. The opt-in browser and PostgreSQL checks remain
 useful release gates when their local services are available.
 
+## Local smoke evidence
+
+On 2026-08-28, `scripts/backup_restore_demo.sh` was run against an isolated
+SQLite database with Alembic migrations and a local Uvicorn process. The API
+health check returned `200`; the script created a backup, verified five
+manifest entries containing one sample file, restored 22 bytes, and confirmed
+the source and restored sample with `cmp`. No credentials or repository
+project data were used by that smoke run.
+
 ## Boundary
 
 The V1 archive restores project filesystem contents and integrity evidence. It
