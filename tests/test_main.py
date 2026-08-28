@@ -552,6 +552,35 @@ def test_secure_upload_endpoint_indexes_file_and_logs_rejection(
     } == {"incoming/notes.txt", "incoming/report.csv.exe"}
 
 
+def test_project_backup_endpoint_creates_and_reverifies_archive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    backups_root = tmp_path / "backups"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    monkeypatch.setattr("main.BACKUP_ROOT", backups_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "notes.txt").write_text("backup me", encoding="utf-8")
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/backups",
+        json={},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["project_id"] == project["id"]
+    assert payload["created_by_id"] == TEST_OWNER_ID
+    assert payload["status"] == "verified"
+    assert payload["file_count"] == 1
+    assert (backups_root / payload["artifact_key"]).is_file()
+    assert (backups_root / payload["manifest_key"]).is_file()
+
+
 def test_secure_upload_rejects_oversized_body(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -603,6 +603,94 @@ async def list_projects(db: Session = Depends(get_db)) -> list[ProjectResponse]:
 
 
 @app.post(
+    "/projects/{project_id}/backups",
+    response_model=BackupResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["backups"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def create_project_backup(
+    project_id: UUID,
+    _backup_request: BackupCreate | None = None,
+    actor: User = Depends(require_permission("backup.create")),
+    db: Session = Depends(get_db),
+) -> BackupResponse:
+    """Create, re-verify, and persist one project backup."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    artifact: BackupArtifact | None = None
+    try:
+        artifact = create_backup(
+            project_storage_root(project),
+            BACKUP_ROOT,
+            project_id,
+            uuid4(),
+        )
+        verification = verify_backup(
+            artifact.storage,
+            expected_archive_checksum=artifact.archive_checksum_sha256,
+            expected_manifest_checksum=artifact.manifest_checksum_sha256,
+            expected_project_ref=project_id,
+        )
+        backup = Backup(
+            id=artifact.storage.backup_id,
+            project_id=project_id,
+            created_by_id=actor.id,
+            artifact_key=artifact.artifact_key,
+            manifest_key=artifact.manifest_key,
+            archive_size_bytes=artifact.archive_size_bytes,
+            file_count=verification.file_count,
+            total_bytes=verification.bytes_verified,
+            archive_checksum_sha256=verification.archive_checksum_sha256,
+            manifest_checksum_sha256=verification.manifest_checksum_sha256,
+            status="verified",
+            verified_at=utc_now(),
+        )
+        db.add(backup)
+        db.commit()
+        db.refresh(backup)
+    except (FileNotFoundError, NotADirectoryError):
+        db.rollback()
+        cleanup_failed_backup(artifact)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project storage was not found.",
+        )
+    except PermissionError:
+        db.rollback()
+        cleanup_failed_backup(artifact)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project or backup storage is not available.",
+        )
+    except IntegrityError:
+        db.rollback()
+        cleanup_failed_backup(artifact)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project backup could not be saved.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        cleanup_failed_backup(artifact)
+        logger.error("Project backup metadata could not be saved for %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    except (BackupSourceError, BackupArtifactError, BackupPathError, OSError):
+        db.rollback()
+        cleanup_failed_backup(artifact)
+        logger.error("Project backup creation failed for %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Project backup could not be created safely.",
+        )
+
+    return BackupResponse.model_validate(backup)
+
+
+@app.post(
     "/projects/{project_id}/files",
     response_model=FileResponse,
     status_code=status.HTTP_201_CREATED,
