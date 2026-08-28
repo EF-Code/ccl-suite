@@ -790,6 +790,100 @@ async def verify_project_backup(
 
 
 @app.post(
+    "/projects/{project_id}/backups/{backup_id}/restore",
+    response_model=BackupRestoreResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["backups"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("backup.restore")),
+    ],
+)
+async def restore_project_backup(
+    project_id: UUID,
+    backup_id: UUID,
+    restore_request: BackupRestoreCreate,
+    actor: User = Depends(require_permission("backup.restore")),
+    db: Session = Depends(get_db),
+) -> BackupRestoreResponse:
+    """Restore a verified project backup to a new path below project storage."""
+
+    project, backup = require_project_backup(db, project_id, backup_id)
+    del actor  # Authorization is enforced by the dependency; no caller ID is accepted.
+    try:
+        result = restore_backup(
+            backup_storage_for_record(backup),
+            PROJECT_ROOT,
+            restore_request.destination_path,
+            expected_archive_checksum=backup.archive_checksum_sha256,
+            expected_manifest_checksum=backup.manifest_checksum_sha256,
+            expected_project_ref=project_id,
+        )
+    except BackupDestinationExistsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Restore destination already exists.",
+        )
+    except BackupIntegrityError:
+        logger.warning("Project backup integrity check failed for %s.", backup_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Backup failed integrity verification.",
+        )
+    except BackupPathError:
+        logger.warning("Rejected backup restore path for %s.", backup_id)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Restore destination must remain inside project storage.",
+        )
+    except BackupArtifactError:
+        logger.error("Project backup artifact could not be restored for %s.", backup_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Project backup could not be restored safely.",
+        )
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project or backup storage was not found.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for restoration.",
+        )
+    except OSError:
+        logger.error("Project backup restore failed for %s.", backup_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Project backup could not be restored safely.",
+        )
+
+    backup.status = "restored"
+    backup.restored_at = utc_now()
+    try:
+        db.commit()
+        db.refresh(backup)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Backup restore metadata could not be saved for %s.", backup_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    return BackupRestoreResponse(
+        project_id=project_id,
+        backup_id=backup_id,
+        destination_path=result.destination_relative.as_posix(),
+        entries_restored=result.entries_restored,
+        files_restored=result.file_count,
+        bytes_restored=result.bytes_restored,
+        archive_checksum_sha256=result.archive_checksum_sha256,
+        manifest_checksum_sha256=result.manifest_checksum_sha256,
+    )
+
+
+@app.post(
     "/projects/{project_id}/files",
     response_model=FileResponse,
     status_code=status.HTTP_201_CREATED,

@@ -591,6 +591,18 @@ def test_project_backup_endpoint_creates_and_reverifies_archive(
     assert verified.json()["entries_verified"] == 1
     assert verified.json()["files_verified"] == 1
     assert verified.json()["bytes_verified"] == len("backup me")
+    restored = request(
+        "POST",
+        f"/projects/{project['id']}/backups/{payload['id']}/restore",
+        json={"destination_path": "restored/endpoint-project"},
+    )
+    assert restored.status_code == 201
+    assert restored.json()["files_restored"] == 1
+    assert restored.json()["destination_path"] == "restored/endpoint-project"
+    assert (
+        projects_root / "restored" / "endpoint-project" / "notes.txt"
+    ).read_text(encoding="utf-8") == "backup me"
+    assert (project_root / "notes.txt").read_text(encoding="utf-8") == "backup me"
 
 
 def test_secure_upload_rejects_oversized_body(
