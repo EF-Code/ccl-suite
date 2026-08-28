@@ -151,10 +151,56 @@
           <div id="inventory-result" class="result-box" hidden></div>
         </article>
 
+        <article class="card card-wide backup-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">06 · Recovery</p>
+              <h2>Backup and restore</h2>
+            </div>
+            <span class="icon-tile" aria-hidden="true">⟳</span>
+          </div>
+          <div class="backup-layout">
+            <div>
+              <p class="muted">
+                Create a checksummed project archive, re-verify every manifest
+                entry, and restore a safe copy without replacing the original.
+              </p>
+              <div class="format-list">
+                <span>SHA-256 manifest</span>
+                <span>Originals preserved</span>
+                <span>No-overwrite restore</span>
+              </div>
+            </div>
+            <form id="backup-form" class="stack-form">
+              <label>
+                Project ID
+                <input id="backup-project-id" name="project_id" placeholder="Select a project below" required />
+              </label>
+              <div class="button-row">
+                <button id="backup-create" class="button button-primary" type="button">Create backup</button>
+                <button id="backup-list" class="button button-secondary" type="button">List backups</button>
+              </div>
+              <label>
+                Backup ID
+                <input id="backup-id" name="backup_id" placeholder="Create or select a backup" required />
+              </label>
+              <div class="button-row">
+                <button id="backup-verify" class="button button-secondary" type="button">Verify backup</button>
+              </div>
+              <label>
+                New restore destination
+                <input id="backup-destination" name="destination_path" value="restored/sample-project-check" required maxlength="512" />
+              </label>
+              <button id="backup-restore" class="button button-accent" type="button">Restore safe copy</button>
+            </form>
+          </div>
+          <div id="backup-result" class="result-box" hidden></div>
+        </article>
+
         <article class="card card-wide">
           <div class="card-heading card-heading-inline">
             <div>
-              <p class="eyebrow">06 · Workspaces</p>
+              <p class="eyebrow">07 · Workspaces</p>
               <h2>Registered projects</h2>
             </div>
             <button id="projects-refresh" class="button button-secondary" type="button">Refresh list</button>
@@ -167,7 +213,7 @@
         <article class="card card-wide conversion-card">
           <div class="card-heading">
             <div>
-              <p class="eyebrow">07 · Conversion</p>
+              <p class="eyebrow">08 · Conversion</p>
               <h2>Controlled conversion</h2>
             </div>
             <span class="icon-tile" aria-hidden="true">↗</span>
@@ -206,7 +252,7 @@
         <article class="card card-wide organizer-card">
           <div class="card-heading">
             <div>
-              <p class="eyebrow">08 · Organisation</p>
+              <p class="eyebrow">09 · Organisation</p>
               <h2>Preview and apply file organisation</h2>
             </div>
             <span class="icon-tile" aria-hidden="true">⇢</span>
@@ -252,7 +298,7 @@
         <span class="scope-line" aria-hidden="true"></span>
         <p>
           <strong>Prototype scope:</strong> this screen now exposes the current
-          folder, inventory, organisation, conversion, and database API actions.
+          folder, inventory, backup/recovery, organisation, conversion, and database API actions.
           It does not add authentication or replace the richer command-line
           options that remain available for advanced workflows.
         </p>
