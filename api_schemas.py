@@ -143,6 +143,57 @@ class FileRestoreResponse(BaseModel):
     bytes_restored: int = Field(ge=0)
 
 
+class BackupCreate(BaseModel):
+    """Optional request envelope for creating a project backup."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class BackupResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    project_id: UUID
+    created_by_id: UUID | None
+    artifact_key: str
+    manifest_key: str
+    archive_size_bytes: int = Field(ge=0)
+    file_count: int = Field(ge=0)
+    total_bytes: int = Field(ge=0)
+    archive_checksum_sha256: str
+    manifest_checksum_sha256: str
+    status: Literal["created", "verified", "restored"]
+    created_at: datetime
+    verified_at: datetime | None
+    restored_at: datetime | None
+    updated_at: datetime
+
+
+class BackupVerifyResponse(BaseModel):
+    project_id: UUID
+    backup: BackupResponse
+    entries_verified: int = Field(ge=0)
+    files_verified: int = Field(ge=0)
+    bytes_verified: int = Field(ge=0)
+
+
+class BackupRestoreCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    destination_path: str = Field(min_length=1, max_length=512)
+
+
+class BackupRestoreResponse(BaseModel):
+    project_id: UUID
+    backup_id: UUID
+    destination_path: str
+    entries_restored: int = Field(ge=0)
+    files_restored: int = Field(ge=0)
+    bytes_restored: int = Field(ge=0)
+    archive_checksum_sha256: str
+    manifest_checksum_sha256: str
+
+
 class UploadResponse(BaseModel):
     project_id: UUID
     file_id: UUID
@@ -338,6 +389,11 @@ __all__ = [
     "ApprovalCreate",
     "ApprovalDecisionRequest",
     "ApprovalResponse",
+    "BackupCreate",
+    "BackupResponse",
+    "BackupRestoreCreate",
+    "BackupRestoreResponse",
+    "BackupVerifyResponse",
     "ConversionCreate",
     "ConversionResponse",
     "FolderGenerateCreate",
