@@ -582,6 +582,15 @@ def test_project_backup_endpoint_creates_and_reverifies_archive(
     listed = request("GET", f"/projects/{project['id']}/backups")
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()] == [payload["id"]]
+    verified = request(
+        "POST",
+        f"/projects/{project['id']}/backups/{payload['id']}/verify",
+        json={},
+    )
+    assert verified.status_code == 200
+    assert verified.json()["entries_verified"] == 1
+    assert verified.json()["files_verified"] == 1
+    assert verified.json()["bytes_verified"] == len("backup me")
 
 
 def test_secure_upload_rejects_oversized_body(

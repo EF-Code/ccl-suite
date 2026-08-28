@@ -727,6 +727,69 @@ async def list_project_backups(
 
 
 @app.post(
+    "/projects/{project_id}/backups/{backup_id}/verify",
+    response_model=BackupVerifyResponse,
+    tags=["backups"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("backup.verify")),
+    ],
+)
+async def verify_project_backup(
+    project_id: UUID,
+    backup_id: UUID,
+    db: Session = Depends(get_db),
+) -> BackupVerifyResponse:
+    """Recheck a persisted backup archive and update its verification time."""
+
+    _project, backup = require_project_backup(db, project_id, backup_id)
+    try:
+        verification = verify_backup(
+            backup_storage_for_record(backup),
+            expected_archive_checksum=backup.archive_checksum_sha256,
+            expected_manifest_checksum=backup.manifest_checksum_sha256,
+            expected_project_ref=project_id,
+        )
+    except BackupIntegrityError:
+        logger.warning("Backup integrity verification failed for %s.", backup_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Backup failed integrity verification.",
+        )
+    except BackupArtifactError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backup artifact was not found.",
+        )
+    except (BackupPathError, FileNotFoundError, NotADirectoryError, OSError):
+        logger.error("Backup storage could not be verified for %s.", backup_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Backup could not be verified safely.",
+        )
+
+    backup.status = "verified"
+    backup.verified_at = utc_now()
+    try:
+        db.commit()
+        db.refresh(backup)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Backup verification metadata could not be saved for %s.", backup_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    return BackupVerifyResponse(
+        project_id=project_id,
+        backup=BackupResponse.model_validate(backup),
+        entries_verified=verification.entries_verified,
+        files_verified=verification.file_count,
+        bytes_verified=verification.bytes_verified,
+    )
+
+
+@app.post(
     "/projects/{project_id}/files",
     response_model=FileResponse,
     status_code=status.HTTP_201_CREATED,
