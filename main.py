@@ -341,6 +341,20 @@ def backup_storage_for_record(backup: Backup) -> BackupStoragePaths:
     return storage
 
 
+def require_project_backup(
+    db: Session,
+    project_id: UUID,
+    backup_id: UUID,
+) -> tuple[Project, Backup]:
+    """Load a backup only when it belongs to the requested project."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    backup = require_record(db, Backup, backup_id, "Backup was not found.")
+    if backup.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup was not found.")
+    return project, backup
+
+
 def project_relative_path(root: Path, candidate: str, label: str) -> Path:
     """Resolve one user-supplied project-relative path without traversal."""
 
