@@ -579,6 +579,9 @@ def test_project_backup_endpoint_creates_and_reverifies_archive(
     assert payload["file_count"] == 1
     assert (backups_root / payload["artifact_key"]).is_file()
     assert (backups_root / payload["manifest_key"]).is_file()
+    listed = request("GET", f"/projects/{project['id']}/backups")
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [payload["id"]]
 
 
 def test_secure_upload_rejects_oversized_body(

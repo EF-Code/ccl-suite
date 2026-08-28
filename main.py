@@ -704,6 +704,28 @@ async def create_project_backup(
     return BackupResponse.model_validate(backup)
 
 
+@app.get(
+    "/projects/{project_id}/backups",
+    response_model=list[BackupResponse],
+    tags=["backups"],
+    dependencies=[Depends(require_permission("backup.read"))],
+)
+async def list_project_backups(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[BackupResponse]:
+    """List only the backup metadata belonging to one project."""
+
+    require_record(db, Project, project_id, "Project was not found.")
+    backups = list_records(
+        db,
+        select(Backup)
+        .where(Backup.project_id == project_id)
+        .order_by(Backup.created_at.desc(), Backup.id),
+    )
+    return [BackupResponse.model_validate(backup) for backup in backups]
+
+
 @app.post(
     "/projects/{project_id}/files",
     response_model=FileResponse,
