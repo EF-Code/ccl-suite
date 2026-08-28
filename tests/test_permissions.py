@@ -8,6 +8,9 @@ def test_permission_matrix_lists_four_roles_and_explicit_operations() -> None:
     assert "user.manage" in matrix["administrator"]
     assert "approval.decide" in matrix["supervisor"]
     assert "file.upload" in matrix["staff"]
+    assert "backup.create" in matrix["supervisor"]
+    assert "backup.restore" in matrix["staff"]
+    assert "backup.restore" not in matrix["intern"]
     assert matrix["intern"] == ["project.read", "file.read"]
 
 
@@ -15,5 +18,7 @@ def test_legacy_roles_are_scoped_aliases() -> None:
     assert canonical_role(" member ") == "staff"
     assert canonical_role("reviewer") == "supervisor"
     assert role_can("member", "file.upload") is True
+    assert role_can("member", "backup.verify") is True
     assert role_can("intern", "file.upload") is False
+    assert role_can("intern", "backup.read") is False
     assert permissions_for_role("unknown") == frozenset()
