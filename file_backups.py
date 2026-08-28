@@ -8,8 +8,11 @@ the small immutable contracts defined here.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Literal
@@ -229,12 +232,212 @@ def build_backup_manifest(
 ) -> BackupManifest:
     """Build a versioned manifest from a project without writing to it."""
 
-    entries = tuple(iter_project_entries(approved_root))
+    entries = tuple(
+        sorted(
+            iter_project_entries(approved_root),
+            key=lambda entry: (entry.relative_path, entry.kind),
+        )
+    )
     return BackupManifest(
         format_version=BACKUP_FORMAT_VERSION,
         project_ref=normalize_project_ref(project_ref),
         entries=entries,
     )
+
+
+def _entry_to_dict(entry: BackupEntry) -> dict[str, object]:
+    """Translate one validated manifest entry to JSON-compatible data."""
+
+    return {
+        "checksum_sha256": entry.checksum_sha256,
+        "kind": entry.kind,
+        "mode": entry.mode,
+        "relative_path": entry.relative_path,
+        "size_bytes": entry.size_bytes,
+    }
+
+
+def _validate_manifest(manifest: BackupManifest) -> BackupManifest:
+    """Validate and normalize a manifest before serialisation or use."""
+
+    if manifest.format_version != BACKUP_FORMAT_VERSION:
+        raise BackupIntegrityError("Unsupported backup manifest version.")
+    project_ref = normalize_project_ref(manifest.project_ref)
+    entries: list[BackupEntry] = []
+    seen: dict[str, BackupEntryKind] = {}
+    for entry in manifest.entries:
+        relative_path = normalize_backup_relative_path(entry.relative_path)
+        if entry.kind not in {"file", "directory"}:
+            raise BackupIntegrityError("Backup manifest contains an unsupported entry kind.")
+        if (
+            not isinstance(entry.size_bytes, int)
+            or isinstance(entry.size_bytes, bool)
+            or entry.size_bytes < 0
+        ):
+            raise BackupIntegrityError("Backup manifest contains an invalid entry size.")
+        if (
+            not isinstance(entry.mode, int)
+            or isinstance(entry.mode, bool)
+            or entry.mode < 0
+            or entry.mode > 0o777
+        ):
+            raise BackupIntegrityError("Backup manifest contains an invalid entry mode.")
+        if entry.kind == "directory":
+            if entry.size_bytes != 0 or entry.checksum_sha256 is not None:
+                raise BackupIntegrityError("Directory entries must not contain file metadata.")
+            checksum = None
+        else:
+            checksum = entry.checksum_sha256
+            if (
+                not isinstance(checksum, str)
+                or len(checksum) != 64
+                or checksum.lower() != checksum
+                or any(character not in "0123456789abcdef" for character in checksum)
+            ):
+                raise BackupIntegrityError("File entries require a lowercase SHA-256 checksum.")
+        if relative_path in seen:
+            raise BackupIntegrityError("Backup manifest contains duplicate paths.")
+        for index in range(1, len(relative_path.split("/"))):
+            parent = "/".join(relative_path.split("/")[:index])
+            if seen.get(parent) == "file":
+                raise BackupIntegrityError("A file entry cannot contain child paths.")
+        seen[relative_path] = entry.kind
+        entries.append(
+            BackupEntry(
+                relative_path=relative_path,
+                kind=entry.kind,
+                size_bytes=entry.size_bytes,
+                checksum_sha256=checksum,
+                mode=entry.mode,
+            )
+        )
+
+    ordered_entries = tuple(sorted(entries, key=lambda entry: (entry.relative_path, entry.kind)))
+    if tuple(entries) != ordered_entries:
+        raise BackupIntegrityError("Backup manifest entries must be sorted deterministically.")
+    return BackupManifest(
+        format_version=BACKUP_FORMAT_VERSION,
+        project_ref=project_ref,
+        entries=ordered_entries,
+    )
+
+
+def backup_manifest_bytes(manifest: BackupManifest) -> bytes:
+    """Return canonical UTF-8 JSON bytes for a validated manifest."""
+
+    validated = _validate_manifest(manifest)
+    payload = {
+        "entries": [_entry_to_dict(entry) for entry in validated.entries],
+        "format_version": validated.format_version,
+        "project_ref": validated.project_ref,
+    }
+    return (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _manifest_from_payload(payload: object) -> BackupManifest:
+    """Parse and strictly validate decoded JSON manifest data."""
+
+    if not isinstance(payload, dict) or set(payload) != {
+        "entries",
+        "format_version",
+        "project_ref",
+    }:
+        raise BackupIntegrityError("Backup manifest has an invalid top-level shape.")
+    raw_entries = payload["entries"]
+    if not isinstance(raw_entries, list):
+        raise BackupIntegrityError("Backup manifest entries must be a list.")
+    entries: list[BackupEntry] = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, dict) or set(raw_entry) != {
+            "checksum_sha256",
+            "kind",
+            "mode",
+            "relative_path",
+            "size_bytes",
+        }:
+            raise BackupIntegrityError("Backup manifest contains an invalid entry shape.")
+        kind = raw_entry["kind"]
+        if kind not in {"file", "directory"}:
+            raise BackupIntegrityError("Backup manifest contains an unsupported entry kind.")
+        entries.append(
+            BackupEntry(
+                relative_path=raw_entry["relative_path"],  # type: ignore[arg-type]
+                kind=kind,
+                size_bytes=raw_entry["size_bytes"],  # type: ignore[arg-type]
+                checksum_sha256=raw_entry["checksum_sha256"],  # type: ignore[arg-type]
+                mode=raw_entry["mode"],  # type: ignore[arg-type]
+            )
+        )
+    return _validate_manifest(
+        BackupManifest(
+            format_version=payload["format_version"],  # type: ignore[arg-type]
+            project_ref=payload["project_ref"],  # type: ignore[arg-type]
+            entries=tuple(entries),
+        )
+    )
+
+
+def read_backup_manifest(path: Path | str) -> tuple[BackupManifest, str]:
+    """Read one manifest and return it with the checksum of its exact bytes."""
+
+    candidate = Path(path)
+    if candidate.is_symlink() or not candidate.is_file():
+        raise BackupArtifactError("Backup manifest is unavailable.")
+    try:
+        raw = candidate.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BackupIntegrityError("Backup manifest could not be read safely.") from exc
+    manifest = _manifest_from_payload(payload)
+    return manifest, hashlib.sha256(raw).hexdigest()
+
+
+def _write_new_bytes(destination: Path, payload: bytes, label: str) -> None:
+    """Write bytes durably and publish them without replacing an existing path."""
+
+    if destination.is_symlink():
+        raise BackupArtifactError(f"{label} must not be a symlink.")
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+        if destination.parent.is_symlink():
+            raise BackupPathError(f"{label} parent must not be a symlink.")
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=destination.parent,
+            prefix=".backup-",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, destination)
+        except FileExistsError as exc:
+            raise BackupArtifactError(f"{label} already exists.") from exc
+    except BackupError:
+        raise
+    except OSError as exc:
+        raise BackupArtifactError(f"{label} could not be written safely.") from exc
+    finally:
+        if "temporary" in locals():
+            temporary.unlink(missing_ok=True)
+
+
+def write_backup_manifest(path: Path | str, manifest: BackupManifest) -> str:
+    """Publish one canonical manifest and return its SHA-256 checksum."""
+
+    payload = backup_manifest_bytes(manifest)
+    _write_new_bytes(Path(path), payload, "Backup manifest")
+    return hashlib.sha256(payload).hexdigest()
 
 
 __all__ = [
@@ -253,10 +456,13 @@ __all__ = [
     "BackupSourceError",
     "BackupStoragePaths",
     "backup_storage_paths",
+    "backup_manifest_bytes",
     "build_backup_manifest",
     "iter_project_entries",
     "normalize_backup_relative_path",
     "normalize_project_ref",
+    "read_backup_manifest",
     "resolve_backup_root",
     "resolve_backup_roots",
+    "write_backup_manifest",
 ]

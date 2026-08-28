@@ -4,13 +4,19 @@ from uuid import UUID, uuid4
 import pytest
 
 from file_backups import (
+    BackupEntry,
+    BackupIntegrityError,
+    BackupManifest,
     BackupPathError,
     BackupSourceError,
     backup_storage_paths,
+    backup_manifest_bytes,
     build_backup_manifest,
     iter_project_entries,
     normalize_backup_relative_path,
+    read_backup_manifest,
     resolve_backup_roots,
+    write_backup_manifest,
 )
 
 
@@ -93,3 +99,54 @@ def test_project_entries_fail_closed_on_symbolic_links(tmp_path: Path) -> None:
 
     with pytest.raises(BackupSourceError, match="symbolic links"):
         list(iter_project_entries(project_root))
+
+
+def test_manifest_serialization_is_canonical_and_round_trips(tmp_path: Path) -> None:
+    project_id = uuid4()
+    manifest = BackupManifest(
+        format_version=1,
+        project_ref=str(project_id),
+        entries=(
+            BackupEntry("docs", "directory", 0, None, 0o750),
+            BackupEntry(
+                "docs/guide.txt",
+                "file",
+                5,
+                "2bb80d537b1da3e38bd30361aa855686bde0ba1f3c0f9f7f2a3d2c2c9f0c0d3a",
+                0o640,
+            ),
+        ),
+    )
+
+    payload = backup_manifest_bytes(manifest)
+    manifest_path = tmp_path / "manifest.json"
+    checksum = write_backup_manifest(manifest_path, manifest)
+    loaded, loaded_checksum = read_backup_manifest(manifest_path)
+
+    assert payload == manifest_path.read_bytes()
+    assert checksum == loaded_checksum
+    assert loaded == manifest
+
+
+def test_manifest_rejects_duplicate_or_unsorted_entries() -> None:
+    duplicate = BackupManifest(
+        format_version=1,
+        project_ref=str(uuid4()),
+        entries=(
+            BackupEntry("a.txt", "file", 1, "a" * 64, 0o640),
+            BackupEntry("a.txt", "file", 1, "a" * 64, 0o640),
+        ),
+    )
+    unsorted = BackupManifest(
+        format_version=1,
+        project_ref=str(uuid4()),
+        entries=(
+            BackupEntry("b.txt", "file", 1, "b" * 64, 0o640),
+            BackupEntry("a.txt", "file", 1, "a" * 64, 0o640),
+        ),
+    )
+
+    with pytest.raises(BackupIntegrityError, match="duplicate"):
+        backup_manifest_bytes(duplicate)
+    with pytest.raises(BackupIntegrityError, match="sorted"):
+        backup_manifest_bytes(unsorted)
