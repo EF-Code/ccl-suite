@@ -435,6 +435,31 @@ def record_rejected_upload(
         logger.error("Rejected upload could not be recorded for project %s.", project_id)
 
 
+def record_backup_event(
+    db: Session,
+    actor_id: UUID,
+    backup_id: UUID,
+    event_code: str,
+    outcome: str,
+) -> None:
+    """Record one backup lifecycle event without storing destination paths or bodies."""
+
+    try:
+        db.add(
+            SecurityEvent(
+                actor_id=actor_id,
+                event_code=event_code,
+                outcome=outcome,
+                resource_type="backup",
+                resource_ref=str(backup_id),
+            )
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Backup security event could not be recorded for %s.", backup_id)
+
+
 def cleanup_failed_upload(upload_result: UploadResult | None) -> None:
     """Remove an upload when its metadata transaction cannot be completed."""
 
