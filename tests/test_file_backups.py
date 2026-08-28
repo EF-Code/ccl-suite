@@ -6,6 +6,7 @@ import pytest
 
 from file_backups import (
     BackupEntry,
+    BackupDestinationExistsError,
     BackupIntegrityError,
     BackupManifest,
     BackupPathError,
@@ -18,6 +19,7 @@ from file_backups import (
     normalize_backup_relative_path,
     read_backup_manifest,
     resolve_backup_roots,
+    restore_backup,
     write_backup_manifest,
     verify_backup,
 )
@@ -241,3 +243,48 @@ def test_verify_backup_rejects_unsupported_tar_members(tmp_path: Path) -> None:
 
     with pytest.raises(BackupIntegrityError, match="unsupported member"):
         verify_backup(result.storage)
+
+
+def test_restore_backup_verifies_and_publishes_a_new_project_copy(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    (project_root / "docs").mkdir(parents=True)
+    (project_root / "docs" / "guide.txt").write_text("guide", encoding="utf-8")
+    (project_root / "empty").mkdir()
+    result = create_backup(project_root, tmp_path / "backups", uuid4())
+    restore_root = tmp_path / "restore-root"
+    restore_root.mkdir()
+
+    restored = restore_backup(
+        result.storage,
+        restore_root,
+        "copies/one",
+        expected_archive_checksum=result.archive_checksum_sha256,
+        expected_manifest_checksum=result.manifest_checksum_sha256,
+        expected_project_ref=result.storage.project_ref,
+    )
+
+    destination = restore_root / "copies" / "one"
+    assert restored.destination == destination
+    assert restored.destination_relative.as_posix() == "copies/one"
+    assert restored.entries_restored == 3
+    assert restored.file_count == 1
+    assert restored.bytes_restored == 5
+    assert (destination / "docs" / "guide.txt").read_text(encoding="utf-8") == "guide"
+    assert (destination / "empty").is_dir()
+    assert (project_root / "docs" / "guide.txt").read_text(encoding="utf-8") == "guide"
+
+
+def test_restore_backup_never_overwrites_existing_destination(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "one.txt").write_text("same", encoding="utf-8")
+    result = create_backup(project_root, tmp_path / "backups", uuid4())
+    restore_root = tmp_path / "restore-root"
+    (restore_root / "copies" / "one").mkdir(parents=True)
+    marker = restore_root / "copies" / "one" / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(BackupDestinationExistsError, match="will not be overwritten"):
+        restore_backup(result.storage, restore_root, "copies/one")
+
+    assert marker.read_text(encoding="utf-8") == "keep"

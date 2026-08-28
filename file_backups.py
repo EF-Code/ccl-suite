@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import tarfile
 import tempfile
@@ -120,6 +121,27 @@ class BackupVerification:
     entries_verified: int
     file_count: int
     bytes_verified: int
+
+
+@dataclass(frozen=True)
+class BackupRestoreResult:
+    """Details about one verified project copy published by restoration."""
+
+    root: Path
+    destination: Path
+    entries_restored: int
+    file_count: int
+    bytes_restored: int
+    archive_checksum_sha256: str
+    manifest_checksum_sha256: str
+
+    @property
+    def destination_relative(self) -> Path:
+        """Return the restored path relative to its approved parent."""
+
+        from file_inventory import safe_relative_path
+
+        return safe_relative_path(self.root, self.destination)
 
 
 def normalize_project_ref(project_ref: UUID | str) -> str:
@@ -337,8 +359,11 @@ def _validate_manifest(manifest: BackupManifest) -> BackupManifest:
             raise BackupIntegrityError("Backup manifest contains duplicate paths.")
         for index in range(1, len(relative_path.split("/"))):
             parent = "/".join(relative_path.split("/")[:index])
-            if seen.get(parent) == "file":
+            parent_kind = seen.get(parent)
+            if parent_kind == "file":
                 raise BackupIntegrityError("A file entry cannot contain child paths.")
+            if parent_kind is None:
+                raise BackupIntegrityError("Every manifest child must have a directory entry.")
         seen[relative_path] = entry.kind
         entries.append(
             BackupEntry(
@@ -770,6 +795,248 @@ def verify_backup(
     )
 
 
+def _resolve_restore_destination(root: Path, destination: Path | str) -> Path:
+    """Resolve a new restore directory below an approved parent."""
+
+    if not isinstance(destination, (Path, str)):
+        raise BackupPathError("Restore destination must be a relative path.")
+    raw_destination = str(destination)
+    try:
+        normalized = normalize_backup_relative_path(raw_destination)
+    except BackupPathError as exc:
+        raise BackupPathError("Restore destination must be a normalized relative path.") from exc
+    candidate = root.joinpath(*normalized.split("/"))
+    current = root
+    for part in normalized.split("/")[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise BackupPathError("Restore destination must not contain symlink components.")
+        if current.exists() and not current.is_dir():
+            raise BackupPathError("Restore destination parent must be a directory.")
+    if candidate.is_symlink() or candidate.exists():
+        raise BackupDestinationExistsError(
+            "Restore destination already exists and will not be overwritten."
+        )
+    resolved = candidate.resolve(strict=False)
+    if not resolved.is_relative_to(root):
+        raise BackupPathError("Restore destination must remain inside the approved parent.")
+    return resolved
+
+
+def _ensure_restore_parent(root: Path, destination: Path) -> None:
+    """Create missing destination parents while rejecting symlink races."""
+
+    relative_parent = destination.parent.relative_to(root)
+    current = root
+    for part in relative_parent.parts:
+        current = current / part
+        if current.is_symlink():
+            raise BackupPathError("Restore destination parent must not be a symlink.")
+        if current.exists():
+            if not current.is_dir():
+                raise BackupPathError("Restore destination parent must be a directory.")
+        else:
+            current.mkdir(mode=0o750)
+
+
+def _stage_path(staging: Path, relative_path: str) -> Path:
+    """Resolve an archive entry below a newly-created staging directory."""
+
+    normalized = normalize_backup_relative_path(relative_path)
+    candidate = staging.joinpath(*normalized.split("/"))
+    resolved = candidate.resolve(strict=False)
+    if not resolved.is_relative_to(staging):
+        raise BackupIntegrityError("Backup archive path escaped its staging directory.")
+    return resolved
+
+
+def _ensure_stage_directory(path: Path, mode: int) -> None:
+    """Create one extracted directory without replacing anything."""
+
+    if path.is_symlink():
+        raise BackupIntegrityError("Backup archive attempted to create a symlink.")
+    if path.exists():
+        if not path.is_dir():
+            raise BackupIntegrityError("Backup archive contains a file-directory collision.")
+    else:
+        try:
+            path.mkdir(mode=mode)
+        except OSError as exc:
+            raise BackupIntegrityError("Backup directory could not be extracted safely.") from exc
+    try:
+        os.chmod(path, mode)
+    except OSError as exc:
+        raise BackupIntegrityError("Backup directory permissions could not be applied.") from exc
+
+
+def _ensure_stage_parent(path: Path) -> None:
+    """Ensure a file's already-approved parent exists without changing its mode."""
+
+    if path.is_symlink():
+        raise BackupIntegrityError("Backup archive attempted to create a symlink.")
+    if path.exists():
+        if not path.is_dir():
+            raise BackupIntegrityError("Backup archive contains a file-directory collision.")
+        return
+    try:
+        path.mkdir(mode=0o750)
+    except OSError as exc:
+        raise BackupIntegrityError("Backup file parent could not be created safely.") from exc
+
+
+def _extract_archive_to_stage(
+    storage: BackupStoragePaths,
+    manifest: BackupManifest,
+    staging: Path,
+) -> tuple[int, int, int]:
+    """Extract only manifest-approved members into a new staging directory."""
+
+    expected = {entry.relative_path: entry for entry in manifest.entries}
+    seen: set[str] = set()
+    entries_restored = 0
+    file_count = 0
+    bytes_restored = 0
+    try:
+        with tarfile.open(storage.artifact_path, mode="r:") as archive:
+            for member in archive:
+                try:
+                    normalized_name = normalize_backup_relative_path(member.name)
+                except BackupPathError as exc:
+                    raise BackupIntegrityError("Backup archive contains an unsafe path.") from exc
+                if normalized_name != member.name or normalized_name in seen:
+                    raise BackupIntegrityError("Backup archive contains duplicate or non-normalized paths.")
+                entry = expected.get(normalized_name)
+                if entry is None:
+                    raise BackupIntegrityError("Backup archive contains an unexpected path.")
+                if _archive_member_kind(member) != entry.kind:
+                    raise BackupIntegrityError("Backup archive member kind differs from its manifest.")
+                target = _stage_path(staging, normalized_name)
+                if entry.kind == "directory":
+                    if member.size != 0:
+                        raise BackupIntegrityError("Backup directory metadata contains bytes.")
+                    _ensure_stage_directory(target, entry.mode)
+                else:
+                    if member.size != entry.size_bytes:
+                        raise BackupIntegrityError("Backup archive file size differs from its manifest.")
+                    _ensure_stage_parent(target.parent)
+                    stream = archive.extractfile(member)
+                    if stream is None:
+                        raise BackupIntegrityError("Backup archive file could not be read.")
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                    try:
+                        descriptor = os.open(target, flags, entry.mode)
+                    except OSError as exc:
+                        raise BackupIntegrityError("Backup file could not be extracted safely.") from exc
+                    digest = hashlib.sha256()
+                    size = 0
+                    try:
+                        with os.fdopen(descriptor, "wb") as output:
+                            with stream:
+                                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                                    digest.update(chunk)
+                                    size += len(chunk)
+                                    output.write(chunk)
+                            output.flush()
+                            os.fsync(output.fileno())
+                    except (OSError, tarfile.TarError) as exc:
+                        raise BackupIntegrityError("Backup file could not be extracted safely.") from exc
+                    if size != entry.size_bytes or digest.hexdigest() != entry.checksum_sha256:
+                        raise BackupIntegrityError("Extracted backup file failed checksum verification.")
+                    os.chmod(target, entry.mode)
+                    file_count += 1
+                    bytes_restored += size
+                seen.add(normalized_name)
+                entries_restored += 1
+    except BackupIntegrityError:
+        raise
+    except (OSError, tarfile.TarError) as exc:
+        raise BackupIntegrityError("Backup archive could not be extracted safely.") from exc
+    if seen != set(expected):
+        raise BackupIntegrityError("Backup archive is missing manifest entries.")
+    return entries_restored, file_count, bytes_restored
+
+
+def _verify_staged_tree(staging: Path, manifest: BackupManifest) -> None:
+    """Re-scan the extracted tree and compare every entry to its manifest."""
+
+    observed = tuple(
+        sorted(
+            iter_project_entries(staging),
+            key=lambda entry: (entry.relative_path, entry.kind),
+        )
+    )
+    if observed != manifest.entries:
+        raise BackupIntegrityError("Restored project tree differs from its manifest.")
+
+
+def _publish_restore_directory(staging: Path, destination: Path) -> None:
+    """Publish a verified staging directory after a no-overwrite check."""
+
+    if destination.is_symlink() or destination.exists():
+        raise BackupDestinationExistsError(
+            "Restore destination already exists and will not be overwritten."
+        )
+    try:
+        os.rename(staging, destination)
+    except FileExistsError as exc:
+        raise BackupDestinationExistsError(
+            "Restore destination already exists and will not be overwritten."
+        ) from exc
+    except OSError as exc:
+        raise BackupArtifactError("Restored project could not be published safely.") from exc
+
+
+def restore_backup(
+    storage: BackupStoragePaths,
+    approved_parent: Path | str,
+    destination: Path | str,
+    *,
+    expected_archive_checksum: str | None = None,
+    expected_manifest_checksum: str | None = None,
+    expected_project_ref: UUID | str | None = None,
+) -> BackupRestoreResult:
+    """Verify and restore a project backup to a new directory."""
+
+    root = resolve_approved_root(approved_parent)
+    destination_path = _resolve_restore_destination(root, destination)
+    verification = verify_backup(
+        storage,
+        expected_archive_checksum=expected_archive_checksum,
+        expected_manifest_checksum=expected_manifest_checksum,
+        expected_project_ref=expected_project_ref,
+    )
+    _ensure_restore_parent(root, destination_path)
+    staging = destination_path.parent / f".ccl-restore-{uuid4().hex}"
+    if staging.exists() or staging.is_symlink():
+        raise BackupArtifactError("A restore staging path already exists.")
+    try:
+        staging.mkdir(mode=0o700)
+        entries_restored, file_count, bytes_restored = _extract_archive_to_stage(
+            storage,
+            verification.manifest,
+            staging,
+        )
+        _verify_staged_tree(staging, verification.manifest)
+        _publish_restore_directory(staging, destination_path)
+    except BackupError:
+        if staging.exists() and not staging.is_symlink():
+            shutil.rmtree(staging)
+        raise
+    except OSError as exc:
+        if staging.exists() and not staging.is_symlink():
+            shutil.rmtree(staging)
+        raise BackupArtifactError("Restored project could not be completed safely.") from exc
+    return BackupRestoreResult(
+        root=root,
+        destination=destination_path,
+        entries_restored=entries_restored,
+        file_count=file_count,
+        bytes_restored=bytes_restored,
+        archive_checksum_sha256=verification.archive_checksum_sha256,
+        manifest_checksum_sha256=verification.manifest_checksum_sha256,
+    )
+
+
 __all__ = [
     "BACKUP_ARCHIVE_SUFFIX",
     "BACKUP_FORMAT_VERSION",
@@ -787,6 +1054,7 @@ __all__ = [
     "BackupSourceError",
     "BackupStoragePaths",
     "BackupVerification",
+    "BackupRestoreResult",
     "backup_storage_paths",
     "backup_manifest_bytes",
     "build_backup_manifest",
@@ -797,6 +1065,7 @@ __all__ = [
     "read_backup_manifest",
     "resolve_backup_root",
     "resolve_backup_roots",
+    "restore_backup",
     "verify_backup",
     "write_backup_manifest",
 ]
