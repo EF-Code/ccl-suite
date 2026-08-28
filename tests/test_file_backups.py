@@ -5,7 +5,10 @@ import pytest
 
 from file_backups import (
     BackupPathError,
+    BackupSourceError,
     backup_storage_paths,
+    build_backup_manifest,
+    iter_project_entries,
     normalize_backup_relative_path,
     resolve_backup_roots,
 )
@@ -52,3 +55,41 @@ def test_storage_paths_use_uuid_names_and_relative_keys(tmp_path: Path) -> None:
     assert paths.manifest_key == f"{project_id}/{backup_id}.manifest.json"
     assert not Path(paths.artifact_key).is_absolute()
     assert paths.artifact_path == backup_root / str(project_id) / f"{backup_id}.tar"
+
+
+def test_project_entries_include_directories_and_regular_files(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    (project_root / "docs").mkdir(parents=True)
+    (project_root / ".ccl-versions" / "file" ).mkdir(parents=True)
+    (project_root / "README.md").write_text("read me", encoding="utf-8")
+    (project_root / "docs" / "guide.txt").write_text("guide", encoding="utf-8")
+    (project_root / ".ccl-versions" / "file" / "1").write_bytes(b"old")
+
+    entries = list(iter_project_entries(project_root))
+
+    assert [(entry.relative_path, entry.kind) for entry in entries] == [
+        (".ccl-versions", "directory"),
+        ("docs", "directory"),
+        ("README.md", "file"),
+        (".ccl-versions/file", "directory"),
+        (".ccl-versions/file/1", "file"),
+        ("docs/guide.txt", "file"),
+    ]
+    manifest = build_backup_manifest(project_root, uuid4())
+    assert manifest.format_version == 1
+    assert len(manifest.entries) == len(entries)
+
+
+def test_project_entries_fail_closed_on_symbolic_links(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    target = tmp_path / "outside.txt"
+    target.write_text("outside", encoding="utf-8")
+    link = project_root / "linked.txt"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symbolic links are unavailable on this filesystem")
+
+    with pytest.raises(BackupSourceError, match="symbolic links"):
+        list(iter_project_entries(project_root))

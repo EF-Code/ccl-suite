@@ -9,12 +9,13 @@ the small immutable contracts defined here.
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Iterable, Literal
 from uuid import UUID, uuid4
 
-from file_inventory import resolve_approved_root
+from file_inventory import resolve_approved_root, sha256_file
 
 BACKUP_FORMAT_VERSION = 1
 BACKUP_ARCHIVE_SUFFIX = ".tar"
@@ -161,6 +162,81 @@ def backup_storage_paths(
     )
 
 
+def _source_entry(root: Path, path: Path, kind: BackupEntryKind) -> BackupEntry:
+    """Describe one source entry without following a symbolic link."""
+
+    if path.is_symlink():
+        raise BackupSourceError("Project backups do not follow symbolic links.")
+    try:
+        details = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise BackupSourceError("A project entry could not be inspected.") from exc
+
+    if kind == "directory" and not stat.S_ISDIR(details.st_mode):
+        raise BackupSourceError("Project directory state changed during backup.")
+    if kind == "file" and not stat.S_ISREG(details.st_mode):
+        raise BackupSourceError("Project backups support regular files only.")
+
+    try:
+        relative_path = normalize_backup_relative_path(
+            path.relative_to(root).as_posix()
+        )
+    except (ValueError, BackupPathError) as exc:
+        raise BackupSourceError("A project entry left the approved source root.") from exc
+
+    if kind == "directory":
+        return BackupEntry(
+            relative_path=relative_path,
+            kind=kind,
+            size_bytes=0,
+            checksum_sha256=None,
+            mode=stat.S_IMODE(details.st_mode),
+        )
+
+    try:
+        checksum = sha256_file(path)
+        final_size = path.stat(follow_symlinks=False).st_size
+    except OSError as exc:
+        raise BackupSourceError("A project file could not be hashed.") from exc
+    if final_size != details.st_size:
+        raise BackupSourceError("A project file changed while it was being backed up.")
+    return BackupEntry(
+        relative_path=relative_path,
+        kind=kind,
+        size_bytes=details.st_size,
+        checksum_sha256=checksum,
+        mode=stat.S_IMODE(details.st_mode),
+    )
+
+
+def iter_project_entries(approved_root: Path | str) -> Iterable[BackupEntry]:
+    """Yield every supported project directory and file in stable order."""
+
+    root = resolve_approved_root(approved_root)
+    for current, directories, filenames in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        directories.sort()
+        filenames.sort()
+        for name in directories:
+            yield _source_entry(root, current_path / name, "directory")
+        for name in filenames:
+            yield _source_entry(root, current_path / name, "file")
+
+
+def build_backup_manifest(
+    approved_root: Path | str,
+    project_ref: UUID | str,
+) -> BackupManifest:
+    """Build a versioned manifest from a project without writing to it."""
+
+    entries = tuple(iter_project_entries(approved_root))
+    return BackupManifest(
+        format_version=BACKUP_FORMAT_VERSION,
+        project_ref=normalize_project_ref(project_ref),
+        entries=entries,
+    )
+
+
 __all__ = [
     "BACKUP_ARCHIVE_SUFFIX",
     "BACKUP_FORMAT_VERSION",
@@ -177,6 +253,8 @@ __all__ = [
     "BackupSourceError",
     "BackupStoragePaths",
     "backup_storage_paths",
+    "build_backup_manifest",
+    "iter_project_entries",
     "normalize_backup_relative_path",
     "normalize_project_ref",
     "resolve_backup_root",
