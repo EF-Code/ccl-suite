@@ -110,6 +110,18 @@ class BackupArtifact:
         return self.storage.manifest_key
 
 
+@dataclass(frozen=True)
+class BackupVerification:
+    """Evidence returned after checking an archive against its manifest."""
+
+    manifest: BackupManifest
+    archive_checksum_sha256: str
+    manifest_checksum_sha256: str
+    entries_verified: int
+    file_count: int
+    bytes_verified: int
+
+
 def normalize_project_ref(project_ref: UUID | str) -> str:
     """Return the canonical UUID string used as a storage namespace."""
 
@@ -632,6 +644,132 @@ def create_backup(
     )
 
 
+def _validate_expected_checksum(value: str | None, label: str) -> str | None:
+    """Validate an optional persisted SHA-256 checksum."""
+
+    if value is None:
+        return None
+    if (
+        len(value) != 64
+        or value.lower() != value
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise BackupIntegrityError(f"{label} is not a valid SHA-256 checksum.")
+    return value
+
+
+def _archive_member_kind(member: tarfile.TarInfo) -> BackupEntryKind:
+    """Allow only the regular files and directories emitted by this module."""
+
+    if member.isdir():
+        return "directory"
+    if member.isreg():
+        return "file"
+    raise BackupIntegrityError("Backup archive contains an unsupported member type.")
+
+
+def _verify_archive_members(
+    archive_path: Path,
+    manifest: BackupManifest,
+) -> tuple[int, int, int]:
+    """Verify every tar member and return entries, files, and bytes checked."""
+
+    expected = {entry.relative_path: entry for entry in manifest.entries}
+    seen: set[str] = set()
+    entries_verified = 0
+    file_count = 0
+    bytes_verified = 0
+    try:
+        with tarfile.open(archive_path, mode="r:") as archive:
+            for member in archive:
+                try:
+                    normalized_name = normalize_backup_relative_path(member.name)
+                except BackupPathError as exc:
+                    raise BackupIntegrityError("Backup archive contains an unsafe path.") from exc
+                if normalized_name != member.name or normalized_name in seen:
+                    raise BackupIntegrityError("Backup archive contains duplicate or non-normalized paths.")
+                entry = expected.get(normalized_name)
+                if entry is None:
+                    raise BackupIntegrityError("Backup archive contains an unexpected path.")
+                member_kind = _archive_member_kind(member)
+                if member_kind != entry.kind or stat.S_IMODE(member.mode) != entry.mode:
+                    raise BackupIntegrityError("Backup archive metadata differs from its manifest.")
+                if entry.kind == "directory":
+                    if member.size != 0:
+                        raise BackupIntegrityError("Backup directory metadata contains bytes.")
+                else:
+                    if member.size != entry.size_bytes:
+                        raise BackupIntegrityError("Backup archive file size differs from its manifest.")
+                    stream = archive.extractfile(member)
+                    if stream is None:
+                        raise BackupIntegrityError("Backup archive file could not be read.")
+                    digest = hashlib.sha256()
+                    size = 0
+                    with stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                            size += len(chunk)
+                    if size != entry.size_bytes or digest.hexdigest() != entry.checksum_sha256:
+                        raise BackupIntegrityError("Backup archive file checksum differs from its manifest.")
+                    file_count += 1
+                    bytes_verified += size
+                seen.add(normalized_name)
+                entries_verified += 1
+    except BackupIntegrityError:
+        raise
+    except (OSError, tarfile.TarError) as exc:
+        raise BackupIntegrityError("Backup archive could not be read safely.") from exc
+    if seen != set(expected):
+        raise BackupIntegrityError("Backup archive is missing manifest entries.")
+    return entries_verified, file_count, bytes_verified
+
+
+def verify_backup(
+    storage: BackupStoragePaths,
+    *,
+    expected_archive_checksum: str | None = None,
+    expected_manifest_checksum: str | None = None,
+    expected_project_ref: UUID | str | None = None,
+) -> BackupVerification:
+    """Verify artifact files, manifest structure, and every archived file hash."""
+
+    expected_archive_checksum = _validate_expected_checksum(
+        expected_archive_checksum,
+        "Archive checksum",
+    )
+    expected_manifest_checksum = _validate_expected_checksum(
+        expected_manifest_checksum,
+        "Manifest checksum",
+    )
+    if storage.artifact_path.is_symlink() or not storage.artifact_path.is_file():
+        raise BackupArtifactError("Backup archive is unavailable.")
+    if storage.manifest_path.is_symlink() or not storage.manifest_path.is_file():
+        raise BackupArtifactError("Backup manifest is unavailable.")
+    try:
+        archive_checksum = sha256_file(storage.artifact_path)
+    except OSError as exc:
+        raise BackupArtifactError("Backup archive checksum could not be read.") from exc
+    if expected_archive_checksum is not None and archive_checksum != expected_archive_checksum:
+        raise BackupIntegrityError("Backup archive checksum verification failed.")
+    manifest, manifest_checksum = read_backup_manifest(storage.manifest_path)
+    if expected_manifest_checksum is not None and manifest_checksum != expected_manifest_checksum:
+        raise BackupIntegrityError("Backup manifest checksum verification failed.")
+    if expected_project_ref is not None and manifest.project_ref != normalize_project_ref(expected_project_ref):
+        raise BackupIntegrityError("Backup manifest belongs to a different project.")
+    entries_verified, file_count, bytes_verified = _verify_archive_members(
+        storage.artifact_path,
+        manifest,
+    )
+    return BackupVerification(
+        manifest=manifest,
+        archive_checksum_sha256=archive_checksum,
+        manifest_checksum_sha256=manifest_checksum,
+        entries_verified=entries_verified,
+        file_count=file_count,
+        bytes_verified=bytes_verified,
+    )
+
+
 __all__ = [
     "BACKUP_ARCHIVE_SUFFIX",
     "BACKUP_FORMAT_VERSION",
@@ -648,6 +786,7 @@ __all__ = [
     "BackupPathError",
     "BackupSourceError",
     "BackupStoragePaths",
+    "BackupVerification",
     "backup_storage_paths",
     "backup_manifest_bytes",
     "build_backup_manifest",
@@ -658,5 +797,6 @@ __all__ = [
     "read_backup_manifest",
     "resolve_backup_root",
     "resolve_backup_roots",
+    "verify_backup",
     "write_backup_manifest",
 ]

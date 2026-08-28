@@ -19,6 +19,7 @@ from file_backups import (
     read_backup_manifest,
     resolve_backup_roots,
     write_backup_manifest,
+    verify_backup,
 )
 
 
@@ -193,3 +194,50 @@ def test_repeated_backup_has_stable_manifest_and_archive_bytes(tmp_path: Path) -
     assert first.storage.manifest_path.read_bytes() == second.storage.manifest_path.read_bytes()
     assert first.archive_checksum_sha256 == second.archive_checksum_sha256
     assert first.manifest_checksum_sha256 == second.manifest_checksum_sha256
+
+
+def test_verify_backup_checks_archive_and_manifest_contents(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "one.txt").write_text("same", encoding="utf-8")
+    result = create_backup(project_root, tmp_path / "backups", uuid4())
+
+    verification = verify_backup(
+        result.storage,
+        expected_archive_checksum=result.archive_checksum_sha256,
+        expected_manifest_checksum=result.manifest_checksum_sha256,
+        expected_project_ref=result.storage.project_ref,
+    )
+
+    assert verification.entries_verified == 1
+    assert verification.file_count == 1
+    assert verification.bytes_verified == 4
+    assert verification.archive_checksum_sha256 == result.archive_checksum_sha256
+
+
+def test_verify_backup_detects_archive_tampering(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "one.txt").write_text("same", encoding="utf-8")
+    result = create_backup(project_root, tmp_path / "backups", uuid4())
+    artifact = result.storage.artifact_path
+    original = artifact.read_bytes()
+    artifact.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+
+    with pytest.raises(BackupIntegrityError, match="checksum"):
+        verify_backup(result.storage, expected_archive_checksum=result.archive_checksum_sha256)
+
+
+def test_verify_backup_rejects_unsupported_tar_members(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "one.txt").write_text("same", encoding="utf-8")
+    result = create_backup(project_root, tmp_path / "backups", uuid4())
+    with tarfile.open(result.storage.artifact_path, mode="w") as archive:
+        member = tarfile.TarInfo("one.txt")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "../../outside.txt"
+        archive.addfile(member)
+
+    with pytest.raises(BackupIntegrityError, match="unsupported member"):
+        verify_backup(result.storage)
