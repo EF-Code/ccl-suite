@@ -616,6 +616,81 @@ def test_project_backup_endpoint_creates_and_reverifies_archive(
     assert all(event["request_ref"] is None for event in backup_events)
 
 
+def test_project_backup_verification_reports_tampering_and_audits_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    backups_root = tmp_path / "backups"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    monkeypatch.setattr("main.BACKUP_ROOT", backups_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "notes.txt").write_text("backup me", encoding="utf-8")
+    created = request("POST", f"/projects/{project['id']}/backups", json={})
+    assert created.status_code == 201
+    backup = created.json()
+    archive = backups_root / backup["artifact_key"]
+    original = archive.read_bytes()
+    archive.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/backups/{backup['id']}/verify",
+        json={},
+    )
+    events = request("GET", "/security-events").json()
+
+    assert response.status_code == 422
+    assert any(
+        event["event_code"] == "backup.verification_failed"
+        and event["resource_ref"] == backup["id"]
+        and event["actor_id"] == TEST_OWNER_ID
+        for event in events
+    )
+
+
+def test_intern_cannot_read_or_restore_project_backups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    backups_root = tmp_path / "backups"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    monkeypatch.setattr("main.BACKUP_ROOT", backups_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "notes.txt").write_text("backup me", encoding="utf-8")
+    created = request("POST", f"/projects/{project['id']}/backups", json={})
+    assert created.status_code == 201
+    backup = created.json()
+    intern = request(
+        "POST",
+        "/users",
+        json={"external_ref": "backup-intern", "role": "intern"},
+    )
+    intern_headers = {"X-User-ID": intern.json()["id"]}
+
+    listed = request(
+        "GET",
+        f"/projects/{project['id']}/backups",
+        headers=intern_headers,
+    )
+    restored = request(
+        "POST",
+        f"/projects/{project['id']}/backups/{backup['id']}/restore",
+        headers=intern_headers,
+        json={"destination_path": "restored/intern-copy"},
+    )
+
+    assert intern.status_code == 201
+    assert listed.status_code == 403
+    assert restored.status_code == 403
+    assert not (projects_root / "restored" / "intern-copy").exists()
+
+
 def test_secure_upload_rejects_oversized_body(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
