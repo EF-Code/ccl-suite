@@ -87,6 +87,7 @@ def test_serves_operations_web_prototype() -> None:
     assert "text/html" in response.headers["content-type"]
     assert "CCL AI Suite" in response.text
     assert "Controlled conversion" in response.text
+    assert "Backup and restore" in response.text
 
 
 def test_serves_web_prototype_assets() -> None:
@@ -95,6 +96,7 @@ def test_serves_web_prototype_assets() -> None:
     assert response.status_code == 200
     assert "application/javascript" in response.headers["content-type"]
     assert "refreshHealth" in response.text
+    assert "backup-create" in response.text
 
 
 def test_serves_stylesheet_asset() -> None:

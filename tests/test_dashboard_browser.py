@@ -110,6 +110,22 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     expect(inventory_result).to_contain_text("Scanned 0 file(s)")
     expect(inventory_result).to_contain_text("JSON: manifest.json")
 
+    page.locator("#backup-create").click()
+    backup_result = page.locator("#backup-result")
+    backup_result.wait_for(state="visible")
+    expect(backup_result).to_contain_text("Backup created and verified")
+    backup_id = page.locator("#backup-id").input_value()
+    assert backup_id
+
+    page.locator("#backup-verify").click()
+    expect(backup_result).to_contain_text("Integrity verified")
+
+    restore_destination = f"restored/browser-{suffix}"
+    page.locator("#backup-destination").fill(restore_destination)
+    page.locator("#backup-restore").click()
+    expect(backup_result).to_contain_text("Restored")
+    expect(backup_result).to_contain_text(restore_destination)
+
     page.locator("#organizer-preview").click()
     organizer_result = page.locator("#organizer-result")
     organizer_result.wait_for(state="visible")
