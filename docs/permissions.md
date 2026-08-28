@@ -14,9 +14,9 @@ request is rejected and recorded as `access.denied`.
 
 | Role | Allowed operations |
 | --- | --- |
-| `administrator` | All project, file, conversion, workflow, approval, security, and user-management operations |
-| `supervisor` | Project creation/read, file read/upload/restore/organise, conversion, workflow, approval decisions, and security events |
-| `staff` | Project creation/read, file read/upload/restore/organise, conversion, workflow, approval decisions, and security events |
+| `administrator` | All project, file, backup, conversion, workflow, approval, security, and user-management operations |
+| `supervisor` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, and security events |
+| `staff` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, and security events |
 | `intern` | Project and file metadata read only |
 
 The read-only matrix is available at `GET /permissions`. The API keeps the
@@ -36,3 +36,8 @@ used for the local prototype. Deployments outside development require the
 header and return `401` when it is missing. A known user without the required
 permission receives `403`, and the decision is recorded as an
 `access.denied` security event without storing request payloads.
+
+Backup lifecycle routes use the separate `backup.read`, `backup.create`,
+`backup.verify`, and `backup.restore` permissions. Successful and failed
+backup operations record only the backup identifier and authenticated actor in
+security events.
