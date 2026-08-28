@@ -225,6 +225,21 @@ def backup_storage_paths(
     )
 
 
+def validate_backup_storage_paths(storage: BackupStoragePaths) -> BackupStoragePaths:
+    """Rebuild and compare generated paths before reading an artifact."""
+
+    root = resolve_backup_root(storage.backup_root)
+    expected = backup_storage_paths(root, storage.project_ref, storage.backup_id)
+    if (
+        storage.artifact_path != expected.artifact_path
+        or storage.manifest_path != expected.manifest_path
+        or storage.artifact_key != expected.artifact_key
+        or storage.manifest_key != expected.manifest_key
+    ):
+        raise BackupPathError("Backup artifact paths do not match their generated identifier.")
+    return expected
+
+
 def _source_entry(root: Path, path: Path, kind: BackupEntryKind) -> BackupEntry:
     """Describe one source entry without following a symbolic link."""
 
@@ -672,13 +687,7 @@ def create_backup(
 def remove_backup_artifacts(storage: BackupStoragePaths) -> None:
     """Remove only the generated archive and manifest for one backup ID."""
 
-    root = resolve_backup_root(storage.backup_root)
-    expected = backup_storage_paths(root, storage.project_ref, storage.backup_id)
-    if (
-        storage.artifact_path != expected.artifact_path
-        or storage.manifest_path != expected.manifest_path
-    ):
-        raise BackupPathError("Backup artifact paths do not match their generated identifier.")
+    expected = validate_backup_storage_paths(storage)
     for path in (expected.artifact_path, expected.manifest_path):
         if path.is_symlink():
             raise BackupPathError("Backup artifacts must not be symbolic links.")
@@ -781,6 +790,7 @@ def verify_backup(
 ) -> BackupVerification:
     """Verify artifact files, manifest structure, and every archived file hash."""
 
+    storage = validate_backup_storage_paths(storage)
     expected_archive_checksum = _validate_expected_checksum(
         expected_archive_checksum,
         "Archive checksum",
@@ -1020,7 +1030,8 @@ def restore_backup(
 ) -> BackupRestoreResult:
     """Verify and restore a project backup to a new directory."""
 
-    root = resolve_approved_root(approved_parent)
+    root, _backup_root = resolve_backup_roots(approved_parent, storage.backup_root)
+    storage = validate_backup_storage_paths(storage)
     destination_path = _resolve_restore_destination(root, destination)
     verification = verify_backup(
         storage,
@@ -1090,6 +1101,7 @@ __all__ = [
     "resolve_backup_root",
     "resolve_backup_roots",
     "restore_backup",
+    "validate_backup_storage_paths",
     "verify_backup",
     "write_backup_manifest",
 ]

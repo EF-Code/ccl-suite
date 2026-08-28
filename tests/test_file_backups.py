@@ -1,5 +1,6 @@
 from pathlib import Path
 import tarfile
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,6 +22,7 @@ from file_backups import (
     remove_backup_artifacts,
     resolve_backup_roots,
     restore_backup,
+    validate_backup_storage_paths,
     write_backup_manifest,
     verify_backup,
 )
@@ -301,3 +303,26 @@ def test_remove_backup_artifacts_only_removes_generated_files(tmp_path: Path) ->
 
     assert not result.storage.artifact_path.exists()
     assert not result.storage.manifest_path.exists()
+
+
+def test_artifact_paths_are_rebuilt_before_verification_or_cleanup(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "one.txt").write_text("same", encoding="utf-8")
+    result = create_backup(project_root, tmp_path / "backups", uuid4())
+    forged = replace(result.storage, artifact_path=tmp_path / "outside.tar")
+
+    with pytest.raises(BackupPathError, match="generated identifier"):
+        validate_backup_storage_paths(forged)
+    with pytest.raises(BackupPathError, match="generated identifier"):
+        verify_backup(forged)
+
+
+def test_restore_requires_backup_storage_separate_from_restore_parent(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "one.txt").write_text("same", encoding="utf-8")
+    result = create_backup(project_root, tmp_path / "backups", uuid4())
+
+    with pytest.raises(BackupPathError, match="separate"):
+        restore_backup(result.storage, tmp_path, "restored/copy")
