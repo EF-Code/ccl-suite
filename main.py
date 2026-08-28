@@ -758,7 +758,6 @@ async def list_project_backups(
     tags=["backups"],
     dependencies=[
         Depends(reject_oversized_requests),
-        Depends(require_permission("backup.verify")),
     ],
 )
 async def verify_project_backup(
@@ -827,7 +826,6 @@ async def verify_project_backup(
     tags=["backups"],
     dependencies=[
         Depends(reject_oversized_requests),
-        Depends(require_permission("backup.restore")),
     ],
 )
 async def restore_project_backup(
