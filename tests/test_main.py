@@ -691,6 +691,61 @@ def test_intern_cannot_read_or_restore_project_backups(
     assert not (projects_root / "restored" / "intern-copy").exists()
 
 
+def test_backup_endpoints_hide_backups_from_other_projects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    backups_root = tmp_path / "backups"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    monkeypatch.setattr("main.BACKUP_ROOT", backups_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "notes.txt").write_text("backup me", encoding="utf-8")
+    created = request("POST", f"/projects/{project['id']}/backups", json={})
+    other_project = create_project()
+    backup_id = created.json()["id"]
+
+    response = request(
+        "POST",
+        f"/projects/{other_project['id']}/backups/{backup_id}/verify",
+        json={},
+    )
+
+    assert created.status_code == 201
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Backup was not found."}
+
+
+def test_backup_restore_rejects_traversal_destination(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    backups_root = tmp_path / "backups"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    monkeypatch.setattr("main.BACKUP_ROOT", backups_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+    (project_root / "notes.txt").write_text("backup me", encoding="utf-8")
+    created = request("POST", f"/projects/{project['id']}/backups", json={})
+    backup_id = created.json()["id"]
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/backups/{backup_id}/restore",
+        json={"destination_path": "../escape"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Restore destination must remain inside project storage."
+    }
+    assert not (tmp_path / "escape").exists()
+
+
 def test_secure_upload_rejects_oversized_body(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
