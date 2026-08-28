@@ -81,7 +81,10 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 Protected routes accept the authenticated user ID in the `X-User-ID` header.
 Development requests without the header use the first provisioned user for
 the local prototype; non-development deployments require the header. Denied
-decisions are recorded as `access.denied` security events.
+decisions are recorded as `access.denied` security events. Mutation actor
+fields are bound to the authenticated user; supplied `uploaded_by_id`,
+`created_by_id`, `requested_by_id`, `approved_by_id`, and security-event
+`actor_id` values must match that user.
 
 Request bodies are limited to 1 MiB. The API returns `404` when the supplied
 `owner_id` does not identify an existing user. User creation and authentication

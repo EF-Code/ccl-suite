@@ -402,7 +402,7 @@ def test_file_and_workflow_endpoints() -> None:
     assert len(listed_workflows.json()) == 1
 
 
-def test_file_endpoint_allows_metadata_without_uploader() -> None:
+def test_file_endpoint_records_authenticated_uploader_when_omitted() -> None:
     project = create_project()
 
     response = request(
@@ -417,7 +417,66 @@ def test_file_endpoint_allows_metadata_without_uploader() -> None:
     )
 
     assert response.status_code == 201
-    assert response.json()["uploaded_by_id"] is None
+    assert response.json()["uploaded_by_id"] == TEST_OWNER_ID
+
+
+def test_mutating_actor_fields_cannot_be_spoofed() -> None:
+    project = create_project()
+    other_user = request(
+        "POST",
+        "/users",
+        json={"external_ref": "other-actor", "role": "staff"},
+    )
+    assert other_user.status_code == 201
+    other_id = other_user.json()["id"]
+    other_headers = {"X-User-ID": other_id}
+
+    file_response = request(
+        "POST",
+        f"/projects/{project['id']}/files",
+        headers=other_headers,
+        json={
+            "storage_key": "incoming/spoofed.txt",
+            "media_type": "text/plain",
+            "size_bytes": 4,
+            "checksum_sha256": "A" * 64,
+            "uploaded_by_id": TEST_OWNER_ID,
+        },
+    )
+    workflow_response = request(
+        "POST",
+        f"/projects/{project['id']}/workflows",
+        headers=other_headers,
+        json={"name": "Spoofed workflow", "created_by_id": TEST_OWNER_ID},
+    )
+    workflow = create_workflow(str(project["id"]))
+    approval = request(
+        "POST",
+        f"/workflows/{workflow['id']}/approvals",
+        json={},
+    )
+    decision_response = request(
+        "POST",
+        f"/approvals/{approval.json()['id']}/decision",
+        headers=other_headers,
+        json={"status": "approved", "approved_by_id": TEST_OWNER_ID},
+    )
+    event_response = request(
+        "POST",
+        "/security-events",
+        headers=other_headers,
+        json={
+            "event_code": "spoofed.actor",
+            "outcome": "success",
+            "actor_id": TEST_OWNER_ID,
+        },
+    )
+
+    assert file_response.status_code == 403
+    assert workflow_response.status_code == 403
+    assert decision_response.status_code == 403
+    assert event_response.status_code == 403
+    assert request("GET", "/security-events").json()[-1]["event_code"] == "access.denied"
 
 
 def test_file_endpoint_rejects_storage_path_escape() -> None:
@@ -464,6 +523,7 @@ def test_secure_upload_endpoint_indexes_file_and_logs_rejection(
     search = request("GET", f"/projects/{project['id']}/files/search?query=notes")
     assert search.status_code == 200
     assert search.json()[0]["checksum_sha256"] == uploaded.json()["checksum_sha256"]
+    assert search.json()[0]["uploaded_by_id"] == TEST_OWNER_ID
 
     conflict = request(
         "PUT",
@@ -483,6 +543,7 @@ def test_secure_upload_endpoint_indexes_file_and_logs_rejection(
     assert rejected.status_code == 400
     assert events.status_code == 200
     assert {event["event_code"] for event in events.json()} == {"file.upload.rejected"}
+    assert {event["actor_id"] for event in events.json()} == {TEST_OWNER_ID}
     assert "bad" not in events.text
     assert "replace" not in events.text
 
@@ -1325,7 +1386,7 @@ def test_approval_can_be_decided_once() -> None:
     assert repeated.status_code == 409
 
 
-def test_workflow_and_approval_endpoints_allow_optional_actor_ids() -> None:
+def test_workflow_and_approval_endpoints_bind_optional_actor_ids() -> None:
     project = create_project()
     workflow = request(
         "POST",
@@ -1340,9 +1401,9 @@ def test_workflow_and_approval_endpoints_allow_optional_actor_ids() -> None:
     listed = request("GET", f"/workflows/{workflow.json()['id']}/approvals")
 
     assert workflow.status_code == 201
-    assert workflow.json()["created_by_id"] is None
+    assert workflow.json()["created_by_id"] == TEST_OWNER_ID
     assert approval.status_code == 201
-    assert approval.json()["requested_by_id"] is None
+    assert approval.json()["requested_by_id"] == TEST_OWNER_ID
     assert listed.status_code == 200
     assert len(listed.json()) == 1
 
@@ -1376,4 +1437,4 @@ def test_security_event_can_omit_actor() -> None:
     )
 
     assert response.status_code == 201
-    assert response.json()["actor_id"] is None
+    assert response.json()["actor_id"] == TEST_OWNER_ID

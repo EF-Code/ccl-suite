@@ -233,6 +233,24 @@ def _record_access_denial(db: Session, request: Request, actor: User, permission
         logger.error("Access denial could not be recorded.")
 
 
+def authenticated_actor_id(
+    db: Session,
+    request: Request,
+    actor: User,
+    claimed_actor_id: UUID | None,
+    field_name: str,
+) -> UUID:
+    """Bind optional caller identity fields to the authenticated actor."""
+
+    if claimed_actor_id is not None and claimed_actor_id != actor.id:
+        _record_access_denial(db, request, actor, f"identity.{field_name}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"{field_name} must match the authenticated user.",
+        )
+    return actor.id
+
+
 def require_permission(permission: str):
     """Build a dependency that enforces one role permission.
 
@@ -339,6 +357,7 @@ def record_rejected_upload(
     project_id: UUID,
     storage_key: str,
     reason: str,
+    actor_id: UUID,
 ) -> None:
     """Log a rejected upload without storing its request body."""
 
@@ -346,6 +365,7 @@ def record_rejected_upload(
     try:
         db.add(
             SecurityEvent(
+                actor_id=actor_id,
                 event_code="file.upload.rejected",
                 outcome="denied",
                 resource_type="file",
@@ -533,19 +553,23 @@ async def list_projects(db: Session = Depends(get_db)) -> list[ProjectResponse]:
     response_model=FileResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["files"],
-    dependencies=[
-        Depends(reject_oversized_requests),
-        Depends(require_permission("file.upload")),
-    ],
+    dependencies=[Depends(reject_oversized_requests)],
 )
 async def create_file(
     project_id: UUID,
     file_metadata: FileCreate,
+    request: Request,
+    actor: User = Depends(require_permission("file.upload")),
     db: Session = Depends(get_db),
 ) -> FileResponse:
     require_record(db, Project, project_id, "Project was not found.")
-    if file_metadata.uploaded_by_id is not None:
-        require_record(db, User, file_metadata.uploaded_by_id, "Uploader was not found.")
+    uploaded_by_id = authenticated_actor_id(
+        db,
+        request,
+        actor,
+        file_metadata.uploaded_by_id,
+        "uploaded_by_id",
+    )
     try:
         storage_key = validate_storage_key(file_metadata.storage_key)
     except ValueError as exc:
@@ -555,7 +579,7 @@ async def create_file(
         db,
         File(
             project_id=project_id,
-            uploaded_by_id=file_metadata.uploaded_by_id,
+            uploaded_by_id=uploaded_by_id,
             storage_key=storage_key,
             name=file_metadata.name or Path(storage_key).name,
             extension=file_metadata.extension or Path(storage_key).suffix.lower(),
@@ -573,15 +597,13 @@ async def create_file(
     response_model=UploadResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["files"],
-    dependencies=[
-        Depends(reject_oversized_requests),
-        Depends(require_permission("file.upload")),
-    ],
+    dependencies=[Depends(reject_oversized_requests)],
 )
 async def upload_project_file(
     project_id: UUID,
     storage_key: str,
     request: Request,
+    actor: User = Depends(require_permission("file.upload")),
     db: Session = Depends(get_db),
 ) -> UploadResponse:
     """Stream one allow-listed file into project storage and index its metadata."""
@@ -615,24 +637,26 @@ async def upload_project_file(
             [record],
             approved_root=root,
         )
+        if sync_result.records:
+            sync_result.records[0].uploaded_by_id = actor.id
         db.commit()
     except UploadDestinationExistsError as exc:
         db.rollback()
-        record_rejected_upload(db, project_id, storage_key, str(exc))
+        record_rejected_upload(db, project_id, storage_key, str(exc), actor.id)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload destination already exists.",
         )
     except UploadTooLargeError as exc:
         db.rollback()
-        record_rejected_upload(db, project_id, storage_key, str(exc))
+        record_rejected_upload(db, project_id, storage_key, str(exc), actor.id)
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="Uploaded file exceeds the maximum allowed size.",
         )
     except UploadValidationError as exc:
         db.rollback()
-        record_rejected_upload(db, project_id, storage_key, str(exc))
+        record_rejected_upload(db, project_id, storage_key, str(exc), actor.id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Upload was rejected by the file safety policy.",
@@ -1204,25 +1228,29 @@ async def rollback_project_organization(
     response_model=WorkflowResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["workflows"],
-    dependencies=[
-        Depends(reject_oversized_requests),
-        Depends(require_permission("workflow.manage")),
-    ],
+    dependencies=[Depends(reject_oversized_requests)],
 )
 async def create_workflow(
     project_id: UUID,
     workflow: WorkflowCreate,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
 ) -> WorkflowResponse:
     require_record(db, Project, project_id, "Project was not found.")
-    if workflow.created_by_id is not None:
-        require_record(db, User, workflow.created_by_id, "Workflow creator was not found.")
+    created_by_id = authenticated_actor_id(
+        db,
+        request,
+        actor,
+        workflow.created_by_id,
+        "created_by_id",
+    )
 
     created_workflow = persist_record(
         db,
         Workflow(
             project_id=project_id,
-            created_by_id=workflow.created_by_id,
+            created_by_id=created_by_id,
             name=workflow.name,
             version=workflow.version,
         ),
@@ -1255,25 +1283,29 @@ async def list_workflows(
     response_model=ApprovalResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["approvals"],
-    dependencies=[
-        Depends(reject_oversized_requests),
-        Depends(require_permission("workflow.manage")),
-    ],
+    dependencies=[Depends(reject_oversized_requests)],
 )
 async def create_approval(
     workflow_id: UUID,
     approval: ApprovalCreate,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
 ) -> ApprovalResponse:
     require_record(db, Workflow, workflow_id, "Workflow was not found.")
-    if approval.requested_by_id is not None:
-        require_record(db, User, approval.requested_by_id, "Requester was not found.")
+    requested_by_id = authenticated_actor_id(
+        db,
+        request,
+        actor,
+        approval.requested_by_id,
+        "requested_by_id",
+    )
 
     created_approval = persist_record(
         db,
         Approval(
             workflow_id=workflow_id,
-            requested_by_id=approval.requested_by_id,
+            requested_by_id=requested_by_id,
         ),
         "Approval",
     )
@@ -1303,14 +1335,13 @@ async def list_approvals(
     "/approvals/{approval_id}/decision",
     response_model=ApprovalResponse,
     tags=["approvals"],
-    dependencies=[
-        Depends(reject_oversized_requests),
-        Depends(require_permission("approval.decide")),
-    ],
+    dependencies=[Depends(reject_oversized_requests)],
 )
 async def decide_approval(
     approval_id: UUID,
     decision: ApprovalDecisionRequest,
+    request: Request,
+    actor: User = Depends(require_permission("approval.decide")),
     db: Session = Depends(get_db),
 ) -> ApprovalResponse:
     approval = require_record(db, Approval, approval_id, "Approval was not found.")
@@ -1319,10 +1350,16 @@ async def decide_approval(
             status_code=status.HTTP_409_CONFLICT,
             detail="Approval has already been decided.",
         )
-    require_record(db, User, decision.approved_by_id, "Approver was not found.")
+    approved_by_id = authenticated_actor_id(
+        db,
+        request,
+        actor,
+        decision.approved_by_id,
+        "approved_by_id",
+    )
 
     approval.status = decision.status
-    approval.approved_by_id = decision.approved_by_id
+    approval.approved_by_id = approved_by_id
     approval.decision_code = decision.decision_code
     approval.decided_at = utc_now()
     updated_approval = persist_record(db, approval, "Approval")
@@ -1334,21 +1371,20 @@ async def decide_approval(
     response_model=SecurityEventResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["security-events"],
-    dependencies=[
-        Depends(reject_oversized_requests),
-        Depends(require_permission("security.write")),
-    ],
+    dependencies=[Depends(reject_oversized_requests)],
 )
 async def create_security_event(
-    event: SecurityEventCreate, db: Session = Depends(get_db)
+    event: SecurityEventCreate,
+    request: Request,
+    actor: User = Depends(require_permission("security.write")),
+    db: Session = Depends(get_db),
 ) -> SecurityEventResponse:
-    if event.actor_id is not None:
-        require_record(db, User, event.actor_id, "Event actor was not found.")
+    actor_id = authenticated_actor_id(db, request, actor, event.actor_id, "actor_id")
 
     created_event = persist_record(
         db,
         SecurityEvent(
-            actor_id=event.actor_id,
+            actor_id=actor_id,
             event_code=event.event_code,
             outcome=event.outcome,
             resource_type=event.resource_type,

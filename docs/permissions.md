@@ -5,6 +5,11 @@ authenticated user with the `X-User-ID` header; the server loads that user and
 checks the stored role before running a protected operation. An AI response is
 never consulted for authorization.
 
+Identity fields on mutation requests are server-bound. Upload, workflow,
+approval, and security-event records use the authenticated user as their
+actor. If a caller supplies an actor field, it must match that user or the
+request is rejected and recorded as `access.denied`.
+
 ## Matrix
 
 | Role | Allowed operations |
