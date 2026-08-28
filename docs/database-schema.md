@@ -9,6 +9,7 @@ erDiagram
     USER ||--o{ PROJECT : owns
     USER ||--o{ FILE : uploads
     USER ||--o{ WORKFLOW : creates
+    USER ||--o{ BACKUP : creates
     USER ||--o{ APPROVAL : requests
     USER ||--o{ APPROVAL : decides
     USER ||--o{ SECURITY_EVENT : causes
@@ -16,6 +17,7 @@ erDiagram
     FILE ||--o{ FILE_HISTORY : records
     FILE ||--o{ FILE_VERSION : versions
     PROJECT ||--o{ WORKFLOW : defines
+    PROJECT ||--o{ BACKUP : stores
     WORKFLOW ||--o{ APPROVAL : requires
 
     USER {
@@ -32,6 +34,23 @@ erDiagram
         string description
         string status
         datetime created_at
+        datetime updated_at
+    }
+    BACKUP {
+        UUID id PK
+        UUID project_id FK
+        UUID created_by_id FK
+        string artifact_key UK
+        string manifest_key UK
+        bigint archive_size_bytes
+        int file_count
+        bigint total_bytes
+        string archive_checksum_sha256
+        string manifest_checksum_sha256
+        string status
+        datetime created_at
+        datetime verified_at
+        datetime restored_at
         datetime updated_at
     }
     FILE {
@@ -118,6 +137,9 @@ erDiagram
 - `file_versions` provides a per-file version number and immutable metadata
   reference. Each file can have one original version and later versions without
   changing the original record.
+- `backups` stores generated relative artifact keys, manifest/archive checksums,
+  byte counts, status, and lifecycle timestamps. Archive bytes remain outside
+  the database and outside the project source tree.
 - `workflows` are versioned per project with a unique `(project_id, name,
   version)` key. `approvals` are separate records so each decision has its own
   lifecycle and actor references.
@@ -129,7 +151,8 @@ erDiagram
   without destroying audit history.
 - Indexes cover project ownership/status, file lookup by project/status,
   file-history lookup by file/time, workflow status, approval status, and
-  security-event lookups by actor/code and time.
+  backup lookup by project/status and time, and security-event lookups by
+  actor/code and time.
 
 ## Migration
 
@@ -138,7 +161,7 @@ latest migrations:
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://localhost/ccl_suite'
-python -m alembic upgrade head
+.venv/bin/python -m alembic upgrade head
 ```
 
 The migration creates tables and constraints only; it does not insert personal
