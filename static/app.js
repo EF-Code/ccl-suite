@@ -8,6 +8,7 @@ const folderResult = document.querySelector("#folder-result");
 const inventoryResult = document.querySelector("#inventory-result");
 const conversionResult = document.querySelector("#conversion-result");
 const organizerResult = document.querySelector("#organizer-result");
+const backupResult = document.querySelector("#backup-result");
 const projectsList = document.querySelector("#projects-list");
 
 function showFlash(message, kind = "success") {
@@ -68,6 +69,7 @@ function setProjectId(projectId) {
   document.querySelector("#conversion-project-id").value = projectId;
   document.querySelector("#inventory-project-id").value = projectId;
   document.querySelector("#organizer-project-id").value = projectId;
+  document.querySelector("#backup-project-id").value = projectId;
 }
 
 function renderProjects(projects) {
@@ -93,7 +95,7 @@ function renderProjects(projects) {
     button.addEventListener("click", () => {
       setProjectId(button.dataset.projectId);
       document.querySelector("#conversion-form").scrollIntoView({ behavior: "smooth", block: "center" });
-      showFlash("Project selected for inventory, conversion, and organisation.");
+      showFlash("Project selected for inventory, backup, conversion, and organisation.");
     });
   });
 }
@@ -182,6 +184,115 @@ document.querySelector("#inventory-form").addEventListener("submit", async (even
     showFlash("Inventory manifests created inside the project root.");
   } catch (error) {
     showResult(inventoryResult, error.message, "error");
+    showFlash(error.message, "error");
+  }
+});
+
+function backupProjectId() {
+  const projectId = document.querySelector("#backup-project-id").value.trim();
+  if (!projectId) {
+    throw new Error("Select a project before using backup and recovery.");
+  }
+  return projectId;
+}
+
+function backupId() {
+  const value = document.querySelector("#backup-id").value.trim();
+  if (!value) {
+    throw new Error("Create or select a backup before continuing.");
+  }
+  return value;
+}
+
+function backupSummary(backup) {
+  return `${backup.id} · ${backup.status} · ${backup.file_count} file(s) · ${backup.total_bytes} bytes\n` +
+    `Archive SHA-256: ${backup.archive_checksum_sha256}\n` +
+    `Manifest SHA-256: ${backup.manifest_checksum_sha256}`;
+}
+
+document.querySelector("#backup-create").addEventListener("click", async () => {
+  clearFlash();
+  try {
+    const projectId = backupProjectId();
+    const backup = await apiRequest(`/projects/${encodeURIComponent(projectId)}/backups`, {
+      method: "POST",
+      body: "{}",
+    });
+    document.querySelector("#backup-id").value = backup.id;
+    showResult(backupResult, `Backup created and verified.\n${backupSummary(backup)}`);
+    showFlash("Project backup created and verified against its manifest.");
+  } catch (error) {
+    showResult(backupResult, error.message, "error");
+    showFlash(error.message, "error");
+  }
+});
+
+document.querySelector("#backup-list").addEventListener("click", async () => {
+  clearFlash();
+  try {
+    const projectId = backupProjectId();
+    const backups = await apiRequest(`/projects/${encodeURIComponent(projectId)}/backups`);
+    if (!backups.length) {
+      showResult(backupResult, "No backups recorded for this project.");
+      showFlash("No project backups are available yet.");
+      return;
+    }
+    document.querySelector("#backup-id").value = backups[0].id;
+    showResult(backupResult, backups.map(backupSummary).join("\n\n"));
+    showFlash(`Loaded ${backups.length} project backup(s). The newest backup is selected.`);
+  } catch (error) {
+    showResult(backupResult, error.message, "error");
+    showFlash(error.message, "error");
+  }
+});
+
+document.querySelector("#backup-verify").addEventListener("click", async () => {
+  clearFlash();
+  try {
+    const projectId = backupProjectId();
+    const id = backupId();
+    const result = await apiRequest(
+      `/projects/${encodeURIComponent(projectId)}/backups/${encodeURIComponent(id)}/verify`,
+      { method: "POST", body: "{}" },
+    );
+    showResult(
+      backupResult,
+      `Integrity verified: ${result.entries_verified} entries, ${result.files_verified} file(s), ${result.bytes_verified} bytes\n` +
+      backupSummary(result.backup),
+    );
+    showFlash("Backup archive and manifest verified successfully.");
+  } catch (error) {
+    showResult(backupResult, error.message, "error");
+    showFlash(error.message, "error");
+  }
+});
+
+document.querySelector("#backup-restore").addEventListener("click", async () => {
+  clearFlash();
+  try {
+    const projectId = backupProjectId();
+    const id = backupId();
+    const destination = document.querySelector("#backup-destination").value.trim();
+    if (!destination) {
+      throw new Error("Enter a new restore destination.");
+    }
+    const result = await apiRequest(
+      `/projects/${encodeURIComponent(projectId)}/backups/${encodeURIComponent(id)}/restore`,
+      {
+        method: "POST",
+        body: JSON.stringify({ destination_path: destination }),
+      },
+    );
+    showResult(
+      backupResult,
+      `Restored ${result.files_restored} file(s) and ${result.bytes_restored} bytes\n` +
+      `Destination: ${result.destination_path}\n` +
+      `Archive SHA-256: ${result.archive_checksum_sha256}\n` +
+      `Manifest SHA-256: ${result.manifest_checksum_sha256}`,
+    );
+    showFlash("Backup restored to a new destination; the original was preserved.");
+  } catch (error) {
+    showResult(backupResult, error.message, "error");
     showFlash(error.message, "error");
   }
 });
