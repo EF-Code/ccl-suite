@@ -4,7 +4,7 @@ set -euo pipefail
 
 base_url="${CCL_API_URL:-http://127.0.0.1:8000}"
 project_root="${CCL_PROJECT_ROOT:-projects}"
-suffix="$(date +%s)"
+suffix="$(date +%s%N)"
 project_name="friday-backup-demo-${suffix}"
 
 if ! command -v curl >/dev/null 2>&1; then
