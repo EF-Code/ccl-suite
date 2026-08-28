@@ -18,6 +18,7 @@ from file_backups import (
     iter_project_entries,
     normalize_backup_relative_path,
     read_backup_manifest,
+    remove_backup_artifacts,
     resolve_backup_roots,
     restore_backup,
     write_backup_manifest,
@@ -288,3 +289,15 @@ def test_restore_backup_never_overwrites_existing_destination(tmp_path: Path) ->
         restore_backup(result.storage, restore_root, "copies/one")
 
     assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_remove_backup_artifacts_only_removes_generated_files(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "one.txt").write_text("same", encoding="utf-8")
+    result = create_backup(project_root, tmp_path / "backups", uuid4())
+
+    remove_backup_artifacts(result.storage)
+
+    assert not result.storage.artifact_path.exists()
+    assert not result.storage.manifest_path.exists()

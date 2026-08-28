@@ -669,6 +669,29 @@ def create_backup(
     )
 
 
+def remove_backup_artifacts(storage: BackupStoragePaths) -> None:
+    """Remove only the generated archive and manifest for one backup ID."""
+
+    root = resolve_backup_root(storage.backup_root)
+    expected = backup_storage_paths(root, storage.project_ref, storage.backup_id)
+    if (
+        storage.artifact_path != expected.artifact_path
+        or storage.manifest_path != expected.manifest_path
+    ):
+        raise BackupPathError("Backup artifact paths do not match their generated identifier.")
+    for path in (expected.artifact_path, expected.manifest_path):
+        if path.is_symlink():
+            raise BackupPathError("Backup artifacts must not be symbolic links.")
+        if path.exists():
+            if not path.is_file():
+                raise BackupArtifactError("Backup artifact path is not a regular file.")
+            path.unlink()
+    try:
+        expected.artifact_path.parent.rmdir()
+    except OSError:
+        pass
+
+
 def _validate_expected_checksum(value: str | None, label: str) -> str | None:
     """Validate an optional persisted SHA-256 checksum."""
 
@@ -1063,6 +1086,7 @@ __all__ = [
     "normalize_backup_relative_path",
     "normalize_project_ref",
     "read_backup_manifest",
+    "remove_backup_artifacts",
     "resolve_backup_root",
     "resolve_backup_roots",
     "restore_backup",
