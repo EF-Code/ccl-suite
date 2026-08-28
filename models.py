@@ -62,6 +62,10 @@ class User(Base):
         back_populates="created_by",
         foreign_keys=lambda: [Workflow.created_by_id],
     )
+    created_backups: Mapped[list[Backup]] = relationship(
+        back_populates="created_by",
+        foreign_keys=lambda: [Backup.created_by_id],
+    )
     requested_approvals: Mapped[list[Approval]] = relationship(
         back_populates="requested_by",
         foreign_keys=lambda: [Approval.requested_by_id],
@@ -105,6 +109,68 @@ class Project(Base):
     )
     workflows: Mapped[list[Workflow]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
+    )
+    backups: Mapped[list[Backup]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class Backup(Base):
+    """Metadata for an immutable project archive stored outside project data."""
+
+    __tablename__ = "backups"
+    __table_args__ = (
+        Index("ix_backups_project_created_at", "project_id", "created_at"),
+        Index("ix_backups_project_status", "project_id", "status"),
+        CheckConstraint("archive_size_bytes >= 0", name="ck_backups_archive_size_non_negative"),
+        CheckConstraint("file_count >= 0", name="ck_backups_file_count_non_negative"),
+        CheckConstraint("total_bytes >= 0", name="ck_backups_total_bytes_non_negative"),
+        CheckConstraint(
+            "length(archive_checksum_sha256) = 64",
+            name="ck_backups_archive_checksum_sha256_length",
+        ),
+        CheckConstraint(
+            "length(manifest_checksum_sha256) = 64",
+            name="ck_backups_manifest_checksum_sha256_length",
+        ),
+        CheckConstraint(
+            "status IN ('created', 'verified', 'restored')",
+            name="ck_backups_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    artifact_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    manifest_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    archive_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    archive_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="created")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    restored_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    project: Mapped[Project] = relationship(back_populates="backups")
+    created_by: Mapped[User | None] = relationship(
+        back_populates="created_backups",
+        foreign_keys=[created_by_id],
     )
 
 
@@ -368,6 +434,7 @@ class SecurityEvent(Base):
 
 __all__ = [
     "Approval",
+    "Backup",
     "File",
     "FileHistory",
     "FileVersion",

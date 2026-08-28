@@ -4,6 +4,7 @@ from sqlalchemy.orm import configure_mappers
 from database import Base
 from models import (
     Approval,
+    Backup,
     File,
     FileHistory,
     FileVersion,
@@ -20,6 +21,7 @@ REQUIRED_TABLES = {
     "files",
     "file_history",
     "file_versions",
+    "backups",
     "workflows",
     "approvals",
     "security_events",
@@ -35,6 +37,7 @@ def test_relationship_mappers_configure() -> None:
 
     assert User.projects.property.mapper.class_ is Project
     assert Project.files.property.mapper.class_ is File
+    assert Project.backups.property.mapper.class_ is Backup
     assert File.history.property.mapper.class_ is FileHistory
     assert File.versions.property.mapper.class_ is FileVersion
     assert Project.workflows.property.mapper.class_ is Workflow
@@ -66,6 +69,12 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     assert "ix_file_versions_file_created_at" in {
         index.name for index in FileVersion.__table__.indexes
     }
+    assert "ix_backups_project_created_at" in {
+        index.name for index in Backup.__table__.indexes
+    }
+    assert "ix_backups_project_status" in {
+        index.name for index in Backup.__table__.indexes
+    }
     assert "ix_workflows_project_status" in {
         index.name for index in Workflow.__table__.indexes
     }
@@ -83,10 +92,14 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     file_project_fk = next(iter(File.__table__.c.project_id.foreign_keys))
     history_file_fk = next(iter(FileHistory.__table__.c.file_id.foreign_keys))
     version_file_fk = next(iter(FileVersion.__table__.c.file_id.foreign_keys))
+    backup_project_fk = next(iter(Backup.__table__.c.project_id.foreign_keys))
+    backup_creator_fk = next(iter(Backup.__table__.c.created_by_id.foreign_keys))
     assert project_owner_fk.ondelete == "RESTRICT"
     assert file_project_fk.ondelete == "CASCADE"
     assert history_file_fk.ondelete == "CASCADE"
     assert version_file_fk.ondelete == "CASCADE"
+    assert backup_project_fk.ondelete == "CASCADE"
+    assert backup_creator_fk.ondelete == "SET NULL"
 
 
 def test_sensitive_payload_columns_are_not_stored() -> None:
