@@ -36,6 +36,8 @@ Run the default regression suite and keep its result with this checkpoint:
 .venv/bin/python -m pytest -q
 ```
 
+Final local result for this checkpoint: `193 passed, 2 skipped`.
+
 For the full recovery demonstration, use
 [`backup-recovery.md`](backup-recovery.md) and record the backup ID, both
 checksums, response counts, source/restored file comparisons, destination, and
