@@ -69,6 +69,13 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `POST /projects/{project_id}/inventory` writes confined JSON/CSV manifests,
   synchronizes searchable file records, records metadata history, and returns
   inventory metadata and duplicate-hash counts.
+- `POST /projects/{project_id}/backups` creates and immediately verifies a
+  project archive plus a checksummed manifest without changing the source.
+- `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
+  `/backups/{backup_id}/verify` rechecks the archive and every manifest hash.
+- `POST /projects/{project_id}/backups/{backup_id}/restore` verifies and
+  restores a backup to a new relative directory below the configured projects
+  root. Existing destinations and the original project are never replaced.
 - `POST /projects/{project_id}/organization/plan` previews file moves without
   changing files.
 - `POST /projects/{project_id}/organization/apply` applies safe moves and can
@@ -126,6 +133,12 @@ docker compose down
 
 The password is read from the ignored `.env` file and is not copied into the
 Docker image.
+
+Project backup storage is configured with `CCL_BACKUP_ROOT` and defaults to
+`./backups`. It must be a separate private directory from `CCL_PROJECT_ROOT`.
+The API returns portable artifact and manifest keys rather than host paths.
+The complete recovery procedure and integrity checklist are in
+[`docs/backup-recovery.md`](docs/backup-recovery.md).
 
 To exercise a live PostgreSQL round trip, first start the Compose services and
 set `TEST_DATABASE_URL` to the same local database, then run the opt-in test:
