@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import stat
+import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -82,6 +83,31 @@ class BackupStoragePaths:
     manifest_path: Path
     artifact_key: str
     manifest_key: str
+
+
+@dataclass(frozen=True)
+class BackupArtifact:
+    """Durably published archive metadata returned by backup creation."""
+
+    storage: BackupStoragePaths
+    manifest: BackupManifest
+    archive_size_bytes: int
+    archive_checksum_sha256: str
+    manifest_checksum_sha256: str
+    file_count: int
+    total_bytes: int
+
+    @property
+    def artifact_key(self) -> str:
+        """Return the portable archive key persisted by the API."""
+
+        return self.storage.artifact_key
+
+    @property
+    def manifest_key(self) -> str:
+        """Return the portable manifest key persisted by the API."""
+
+        return self.storage.manifest_key
 
 
 def normalize_project_ref(project_ref: UUID | str) -> str:
@@ -440,12 +466,179 @@ def write_backup_manifest(path: Path | str, manifest: BackupManifest) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _safe_source_path(root: Path, relative_path: str, kind: BackupEntryKind) -> Path:
+    """Resolve a manifest path while rejecting symlink components."""
+
+    normalized = normalize_backup_relative_path(relative_path)
+    candidate = root.joinpath(*normalized.split("/"))
+    current = root
+    for part in normalized.split("/"):
+        current = current / part
+        if current.is_symlink():
+            raise BackupSourceError("Project backups do not follow symbolic links.")
+    resolved = candidate.resolve(strict=False)
+    if not resolved.is_relative_to(root):
+        raise BackupSourceError("A project entry left the approved source root.")
+    if kind == "directory" and not resolved.is_dir():
+        raise BackupSourceError("A project directory is no longer available.")
+    if kind == "file" and not resolved.is_file():
+        raise BackupSourceError("A project file is no longer available.")
+    return resolved
+
+
+def _tar_info(entry: BackupEntry) -> tarfile.TarInfo:
+    """Create stable tar metadata without host-specific ownership or times."""
+
+    info = tarfile.TarInfo(name=entry.relative_path)
+    info.type = tarfile.DIRTYPE if entry.kind == "directory" else tarfile.REGTYPE
+    info.mode = entry.mode
+    info.mtime = 0
+    info.uid = 0
+    info.gid = 0
+    info.uname = ""
+    info.gname = ""
+    info.size = entry.size_bytes if entry.kind == "file" else 0
+    return info
+
+
+class _HashingReader:
+    """Bounded reader that hashes exactly the bytes copied into an archive."""
+
+    def __init__(self, stream: object) -> None:
+        self.stream = stream
+        self.digest = hashlib.sha256()
+        self.bytes_read = 0
+
+    def read(self, size: int = -1) -> bytes:
+        """Read and hash one tarfile chunk."""
+
+        chunk = self.stream.read(size)  # type: ignore[union-attr]
+        if not isinstance(chunk, bytes):
+            raise BackupSourceError("Project file could not be read as bytes.")
+        self.digest.update(chunk)
+        self.bytes_read += len(chunk)
+        return chunk
+
+
+def _publish_temporary_file(temporary: Path, destination: Path, label: str) -> None:
+    """Publish a temporary file through a no-overwrite hard link."""
+
+    if destination.is_symlink():
+        raise BackupArtifactError(f"{label} must not be a symlink.")
+    if destination.parent.is_symlink():
+        raise BackupPathError(f"{label} parent must not be a symlink.")
+    try:
+        os.link(temporary, destination)
+    except FileExistsError as exc:
+        raise BackupArtifactError(f"{label} already exists.") from exc
+    except OSError as exc:
+        raise BackupArtifactError(f"{label} could not be published safely.") from exc
+
+
+def _prepare_artifact_directory(storage: BackupStoragePaths) -> None:
+    """Create the per-project artifact directory without following links."""
+
+    parent = storage.artifact_path.parent
+    if parent.is_symlink():
+        raise BackupPathError("Backup artifact directory must not be a symlink.")
+    parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    if parent.is_symlink() or not parent.is_dir():
+        raise BackupPathError("Backup artifact directory is not safe.")
+    if not parent.resolve(strict=False).is_relative_to(storage.backup_root):
+        raise BackupPathError("Backup artifact directory left the backup root.")
+
+
+def _create_archive(
+    root: Path,
+    manifest: BackupManifest,
+    destination: Path,
+) -> tuple[int, str]:
+    """Create and publish one deterministic tar archive."""
+
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=destination.parent,
+            prefix=".backup-",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+        with tarfile.open(temporary, mode="w", format=tarfile.PAX_FORMAT) as archive:
+            for entry in manifest.entries:
+                source = _safe_source_path(root, entry.relative_path, entry.kind)
+                info = _tar_info(entry)
+                if entry.kind == "directory":
+                    archive.addfile(info)
+                    continue
+                try:
+                    with source.open("rb") as source_stream:
+                        reader = _HashingReader(source_stream)
+                        archive.addfile(info, reader)
+                except OSError as exc:
+                    raise BackupSourceError("A project file could not be archived.") from exc
+                if reader.bytes_read != entry.size_bytes or reader.digest.hexdigest() != entry.checksum_sha256:
+                    raise BackupSourceError("A project file changed during backup.")
+        with temporary.open("rb") as stream:
+            os.fsync(stream.fileno())
+        _publish_temporary_file(temporary, destination, "Backup archive")
+        return destination.stat().st_size, sha256_file(destination)
+    except BackupError:
+        raise
+    except (OSError, tarfile.TarError) as exc:
+        raise BackupArtifactError("Backup archive could not be created safely.") from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def create_backup(
+    project_root: Path | str,
+    backup_root: Path | str,
+    project_ref: UUID | str,
+    backup_id: UUID | str | None = None,
+) -> BackupArtifact:
+    """Create a manifest and deterministic archive without modifying a project."""
+
+    root, destination_root = resolve_backup_roots(project_root, backup_root)
+    storage = backup_storage_paths(destination_root, project_ref, backup_id)
+    _prepare_artifact_directory(storage)
+    manifest = build_backup_manifest(root, storage.project_ref)
+    archive_published = False
+    manifest_published = False
+    try:
+        archive_size, archive_checksum = _create_archive(
+            root,
+            manifest,
+            storage.artifact_path,
+        )
+        archive_published = True
+        manifest_checksum = write_backup_manifest(storage.manifest_path, manifest)
+        manifest_published = True
+    except BackupError:
+        if archive_published:
+            storage.artifact_path.unlink(missing_ok=True)
+        if manifest_published:
+            storage.manifest_path.unlink(missing_ok=True)
+        raise
+    return BackupArtifact(
+        storage=storage,
+        manifest=manifest,
+        archive_size_bytes=archive_size,
+        archive_checksum_sha256=archive_checksum,
+        manifest_checksum_sha256=manifest_checksum,
+        file_count=sum(entry.kind == "file" for entry in manifest.entries),
+        total_bytes=sum(entry.size_bytes for entry in manifest.entries if entry.kind == "file"),
+    )
+
+
 __all__ = [
     "BACKUP_ARCHIVE_SUFFIX",
     "BACKUP_FORMAT_VERSION",
     "BACKUP_MANIFEST_SUFFIX",
     "DEFAULT_BACKUP_ROOT",
     "BackupDestinationExistsError",
+    "BackupArtifact",
     "BackupEntry",
     "BackupEntryKind",
     "BackupError",
@@ -458,6 +651,7 @@ __all__ = [
     "backup_storage_paths",
     "backup_manifest_bytes",
     "build_backup_manifest",
+    "create_backup",
     "iter_project_entries",
     "normalize_backup_relative_path",
     "normalize_project_ref",

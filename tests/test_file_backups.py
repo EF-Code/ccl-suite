@@ -1,4 +1,5 @@
 from pathlib import Path
+import tarfile
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,6 +13,7 @@ from file_backups import (
     backup_storage_paths,
     backup_manifest_bytes,
     build_backup_manifest,
+    create_backup,
     iter_project_entries,
     normalize_backup_relative_path,
     read_backup_manifest,
@@ -150,3 +152,44 @@ def test_manifest_rejects_duplicate_or_unsorted_entries() -> None:
         backup_manifest_bytes(duplicate)
     with pytest.raises(BackupIntegrityError, match="sorted"):
         backup_manifest_bytes(unsorted)
+
+
+def test_create_backup_publishes_archive_and_preserves_project(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    (project_root / "docs").mkdir(parents=True)
+    (project_root / "docs" / "guide.txt").write_text("guide", encoding="utf-8")
+    (project_root / "empty").mkdir()
+    project_id = uuid4()
+    original_bytes = (project_root / "docs" / "guide.txt").read_bytes()
+
+    result = create_backup(project_root, tmp_path / "backups", project_id)
+
+    assert result.file_count == 1
+    assert result.total_bytes == len(original_bytes)
+    assert result.archive_size_bytes == result.storage.artifact_path.stat().st_size
+    assert result.storage.artifact_path.is_file()
+    assert result.storage.manifest_path.is_file()
+    assert (project_root / "docs" / "guide.txt").read_bytes() == original_bytes
+    assert result.manifest_checksum_sha256
+    assert result.archive_checksum_sha256
+    with tarfile.open(result.storage.artifact_path, mode="r:") as archive:
+        assert [member.name for member in archive.getmembers()] == [
+            "docs",
+            "docs/guide.txt",
+            "empty",
+        ]
+
+
+def test_repeated_backup_has_stable_manifest_and_archive_bytes(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "one.txt").write_text("same", encoding="utf-8")
+    project_id = uuid4()
+
+    first = create_backup(project_root, tmp_path / "backups", project_id)
+    second = create_backup(project_root, tmp_path / "backups", project_id)
+
+    assert first.storage.artifact_path.read_bytes() == second.storage.artifact_path.read_bytes()
+    assert first.storage.manifest_path.read_bytes() == second.storage.manifest_path.read_bytes()
+    assert first.archive_checksum_sha256 == second.archive_checksum_sha256
+    assert first.manifest_checksum_sha256 == second.manifest_checksum_sha256
