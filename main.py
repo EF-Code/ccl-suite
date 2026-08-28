@@ -432,6 +432,17 @@ def cleanup_failed_upload(upload_result: UploadResult | None) -> None:
         logger.error("Failed upload cleanup could not remove its destination.")
 
 
+def cleanup_failed_backup(artifact: BackupArtifact | None) -> None:
+    """Remove newly-created backup artifacts after a failed API transaction."""
+
+    if artifact is None:
+        return
+    try:
+        remove_backup_artifacts(artifact.storage)
+    except (BackupArtifactError, BackupPathError, OSError):
+        logger.error("Failed backup cleanup could not remove its generated artifacts.")
+
+
 async def reject_oversized_requests(request: Request) -> None:
     """Reject declared request bodies larger than the application accepts."""
 
