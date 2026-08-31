@@ -33,10 +33,13 @@ BASE_URL = os.getenv("DASHBOARD_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 def installed_browser(playwright_api: object) -> str | None:
     """Choose the Playwright browser when present, then a system Chromium."""
 
+    system_browser = shutil.which("google-chrome") or shutil.which("chromium")
+    if system_browser:
+        return system_browser
     expected = Path(playwright_api.chromium.executable_path)  # type: ignore[attr-defined]
     if expected.is_file():
         return expected.as_posix()
-    return shutil.which("google-chrome") or shutil.which("chromium")
+    return None
 
 
 @pytest.fixture
@@ -147,3 +150,60 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
 
     page.locator("#organizer-rollback").click()
     expect(organizer_result).to_contain_text("Restored 0 file(s)")
+
+
+def test_dashboard_registers_a_pending_knowledge_source(dashboard_page: Page) -> None:
+    """Exercise Monday's source-register workflow through the live dashboard."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+
+    suffix = uuid4().hex[:10]
+    owner_ref = f"knowledge-browser-owner-{suffix}"
+    project_title = f"Knowledge Browser {suffix}"
+
+    user_form = page.locator("#user-form")
+    user_form.locator("input[name='external_ref']").fill(owner_ref)
+    user_form.get_by_role("button", name="Create development owner").click()
+    page.locator("#user-result").wait_for(state="visible")
+    owner_id = page.locator("#owner-id").input_value()
+
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_row.wait_for(state="visible")
+    project_row.get_by_role("button", name="Use project").click()
+    project_id = page.locator("#knowledge-project-id").input_value()
+
+    folder_form = page.locator("#folder-form")
+    folder_form.get_by_role("button", name="Generate folder layout").click()
+    page.locator("#folder-result").wait_for(state="visible")
+
+    file_response = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/files",
+        data={
+            "storage_key": "incoming/company-rules.txt",
+            "media_type": "text/plain",
+            "size_bytes": 42,
+            "checksum_sha256": "b" * 64,
+        },
+    )
+    assert file_response.status == 201
+    file_id = file_response.json()["id"]
+
+    page.locator("#knowledge-files-refresh").click()
+    page.locator(f"#knowledge-file-id option[value='{file_id}']").wait_for(state="attached")
+    page.locator("#knowledge-file-id").select_option(file_id)
+    expect(page.locator("#knowledge-register")).to_be_enabled()
+    assert page.locator("#knowledge-owner-id").input_value() == owner_id
+
+    page.locator("#knowledge-source-form input[name='title']").fill("Company rules")
+    page.locator("#knowledge-source-form").get_by_role(
+        "button", name="Register source for review"
+    ).click()
+    knowledge_result = page.locator("#knowledge-result")
+    knowledge_result.wait_for(state="visible")
+    expect(knowledge_result).to_contain_text("Status: pending")
+    expect(page.locator(".knowledge-table tbody tr")).to_contain_text("Company rules")
+    expect(page.locator(".knowledge-table tbody tr")).to_contain_text("pending")

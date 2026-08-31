@@ -211,6 +211,64 @@
           </div>
         </article>
 
+        <article class="card card-wide knowledge-card">
+          <div class="card-heading card-heading-inline">
+            <div>
+              <p class="eyebrow">10 · Knowledge base</p>
+              <h2>Register approved knowledge sources</h2>
+            </div>
+            <button id="knowledge-files-refresh" class="button button-secondary" type="button">Refresh files</button>
+          </div>
+          <p class="muted">
+            Register file metadata for SOPs, prompt banks, style guides, and
+            project rules. New sources stay pending until a supervisor or
+            administrator approves them; document text is not stored here.
+          </p>
+          <form id="knowledge-source-form" class="stack-form">
+            <label>
+              Project ID
+              <input id="knowledge-project-id" name="project_id" placeholder="Select a project below" readonly required />
+            </label>
+            <label>
+              Source file
+              <select id="knowledge-file-id" name="file_id" required>
+                <option value="" selected disabled>Select an active project file</option>
+              </select>
+            </label>
+            <label>
+              Source title
+              <input name="title" placeholder="Customer support SOP" required maxlength="200" />
+            </label>
+            <label>
+              Source type
+              <select name="source_type" required>
+                <option value="sop">SOP</option>
+                <option value="prompt_bank">Prompt bank</option>
+                <option value="style_guide">Style guide</option>
+                <option value="project_rule">Project rule</option>
+              </select>
+            </label>
+            <label>
+              Sensitivity
+              <select name="sensitivity" required>
+                <option value="internal">Internal</option>
+                <option value="public">Public</option>
+                <option value="confidential">Confidential</option>
+                <option value="restricted">Restricted</option>
+              </select>
+            </label>
+            <label>
+              Accountable owner ID
+              <input id="knowledge-owner-id" name="owner_id" placeholder="Selected project owner" readonly required />
+            </label>
+            <button id="knowledge-register" class="button button-primary" type="submit" disabled>Register source for review</button>
+          </form>
+          <div id="knowledge-result" class="result-box" hidden></div>
+          <div id="knowledge-sources-list" class="projects-list">
+            <p class="empty-state">Select a project to view its knowledge sources.</p>
+          </div>
+        </article>
+
         <article class="card card-wide conversion-card">
           <div class="card-heading">
             <div>
@@ -299,7 +357,7 @@
         <span class="scope-line" aria-hidden="true"></span>
         <p>
           <strong>Prototype scope:</strong> this screen now exposes the current
-          folder, inventory, backup/recovery, organisation, conversion, and database API actions.
+          folder, inventory, backup/recovery, organisation, conversion, knowledge-source register, and database API actions.
           It does not add authentication or replace the richer command-line
           options that remain available for advanced workflows.
         </p>

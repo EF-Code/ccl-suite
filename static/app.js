@@ -10,6 +10,9 @@ const conversionResult = document.querySelector("#conversion-result");
 const organizerResult = document.querySelector("#organizer-result");
 const backupResult = document.querySelector("#backup-result");
 const projectsList = document.querySelector("#projects-list");
+const knowledgeResult = document.querySelector("#knowledge-result");
+const knowledgeFiles = document.querySelector("#knowledge-file-id");
+const knowledgeSourcesList = document.querySelector("#knowledge-sources-list");
 
 function showFlash(message, kind = "success") {
   flash.textContent = message;
@@ -71,6 +74,10 @@ function selectProject(project) {
   document.querySelector("#organizer-project-id").value = project.id;
   document.querySelector("#backup-project-id").value = project.id;
   document.querySelector("#folder-form input[name='project_name']").value = project.storage_slug;
+  document.querySelector("#knowledge-project-id").value = project.id;
+  document.querySelector("#knowledge-owner-id").value = project.owner_id || "";
+  refreshKnowledgeFiles(project.id);
+  refreshKnowledgeSources(project.id);
 }
 
 function renderProjects(projects) {
@@ -83,7 +90,7 @@ function renderProjects(projects) {
       <td><span class="project-title">${escapeHtml(project.title)}</span><br><span class="project-id">${escapeHtml(project.id)}</span></td>
       <td>${escapeHtml(project.status)}</td>
       <td>${escapeHtml(project.description || "—")}</td>
-      <td><button class="select-project" type="button" data-project-id="${escapeHtml(project.id)}" data-project-slug="${escapeHtml(project.storage_slug)}" data-project-title="${escapeHtml(project.title)}">Use project</button></td>
+      <td><button class="select-project" type="button" data-project-id="${escapeHtml(project.id)}" data-project-slug="${escapeHtml(project.storage_slug)}" data-project-title="${escapeHtml(project.title)}" data-project-owner="${escapeHtml(project.owner_id)}">Use project</button></td>
     </tr>
   `).join("");
   projectsList.innerHTML = `
@@ -97,6 +104,7 @@ function renderProjects(projects) {
       selectProject({
         id: button.dataset.projectId,
         storage_slug: button.dataset.projectSlug,
+        owner_id: button.dataset.projectOwner,
       });
       document.querySelector("#folder-form").scrollIntoView({ behavior: "smooth", block: "center" });
       showFlash(`Project selected. Generate “${button.dataset.projectSlug}” before scanning if its storage does not exist.`);
@@ -113,6 +121,82 @@ async function refreshProjects() {
   }
 }
 
+function renderKnowledgeFiles(files) {
+  knowledgeFiles.replaceChildren();
+  const activeFiles = files.filter((file) => file.status === "active");
+  if (!activeFiles.length) {
+    const empty = document.createElement("option");
+    empty.textContent = "No active files available for registration";
+    empty.value = "";
+    empty.disabled = true;
+    empty.selected = true;
+    knowledgeFiles.append(empty);
+    document.querySelector("#knowledge-register").disabled = true;
+    return;
+  }
+  const placeholder = document.createElement("option");
+  placeholder.textContent = "Select an active project file";
+  placeholder.value = "";
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  knowledgeFiles.append(placeholder);
+  activeFiles.forEach((file) => {
+    const option = document.createElement("option");
+    option.value = file.id;
+    option.textContent = `${file.name} · ${file.storage_key}`;
+    knowledgeFiles.append(option);
+  });
+  document.querySelector("#knowledge-register").disabled = false;
+}
+
+async function refreshKnowledgeFiles(projectId = document.querySelector("#knowledge-project-id").value.trim()) {
+  if (!projectId) {
+    renderKnowledgeFiles([]);
+    return;
+  }
+  try {
+    const files = await apiRequest(`/projects/${encodeURIComponent(projectId)}/files`);
+    renderKnowledgeFiles(files);
+  } catch (error) {
+    renderKnowledgeFiles([]);
+    showResult(knowledgeResult, `Could not load project files: ${error.message}`, "error");
+  }
+}
+
+function renderKnowledgeSources(sources) {
+  if (!sources.length) {
+    knowledgeSourcesList.innerHTML = '<p class="empty-state">No knowledge sources registered for this project.</p>';
+    return;
+  }
+  const rows = sources.map((source) => `
+    <tr>
+      <td><span class="project-title">${escapeHtml(source.title)}</span><br><span class="project-id">${escapeHtml(source.file_name)}</span></td>
+      <td>${escapeHtml(source.source_type)}</td>
+      <td>${escapeHtml(source.sensitivity)}</td>
+      <td><span class="source-status source-status-${escapeHtml(source.approval_status)}">${escapeHtml(source.approval_status)}</span></td>
+    </tr>
+  `).join("");
+  knowledgeSourcesList.innerHTML = `
+    <table class="knowledge-table">
+      <thead><tr><th>Source</th><th>Type</th><th>Sensitivity</th><th>Review</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function refreshKnowledgeSources(projectId = document.querySelector("#knowledge-project-id").value.trim()) {
+  if (!projectId) {
+    knowledgeSourcesList.innerHTML = '<p class="empty-state">Select a project to view its knowledge sources.</p>';
+    return;
+  }
+  try {
+    const sources = await apiRequest(`/projects/${encodeURIComponent(projectId)}/knowledge-sources`);
+    renderKnowledgeSources(sources);
+  } catch (error) {
+    knowledgeSourcesList.innerHTML = `<p class="empty-state">Could not load knowledge sources: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -124,6 +208,32 @@ function escapeHtml(value) {
 
 document.querySelector("#health-refresh").addEventListener("click", refreshHealth);
 document.querySelector("#projects-refresh").addEventListener("click", refreshProjects);
+document.querySelector("#knowledge-files-refresh").addEventListener("click", () => refreshKnowledgeFiles());
+
+document.querySelector("#knowledge-source-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearFlash();
+  const form = event.currentTarget;
+  const values = formObject(form);
+  const projectId = values.project_id;
+  delete values.project_id;
+  try {
+    const source = await apiRequest(`/projects/${encodeURIComponent(projectId)}/knowledge-sources`, {
+      method: "POST",
+      body: JSON.stringify(values),
+    });
+    showResult(
+      knowledgeResult,
+      `Registered ${source.title}\nStatus: ${source.approval_status}\nFile: ${source.file_name}`,
+    );
+    showFlash("Knowledge source registered for review. It cannot feed the knowledge base until approved.");
+    form.querySelector("input[name='title']").value = "";
+    await refreshKnowledgeSources(projectId);
+  } catch (error) {
+    showResult(knowledgeResult, error.message, "error");
+    showFlash(error.message, "error");
+  }
+});
 
 document.querySelector("#folder-form").addEventListener("submit", async (event) => {
   event.preventDefault();
