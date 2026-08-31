@@ -20,6 +20,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ccl_suite}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ccl_suite}
       CCL_ENVIRONMENT: ${CCL_ENVIRONMENT:-development}
+      CCL_PROJECT_ROOT: /app/projects
+      CCL_BACKUP_ROOT: /app/backups
+    volumes:
+      - project_storage:/app/projects
+      - backup_storage:/app/backups
     depends_on:
       db:
         condition: service_healthy
@@ -28,3 +33,5 @@ services:
 
 volumes:
   postgres_data:
+  project_storage:
+  backup_storage:
