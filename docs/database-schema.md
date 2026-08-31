@@ -13,11 +13,14 @@ erDiagram
     USER ||--o{ APPROVAL : requests
     USER ||--o{ APPROVAL : decides
     USER ||--o{ SECURITY_EVENT : causes
+    USER ||--o{ KNOWLEDGE_SOURCE : owns
     PROJECT ||--o{ FILE : contains
     FILE ||--o{ FILE_HISTORY : records
     FILE ||--o{ FILE_VERSION : versions
     PROJECT ||--o{ WORKFLOW : defines
     PROJECT ||--o{ BACKUP : stores
+    PROJECT ||--o{ KNOWLEDGE_SOURCE : registers
+    FILE ||--o{ KNOWLEDGE_SOURCE : references
     WORKFLOW ||--o{ APPROVAL : requires
 
     USER {
@@ -95,6 +98,22 @@ erDiagram
         boolean is_original
         datetime created_at
     }
+    KNOWLEDGE_SOURCE {
+        UUID id PK
+        UUID project_id FK
+        UUID file_id FK
+        UUID owner_id FK
+        UUID created_by_id FK
+        UUID reviewed_by_id FK
+        string title
+        string source_type
+        string sensitivity
+        string approval_status
+        string rejection_reason
+        datetime reviewed_at
+        datetime created_at
+        datetime updated_at
+    }
     WORKFLOW {
         UUID id PK
         UUID project_id FK
@@ -141,6 +160,10 @@ erDiagram
 - `backups` stores generated relative artifact keys, manifest/archive checksums,
   byte counts, status, and lifecycle timestamps. Archive bytes remain outside
   the database and outside the project source tree.
+- `knowledge_sources` registers only metadata for active project files. Its
+  `pending`, `approved`, and `rejected` review state prevents unreviewed files
+  from entering future knowledge-base ingestion. No document contents are
+  stored in this table.
 - `workflows` are versioned per project with a unique `(project_id, name,
   version)` key. `approvals` are separate records so each decision has its own
   lifecycle and actor references.

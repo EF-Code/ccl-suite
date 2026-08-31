@@ -13,7 +13,7 @@ git clone https://github.com/EF-Code/ccl-suite.git
 - Create a virtual environment
 ```bash
 cd ccl-suite
-python -m venv .venv
+python3 -m venv .venv
 ```
 - Install dependencies
 ```bash
@@ -69,6 +69,11 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `POST /projects/{project_id}/inventory` writes confined JSON/CSV manifests,
   synchronizes searchable file records, records metadata history, and returns
   inventory metadata and duplicate-hash counts.
+- `POST` and `GET /projects/{project_id}/knowledge-sources` register and list
+  source metadata for active project files. New sources are always `pending`.
+- `POST /projects/{project_id}/knowledge-sources/{source_id}/review` lets a
+  supervisor or administrator approve or reject a source. Only approved
+  sources with active files are eligible for future knowledge-base ingestion.
 - `POST /projects/{project_id}/backups` creates and immediately verifies a
   project archive plus a checksummed manifest without changing the source.
 - `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
@@ -84,6 +89,13 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `POST` and `GET /workflows/{workflow_id}/approvals` manage workflow approvals.
 - `POST /approvals/{approval_id}/decision` records one approval decision.
 - `POST` and `GET /security-events` manage structured security audit events.
+
+The Monday Week 5 knowledge-source register is documented in
+[`docs/knowledge-sources.md`](docs/knowledge-sources.md). It records source
+ownership, type, sensitivity, review state, and file identity, but never stores
+document contents or system instructions.
+The completion checkpoint is in
+[`docs/week-5-monday-checkpoint.md`](docs/week-5-monday-checkpoint.md).
 
 Protected routes accept the authenticated user ID in the `X-User-ID` header.
 Development requests without the header use the first provisioned user for

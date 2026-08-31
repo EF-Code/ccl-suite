@@ -14,9 +14,9 @@ request is rejected and recorded as `access.denied`.
 
 | Role | Allowed operations |
 | --- | --- |
-| `administrator` | All project, file, backup, conversion, workflow, approval, security, and user-management operations |
-| `supervisor` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, and security events |
-| `staff` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, and security events |
+| `administrator` | All project, file, backup, conversion, workflow, approval, security, knowledge-source, and user-management operations |
+| `supervisor` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/review, and security events |
+| `staff` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read, and security events |
 | `intern` | Project and file metadata read only |
 
 The read-only matrix is available at `GET /permissions`. The API keeps the
@@ -41,3 +41,8 @@ Backup lifecycle routes use the separate `backup.read`, `backup.create`,
 `backup.verify`, and `backup.restore` permissions. Successful and failed
 backup operations record only the backup identifier and authenticated actor in
 security events.
+
+Knowledge-source routes use `knowledge.read`, `knowledge.register`, and
+`knowledge.approve`. Interns cannot access the register. Registration records
+only file metadata and always starts in `pending`; approval is required before
+future document ingestion may consume a source.
