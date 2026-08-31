@@ -34,6 +34,9 @@ from api_schemas import (
     FolderGenerateResponse,
     InventoryRecordResponse,
     InventoryResponse,
+    KnowledgeSourceCreate,
+    KnowledgeSourceDecision,
+    KnowledgeSourceResponse,
     OrganizationActionResponse,
     OrganizationApplyCreate,
     OrganizationApplyResponse,
@@ -122,6 +125,7 @@ from models import (
     Backup,
     File,
     FileVersion,
+    KnowledgeSource,
     Project,
     SecurityEvent,
     User,
@@ -459,6 +463,34 @@ def record_backup_event(
         logger.error("Backup security event could not be recorded for %s.", backup_id)
 
 
+def record_knowledge_source_event(
+    db: Session,
+    actor_id: UUID,
+    source_id: UUID,
+    event_code: str,
+    outcome: str,
+) -> None:
+    """Record a source lifecycle event without document text or paths."""
+
+    try:
+        db.add(
+            SecurityEvent(
+                actor_id=actor_id,
+                event_code=event_code,
+                outcome=outcome,
+                resource_type="knowledge_source",
+                resource_ref=str(source_id),
+            )
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error(
+            "Knowledge-source security event could not be recorded for %s.",
+            source_id,
+        )
+
+
 def cleanup_failed_upload(upload_result: UploadResult | None) -> None:
     """Remove an upload when its metadata transaction cannot be completed."""
 
@@ -654,6 +686,164 @@ async def list_projects(db: Session = Depends(get_db)) -> list[ProjectResponse]:
         select(Project).order_by(Project.created_at, Project.id),
     )
     return [ProjectResponse.from_model(project) for project in projects]
+
+
+def require_project_knowledge_source(
+    db: Session,
+    project_id: UUID,
+    source_id: UUID,
+) -> tuple[Project, KnowledgeSource]:
+    """Load a source only when it belongs to the requested project."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    source = require_record(db, KnowledgeSource, source_id, "Knowledge source was not found.")
+    if source.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge source was not found.",
+        )
+    return project, source
+
+
+@app.post(
+    "/projects/{project_id}/knowledge-sources",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["knowledge-base"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+    ],
+)
+async def register_knowledge_source(
+    project_id: UUID,
+    source_request: KnowledgeSourceCreate,
+    actor: User = Depends(require_permission("knowledge.register")),
+    db: Session = Depends(get_db),
+) -> KnowledgeSourceResponse:
+    """Register one active project file for review without accepting its text."""
+
+    require_record(db, Project, project_id, "Project was not found.")
+    file_record = require_record(db, File, source_request.file_id, "File was not found.")
+    if file_record.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File was not found.",
+        )
+    if file_record.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only active files can be registered as knowledge sources.",
+        )
+    owner = require_record(db, User, source_request.owner_id, "Knowledge-source owner was not found.")
+    if db.scalar(
+        select(KnowledgeSource.id).where(
+            KnowledgeSource.project_id == project_id,
+            KnowledgeSource.file_id == source_request.file_id,
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This file is already registered as a knowledge source.",
+        )
+
+    source = persist_record(
+        db,
+        KnowledgeSource(
+            project_id=project_id,
+            file_id=file_record.id,
+            owner_id=owner.id,
+            created_by_id=actor.id,
+            title=source_request.title,
+            source_type=source_request.source_type,
+            sensitivity=source_request.sensitivity,
+            approval_status="pending",
+        ),
+        "Knowledge source",
+    )
+    record_knowledge_source_event(
+        db,
+        actor.id,
+        source.id,
+        "knowledge_source.registered",
+        "success",
+    )
+    return KnowledgeSourceResponse.from_model(source)
+
+
+@app.get(
+    "/projects/{project_id}/knowledge-sources",
+    response_model=list[KnowledgeSourceResponse],
+    tags=["knowledge-base"],
+    dependencies=[Depends(require_permission("knowledge.read"))],
+)
+async def list_project_knowledge_sources(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[KnowledgeSourceResponse]:
+    """List source metadata for one project, including review state."""
+
+    require_record(db, Project, project_id, "Project was not found.")
+    sources = list_records(
+        db,
+        select(KnowledgeSource)
+        .where(KnowledgeSource.project_id == project_id)
+        .order_by(KnowledgeSource.created_at, KnowledgeSource.id),
+    )
+    return [KnowledgeSourceResponse.from_model(source) for source in sources]
+
+
+@app.post(
+    "/projects/{project_id}/knowledge-sources/{source_id}/review",
+    response_model=KnowledgeSourceResponse,
+    tags=["knowledge-base"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+    ],
+)
+async def review_knowledge_source(
+    project_id: UUID,
+    source_id: UUID,
+    decision: KnowledgeSourceDecision,
+    actor: User = Depends(require_permission("knowledge.approve")),
+    db: Session = Depends(get_db),
+) -> KnowledgeSourceResponse:
+    """Approve or reject a source before any future ingestion can consume it."""
+
+    _project, source = require_project_knowledge_source(db, project_id, source_id)
+    if decision.decision == "rejected" and not decision.reason:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A rejection reason is required.",
+        )
+    if decision.decision == "approved" and source.file.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only active files can be approved as knowledge sources.",
+        )
+
+    source.approval_status = decision.decision
+    source.reviewed_by_id = actor.id
+    source.reviewed_at = utc_now()
+    source.rejection_reason = decision.reason if decision.decision == "rejected" else None
+    try:
+        db.commit()
+        db.refresh(source)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Knowledge-source review could not be saved for %s.", source_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+
+    record_knowledge_source_event(
+        db,
+        actor.id,
+        source.id,
+        f"knowledge_source.{decision.decision}",
+        "success",
+    )
+    return KnowledgeSourceResponse.from_model(source)
 
 
 @app.post(

@@ -8,6 +8,7 @@ from models import (
     File,
     FileHistory,
     FileVersion,
+    KnowledgeSource,
     Project,
     SecurityEvent,
     User,
@@ -25,10 +26,11 @@ REQUIRED_TABLES = {
     "workflows",
     "approvals",
     "security_events",
+    "knowledge_sources",
 }
 
 
-def test_metadata_contains_all_day_four_entities() -> None:
+def test_metadata_contains_all_persisted_entities() -> None:
     assert set(Base.metadata.tables) == REQUIRED_TABLES
 
 
@@ -38,8 +40,10 @@ def test_relationship_mappers_configure() -> None:
     assert User.projects.property.mapper.class_ is Project
     assert Project.files.property.mapper.class_ is File
     assert Project.backups.property.mapper.class_ is Backup
+    assert Project.knowledge_sources.property.mapper.class_ is KnowledgeSource
     assert File.history.property.mapper.class_ is FileHistory
     assert File.versions.property.mapper.class_ is FileVersion
+    assert File.knowledge_sources.property.mapper.class_ is KnowledgeSource
     assert Project.workflows.property.mapper.class_ is Workflow
     assert Workflow.approvals.property.mapper.class_ is Approval
     assert User.security_events.property.mapper.class_ is SecurityEvent
@@ -55,6 +59,12 @@ def test_schema_can_be_created_without_a_live_database() -> None:
 
 def test_required_indexes_and_foreign_keys_are_declared() -> None:
     assert Project.__table__.c.storage_slug.unique is True
+    assert "ix_knowledge_sources_project_status" in {
+        index.name for index in KnowledgeSource.__table__.indexes
+    }
+    assert "ix_knowledge_sources_owner_status" in {
+        index.name for index in KnowledgeSource.__table__.indexes
+    }
     assert "ix_projects_owner_status" in {
         index.name for index in Project.__table__.indexes
     }

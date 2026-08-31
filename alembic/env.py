@@ -12,6 +12,7 @@ from models import (  # noqa: F401
     File,
     FileHistory,
     FileVersion,
+    KnowledgeSource,
     Project,
     SecurityEvent,
     User,

@@ -66,6 +66,18 @@ class User(Base):
         back_populates="created_by",
         foreign_keys=lambda: [Backup.created_by_id],
     )
+    owned_knowledge_sources: Mapped[list[KnowledgeSource]] = relationship(
+        back_populates="owner",
+        foreign_keys=lambda: [KnowledgeSource.owner_id],
+    )
+    created_knowledge_sources: Mapped[list[KnowledgeSource]] = relationship(
+        back_populates="created_by",
+        foreign_keys=lambda: [KnowledgeSource.created_by_id],
+    )
+    reviewed_knowledge_sources: Mapped[list[KnowledgeSource]] = relationship(
+        back_populates="reviewed_by",
+        foreign_keys=lambda: [KnowledgeSource.reviewed_by_id],
+    )
     requested_approvals: Mapped[list[Approval]] = relationship(
         back_populates="requested_by",
         foreign_keys=lambda: [Approval.requested_by_id],
@@ -112,6 +124,9 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     backups: Mapped[list[Backup]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    knowledge_sources: Mapped[list[KnowledgeSource]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -238,6 +253,9 @@ class File(Base):
         cascade="all, delete-orphan",
         order_by="FileVersion.version_number",
     )
+    knowledge_sources: Mapped[list[KnowledgeSource]] = relationship(
+        back_populates="file", cascade="all, delete-orphan"
+    )
 
 
 class FileHistory(Base):
@@ -319,6 +337,94 @@ class FileVersion(Base):
     )
 
     file: Mapped[File] = relationship(back_populates="versions")
+
+
+class KnowledgeSource(Base):
+    """Approved-document metadata for the future company knowledge base.
+
+    This table intentionally references a persisted file instead of storing
+    document text.  Text extraction and retrieval are later stages and may
+    consume only records returned by the approved-source query helper.
+    """
+
+    __tablename__ = "knowledge_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "file_id",
+            name="uq_knowledge_sources_project_file",
+        ),
+        Index(
+            "ix_knowledge_sources_project_status",
+            "project_id",
+            "approval_status",
+        ),
+        Index(
+            "ix_knowledge_sources_owner_status",
+            "owner_id",
+            "approval_status",
+        ),
+        CheckConstraint(
+            "source_type IN ('sop', 'prompt_bank', 'style_guide', 'project_rule')",
+            name="ck_knowledge_sources_source_type",
+        ),
+        CheckConstraint(
+            "sensitivity IN ('public', 'internal', 'confidential', 'restricted')",
+            name="ck_knowledge_sources_sensitivity",
+        ),
+        CheckConstraint(
+            "approval_status IN ('pending', 'approved', 'rejected')",
+            name="ck_knowledge_sources_approval_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    file_id: Mapped[UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    sensitivity: Mapped[str] = mapped_column(String(16), nullable=False)
+    approval_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending"
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    project: Mapped[Project] = relationship(back_populates="knowledge_sources")
+    file: Mapped[File] = relationship(back_populates="knowledge_sources")
+    owner: Mapped[User] = relationship(
+        back_populates="owned_knowledge_sources",
+        foreign_keys=[owner_id],
+    )
+    created_by: Mapped[User | None] = relationship(
+        back_populates="created_knowledge_sources",
+        foreign_keys=[created_by_id],
+    )
+    reviewed_by: Mapped[User | None] = relationship(
+        back_populates="reviewed_knowledge_sources",
+        foreign_keys=[reviewed_by_id],
+    )
 
 
 class Workflow(Base):
@@ -439,6 +545,7 @@ __all__ = [
     "File",
     "FileHistory",
     "FileVersion",
+    "KnowledgeSource",
     "Project",
     "SecurityEvent",
     "User",

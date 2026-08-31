@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Generator
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from database import Base, get_db
 from file_converter import ConversionError
+from knowledge_sources import build_approved_knowledge_sources_statement
 from main import (
     MAX_REQUEST_BODY_BYTES,
     app,
@@ -20,7 +21,7 @@ from main import (
     persist_record,
     require_record,
 )
-from models import Project, User
+from models import File, Project, User
 
 
 TEST_ENGINE = create_engine(
@@ -209,6 +210,201 @@ def test_project_storage_slugs_are_valid_and_unique() -> None:
         "detail": "Project name must contain at least one letter or number."
     }
     assert len(request("GET", "/projects").json()) == 1
+
+
+def create_file_metadata(
+    project_id: str,
+    storage_key: str = "incoming/rules.txt",
+) -> dict[str, object]:
+    """Create one active file record for knowledge-source API tests."""
+
+    response = request(
+        "POST",
+        f"/projects/{project_id}/files",
+        json={
+            "storage_key": storage_key,
+            "media_type": "text/plain",
+            "size_bytes": 42,
+            "checksum_sha256": "a" * 64,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def test_knowledge_source_registers_pending_and_approved_sources_are_queryable() -> None:
+    project = create_project("Knowledge Register Project")
+    file_record = create_file_metadata(str(project["id"]))
+    source = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources",
+        json={
+            "file_id": file_record["id"],
+            "owner_id": TEST_OWNER_ID,
+            "title": "Operations SOP",
+            "source_type": "sop",
+            "sensitivity": "internal",
+        },
+    )
+    listed_pending = request(
+        "GET", f"/projects/{project['id']}/knowledge-sources"
+    )
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": "knowledge-supervisor", "role": "supervisor"},
+    )
+    reviewed = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source.json()['id']}/review",
+        headers={"X-User-ID": supervisor.json()["id"]},
+        json={"decision": "approved"},
+    )
+    listed_approved = request(
+        "GET",
+        f"/projects/{project['id']}/knowledge-sources",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    )
+
+    assert source.status_code == 201
+    assert source.json()["approval_status"] == "pending"
+    assert source.json()["file_name"] == "rules.txt"
+    assert "content" not in source.json()
+    assert listed_pending.status_code == 200
+    assert listed_pending.json()[0]["approval_status"] == "pending"
+    assert supervisor.status_code == 201
+    assert reviewed.status_code == 200
+    assert reviewed.json()["approval_status"] == "approved"
+    assert reviewed.json()["reviewed_by_id"] == supervisor.json()["id"]
+    assert listed_approved.status_code == 200
+
+    with TestingSessionLocal() as session:
+        approved = list(
+            session.scalars(
+                build_approved_knowledge_sources_statement(UUID(project["id"]))
+            ).all()
+        )
+        assert [source.id for source in approved] == [UUID(source.json()["id"])]
+
+        file_model = session.get(File, UUID(file_record["id"]))
+        assert file_model is not None
+        file_model.status = "archived"
+        session.commit()
+        assert list(
+            session.scalars(
+                build_approved_knowledge_sources_statement(UUID(project["id"]))
+            ).all()
+        ) == []
+
+    events = request("GET", "/security-events").json()
+    source_events = [
+        event for event in events if event["resource_ref"] == source.json()["id"]
+    ]
+    assert {event["event_code"] for event in source_events} == {
+        "knowledge_source.registered",
+        "knowledge_source.approved",
+    }
+    assert all(event["request_ref"] is None for event in source_events)
+
+
+def test_knowledge_source_registration_is_project_scoped_and_active_only() -> None:
+    project = create_project("Knowledge Source Project")
+    other_project = create_project("Other Knowledge Project")
+    file_record = create_file_metadata(str(project["id"]))
+
+    wrong_project = request(
+        "POST",
+        f"/projects/{other_project['id']}/knowledge-sources",
+        json={
+            "file_id": file_record["id"],
+            "owner_id": TEST_OWNER_ID,
+            "title": "Wrong project source",
+            "source_type": "project_rule",
+            "sensitivity": "restricted",
+        },
+    )
+
+    with TestingSessionLocal() as session:
+        file_model = session.get(File, UUID(file_record["id"]))
+        assert file_model is not None
+        file_model.status = "archived"
+        session.commit()
+
+    inactive = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources",
+        json={
+            "file_id": file_record["id"],
+            "owner_id": TEST_OWNER_ID,
+            "title": "Inactive source",
+            "source_type": "project_rule",
+            "sensitivity": "restricted",
+        },
+    )
+
+    assert wrong_project.status_code == 404
+    assert inactive.status_code == 409
+    assert inactive.json() == {
+        "detail": "Only active files can be registered as knowledge sources."
+    }
+
+
+def test_knowledge_source_review_requires_privileged_role_and_rejection_reason() -> None:
+    project = create_project("Knowledge Review Project")
+    file_record = create_file_metadata(str(project["id"]))
+    source = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources",
+        json={
+            "file_id": file_record["id"],
+            "owner_id": TEST_OWNER_ID,
+            "title": "Restricted rules",
+            "source_type": "project_rule",
+            "sensitivity": "restricted",
+        },
+    )
+    staff_review = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source.json()['id']}/review",
+        json={"decision": "approved"},
+    )
+    intern = request(
+        "POST",
+        "/users",
+        json={"external_ref": "knowledge-register-intern", "role": "intern"},
+    )
+    intern_read = request(
+        "GET",
+        f"/projects/{project['id']}/knowledge-sources",
+        headers={"X-User-ID": intern.json()["id"]},
+    )
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": "review-reason-supervisor", "role": "supervisor"},
+    )
+    missing_reason = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source.json()['id']}/review",
+        headers={"X-User-ID": supervisor.json()["id"]},
+        json={"decision": "rejected"},
+    )
+    rejected = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source.json()['id']}/review",
+        headers={"X-User-ID": supervisor.json()["id"]},
+        json={"decision": "rejected", "reason": "Not an approved company source."},
+    )
+
+    assert source.status_code == 201
+    assert staff_review.status_code == 403
+    assert intern.status_code == 201
+    assert intern_read.status_code == 403
+    assert missing_reason.status_code == 400
+    assert missing_reason.json() == {"detail": "A rejection reason is required."}
+    assert rejected.status_code == 200
+    assert rejected.json()["approval_status"] == "rejected"
+    assert rejected.json()["rejection_reason"] == "Not an approved company source."
 
 
 def test_rejects_unknown_project_owner() -> None:

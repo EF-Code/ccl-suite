@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from models import Approval, File, Project, SecurityEvent, User, Workflow
+from models import Approval, File, KnowledgeSource, Project, SecurityEvent, User, Workflow
 
 
 class UserCreate(BaseModel):
@@ -128,6 +128,71 @@ class FileVersionResponse(BaseModel):
     modified_at: datetime
     is_original: bool
     created_at: datetime
+
+
+class KnowledgeSourceCreate(BaseModel):
+    """Register file metadata without accepting document contents."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    file_id: UUID
+    owner_id: UUID
+    title: str = Field(min_length=1, max_length=200)
+    source_type: Literal["sop", "prompt_bank", "style_guide", "project_rule"]
+    sensitivity: Literal["public", "internal", "confidential", "restricted"]
+
+
+class KnowledgeSourceDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    decision: Literal["approved", "rejected"]
+    reason: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class KnowledgeSourceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    project_id: UUID
+    file_id: UUID
+    owner_id: UUID
+    created_by_id: UUID | None
+    reviewed_by_id: UUID | None
+    title: str
+    source_type: Literal["sop", "prompt_bank", "style_guide", "project_rule"]
+    sensitivity: Literal["public", "internal", "confidential", "restricted"]
+    approval_status: Literal["pending", "approved", "rejected"]
+    rejection_reason: str | None
+    file_name: str
+    file_storage_key: str
+    file_checksum_sha256: str
+    created_at: datetime
+    reviewed_at: datetime | None
+    updated_at: datetime
+
+    @classmethod
+    def from_model(cls, source: KnowledgeSource) -> KnowledgeSourceResponse:
+        """Expose source metadata and portable file identity, never contents."""
+
+        return cls(
+            id=source.id,
+            project_id=source.project_id,
+            file_id=source.file_id,
+            owner_id=source.owner_id,
+            created_by_id=source.created_by_id,
+            reviewed_by_id=source.reviewed_by_id,
+            title=source.title,
+            source_type=source.source_type,
+            sensitivity=source.sensitivity,
+            approval_status=source.approval_status,
+            rejection_reason=source.rejection_reason,
+            file_name=source.file.name,
+            file_storage_key=source.file.storage_key,
+            file_checksum_sha256=source.file.checksum_sha256,
+            created_at=source.created_at,
+            reviewed_at=source.reviewed_at,
+            updated_at=source.updated_at,
+        )
 
 
 class FileRestoreCreate(BaseModel):
@@ -408,6 +473,9 @@ __all__ = [
     "FileResponse",
     "InventoryRecordResponse",
     "InventoryResponse",
+    "KnowledgeSourceCreate",
+    "KnowledgeSourceDecision",
+    "KnowledgeSourceResponse",
     "OrganizationActionResponse",
     "OrganizationApplyCreate",
     "OrganizationApplyResponse",
