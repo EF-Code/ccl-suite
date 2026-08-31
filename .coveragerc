@@ -1,0 +1,23 @@
+[run]
+branch = True
+source =
+    api_schemas
+    config
+    database
+    file_backups
+    file_converter
+    file_inventory
+    file_organizer
+    file_records
+    file_restore
+    file_uploads
+    folder_generator
+    logger
+    main
+    models
+    permissions
+
+[report]
+fail_under = 85
+show_missing = True
+skip_covered = True

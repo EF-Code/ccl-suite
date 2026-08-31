@@ -118,18 +118,28 @@ API and PostgreSQL together:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose up --build -d
 ```
 
 The API container waits for PostgreSQL, applies the Alembic migration, and then
 starts Uvicorn. The API is available at `http://127.0.0.1:8000` and its
 interactive documentation is at `/docs`.
 
+Check container health and startup logs with:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 api
+```
+
 Stop the services with:
 
 ```bash
 docker compose down
 ```
+
+Do not add `--volumes` unless you intentionally want to erase the PostgreSQL,
+project-file, and backup volumes.
 
 The password is read from the ignored `.env` file and is not copied into the
 Docker image.
@@ -170,8 +180,8 @@ To measure branch coverage locally:
 
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m coverage run --branch --source=api_schemas,config,database,file_converter,file_inventory,file_organizer,file_restore,file_uploads,folder_generator,logger,main,models,permissions -m pytest
-.venv/bin/python -m coverage report -m --fail-under=90
+.venv/bin/python -m coverage run -m pytest
+.venv/bin/python -m coverage report -m
 ```
 
 The dashboard workflow smoke test is opt-in because it needs a running local
@@ -200,7 +210,7 @@ approved root. It rejects path separators, world-writable roots, and existing
 projects instead of overwriting them.
 
 ```bash
-python folder_generator.py "Client Intake Q3" --root ./projects
+.venv/bin/python folder_generator.py "Client Intake Q3" --root ./projects
 ```
 
 See [`docs/folder-standards.md`](docs/folder-standards.md) for the naming rules,
@@ -212,8 +222,8 @@ Create a standard project folder first, then scan it with
 `file_inventory.py`:
 
 ```bash
-python folder_generator.py "Client Intake Q3" --root ./projects
-python file_inventory.py --root ./projects/client-intake-q3
+.venv/bin/python folder_generator.py "Client Intake Q3" --root ./projects
+.venv/bin/python file_inventory.py --root ./projects/client-intake-q3
 ```
 
 The scanner records each regular file's relative path, name, extension,
@@ -224,7 +234,7 @@ the MIME type agrees with the extension. It writes `manifest.json` and
 Custom manifest paths may be supplied when they remain inside that root:
 
 ```bash
-python file_inventory.py \
+.venv/bin/python file_inventory.py \
   --root ./projects/client-intake-q3 \
   --json ./projects/client-intake-q3/output/files.json \
   --csv ./projects/client-intake-q3/output/files.csv
@@ -250,13 +260,13 @@ default command is a dry run: it prints the proposed moves and writes
 `organization-plan.json` without changing any files.
 
 ```bash
-python file_organizer.py ./projects/client-intake-q3
+.venv/bin/python file_organizer.py ./projects/client-intake-q3
 ```
 
 Review the plan before explicitly applying it:
 
 ```bash
-python file_organizer.py ./projects/client-intake-q3 \
+.venv/bin/python file_organizer.py ./projects/client-intake-q3 \
   --apply \
   --journal ./projects/client-intake-q3/organization-journal.json
 ```
@@ -265,7 +275,7 @@ Files whose normalised names would collide are never overwritten. They can be
 moved into a timestamped `quarantine` directory instead:
 
 ```bash
-python file_organizer.py ./projects/client-intake-q3 \
+.venv/bin/python file_organizer.py ./projects/client-intake-q3 \
   --apply --quarantine-conflicts
 ```
 
@@ -273,7 +283,7 @@ Every applied move is recorded with its SHA-256 hash. Roll back a journal only
 after checking the plan and the affected files:
 
 ```bash
-python file_organizer.py ./projects/client-intake-q3 \
+.venv/bin/python file_organizer.py ./projects/client-intake-q3 \
   --rollback ./projects/client-intake-q3/organization-journal.json
 ```
 
@@ -301,7 +311,7 @@ folder. Create that folder below the approved projects root before calling the
 endpoint:
 
 ```bash
-python folder_generator.py "Endpoint Project" --root ./projects
+.venv/bin/python folder_generator.py "Endpoint Project" --root ./projects
 ```
 
 The database project's title is normalised to the same lowercase kebab-case
