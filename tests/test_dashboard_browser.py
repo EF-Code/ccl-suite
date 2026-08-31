@@ -53,10 +53,19 @@ def dashboard_page() -> Page:
         )
         page = browser.new_page()
         page.set_default_timeout(10_000)
+        browser_errors: list[str] = []
+        page.on(
+            "console",
+            lambda message: browser_errors.append(message.text)
+            if message.type == "error"
+            else None,
+        )
+        page.on("pageerror", lambda error: browser_errors.append(str(error)))
         try:
             yield page
         finally:
             browser.close()
+        assert browser_errors == []
 
 
 def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
@@ -97,11 +106,12 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     assert page.locator("#organizer-project-id").input_value() == project_id
 
     folder_form = page.locator("#folder-form")
-    folder_form.locator("input[name='project_name']").fill(project_title)
+    expected_slug = project_title.lower().replace(" ", "-")
+    assert folder_form.locator("input[name='project_name']").input_value() == expected_slug
     folder_form.get_by_role("button", name="Generate folder layout").click()
     folder_result = page.locator("#folder-result")
     folder_result.wait_for(state="visible")
-    assert f"Created {project_title.lower().replace(' ', '-')}" in folder_result.inner_text()
+    assert f"Created {expected_slug}" in folder_result.inner_text()
 
     inventory_form = page.locator("#inventory-form")
     inventory_form.get_by_role("button", name="Scan project files").click()

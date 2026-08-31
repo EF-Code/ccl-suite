@@ -65,11 +65,12 @@ function formObject(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
-function setProjectId(projectId) {
-  document.querySelector("#conversion-project-id").value = projectId;
-  document.querySelector("#inventory-project-id").value = projectId;
-  document.querySelector("#organizer-project-id").value = projectId;
-  document.querySelector("#backup-project-id").value = projectId;
+function selectProject(project) {
+  document.querySelector("#conversion-project-id").value = project.id;
+  document.querySelector("#inventory-project-id").value = project.id;
+  document.querySelector("#organizer-project-id").value = project.id;
+  document.querySelector("#backup-project-id").value = project.id;
+  document.querySelector("#folder-form input[name='project_name']").value = project.storage_slug;
 }
 
 function renderProjects(projects) {
@@ -82,7 +83,7 @@ function renderProjects(projects) {
       <td><span class="project-title">${escapeHtml(project.title)}</span><br><span class="project-id">${escapeHtml(project.id)}</span></td>
       <td>${escapeHtml(project.status)}</td>
       <td>${escapeHtml(project.description || "—")}</td>
-      <td><button class="select-project" type="button" data-project-id="${escapeHtml(project.id)}">Use project</button></td>
+      <td><button class="select-project" type="button" data-project-id="${escapeHtml(project.id)}" data-project-slug="${escapeHtml(project.storage_slug)}" data-project-title="${escapeHtml(project.title)}">Use project</button></td>
     </tr>
   `).join("");
   projectsList.innerHTML = `
@@ -93,9 +94,12 @@ function renderProjects(projects) {
   `;
   projectsList.querySelectorAll("[data-project-id]").forEach((button) => {
     button.addEventListener("click", () => {
-      setProjectId(button.dataset.projectId);
-      document.querySelector("#conversion-form").scrollIntoView({ behavior: "smooth", block: "center" });
-      showFlash("Project selected for inventory, backup, conversion, and organisation.");
+      selectProject({
+        id: button.dataset.projectId,
+        storage_slug: button.dataset.projectSlug,
+      });
+      document.querySelector("#folder-form").scrollIntoView({ behavior: "smooth", block: "center" });
+      showFlash(`Project selected. Generate “${button.dataset.projectSlug}” before scanning if its storage does not exist.`);
     });
   });
 }
@@ -145,6 +149,7 @@ document.querySelector("#user-form").addEventListener("submit", async (event) =>
     const user = await apiRequest("/users", { method: "POST", body: JSON.stringify(formObject(form)) });
     document.querySelector("#owner-id").value = user.id;
     showResult(userResult, `Created owner ${user.external_ref}\nID: ${user.id}`);
+    await refreshProjects();
     showFlash("Development owner created. Its ID was copied into the project form.");
   } catch (error) {
     showResult(userResult, error.message, "error");
@@ -158,9 +163,9 @@ document.querySelector("#project-form").addEventListener("submit", async (event)
   const form = event.currentTarget;
   try {
     const project = await apiRequest("/projects", { method: "POST", body: JSON.stringify(formObject(form)) });
-    setProjectId(project.id);
+    selectProject(project);
     await refreshProjects();
-    showFlash(`Project “${project.title}” registered. Make sure its generated folder exists before converting files.`);
+    showFlash(`Project “${project.title}” registered. Generate its “${project.storage_slug}” folder before scanning files.`);
     form.reset();
   } catch (error) {
     showFlash(error.message, "error");
@@ -183,8 +188,14 @@ document.querySelector("#inventory-form").addEventListener("submit", async (even
     );
     showFlash("Inventory manifests created inside the project root.");
   } catch (error) {
-    showResult(inventoryResult, error.message, "error");
-    showFlash(error.message, "error");
+    const message = error.message === "Project storage was not found."
+      ? "Project storage was not found. Generate the selected project's folder layout before scanning."
+      : error.message;
+    showResult(inventoryResult, message, "error");
+    showFlash(message, "error");
+    if (error.message === "Project storage was not found.") {
+      document.querySelector("#folder-form").scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   }
 });
 
@@ -391,4 +402,3 @@ document.querySelector("#organizer-rollback").addEventListener("click", async ()
 });
 
 refreshHealth();
-refreshProjects();
