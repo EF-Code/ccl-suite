@@ -25,7 +25,11 @@ def make_session(tmp_path: Path) -> Session:
 
 def make_project(session: Session) -> Project:
     owner = User(external_ref="records-owner")
-    project = Project(owner=owner, name="Records Project")
+    project = Project(
+        owner=owner,
+        name="Records Project",
+        storage_slug="records-project",
+    )
     session.add(project)
     session.commit()
     return project
@@ -167,7 +171,11 @@ def test_sync_creates_versions_only_for_changed_snapshots(tmp_path: Path) -> Non
 def test_search_statement_is_project_scoped_and_filterable(tmp_path: Path) -> None:
     with make_session(tmp_path) as session:
         project = make_project(session)
-        other_project = Project(name="Other Project", owner_id=project.owner_id)
+        other_project = Project(
+            name="Other Project",
+            storage_slug="other-project",
+            owner_id=project.owner_id,
+        )
         session.add(other_project)
         session.commit()
         sync_inventory_records(

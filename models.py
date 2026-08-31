@@ -94,6 +94,7 @@ class Project(Base):
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    storage_slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(

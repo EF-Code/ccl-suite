@@ -177,10 +177,38 @@ def test_create_then_list_projects() -> None:
 
     assert created.status_code == 201
     assert created.json()["title"] == "First CCL Project"
+    assert created.json()["storage_slug"] == "first-ccl-project"
     assert created.json()["owner_id"] == TEST_OWNER_ID
     assert created.json()["status"] == "active"
     assert listed.status_code == 200
     assert len(listed.json()) == 1
+
+
+def test_project_storage_slugs_are_valid_and_unique() -> None:
+    created = request(
+        "POST",
+        "/projects",
+        json={"title": "Shared Folder", "owner_id": TEST_OWNER_ID},
+    )
+    collision = request(
+        "POST",
+        "/projects",
+        json={"title": "Shared-Folder", "owner_id": TEST_OWNER_ID},
+    )
+    invalid = request(
+        "POST",
+        "/projects",
+        json={"title": "---", "owner_id": TEST_OWNER_ID},
+    )
+
+    assert created.status_code == 201
+    assert collision.status_code == 409
+    assert collision.json()["detail"].startswith("A project already uses")
+    assert invalid.status_code == 400
+    assert invalid.json() == {
+        "detail": "Project name must contain at least one letter or number."
+    }
+    assert len(request("GET", "/projects").json()) == 1
 
 
 def test_rejects_unknown_project_owner() -> None:
@@ -242,11 +270,11 @@ def test_rejects_invalid_content_length_header() -> None:
     assert response.json() == {"detail": "Invalid Content-Length header."}
 
 
-def create_project() -> dict[str, object]:
+def create_project(title: str = "Endpoint Project") -> dict[str, object]:
     response = request(
         "POST",
         "/projects",
-        json={"title": "Endpoint Project", "owner_id": TEST_OWNER_ID},
+        json={"title": title, "owner_id": TEST_OWNER_ID},
     )
     assert response.status_code == 201
     return response.json()
@@ -706,7 +734,7 @@ def test_backup_endpoints_hide_backups_from_other_projects(
     project_root.mkdir()
     (project_root / "notes.txt").write_text("backup me", encoding="utf-8")
     created = request("POST", f"/projects/{project['id']}/backups", json={})
-    other_project = create_project()
+    other_project = create_project("Other Backup Project")
     backup_id = created.json()["id"]
 
     response = request(
@@ -1195,7 +1223,7 @@ def test_project_file_lookup_is_project_scoped(
     stored_file_id = search.json()[0]["id"]
 
     found = request("GET", f"/projects/{project['id']}/files/{stored_file_id}")
-    other_project = create_project()
+    other_project = create_project("Other Lookup Project")
     hidden = request(
         "GET", f"/projects/{other_project['id']}/files/{stored_file_id}"
     )
@@ -1266,7 +1294,7 @@ def test_project_file_history_is_project_scoped(
     file_id = request(
         "GET", f"/projects/{project['id']}/files/search?query=notes"
     ).json()[0]["id"]
-    other_project = create_project()
+    other_project = create_project("Other History Project")
 
     history = request(
         "GET", f"/projects/{other_project['id']}/files/{file_id}/history"

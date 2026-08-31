@@ -31,6 +31,7 @@ erDiagram
         UUID id PK
         UUID owner_id FK
         string name
+        string storage_slug UK
         string description
         string status
         datetime created_at

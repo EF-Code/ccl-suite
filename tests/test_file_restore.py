@@ -27,7 +27,11 @@ def make_session(tmp_path: Path) -> Session:
 
 def make_project(session: Session) -> Project:
     owner = User(external_ref="restore-owner")
-    project = Project(owner=owner, name="Restore Project")
+    project = Project(
+        owner=owner,
+        name="Restore Project",
+        storage_slug="restore-project",
+    )
     session.add(project)
     session.commit()
     return project

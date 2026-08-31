@@ -42,6 +42,7 @@ class ProjectResponse(BaseModel):
     id: UUID
     owner_id: UUID
     title: str
+    storage_slug: str
     description: str
     status: str
     created_at: datetime
@@ -55,6 +56,7 @@ class ProjectResponse(BaseModel):
             id=project.id,
             owner_id=project.owner_id,
             title=project.name,
+            storage_slug=project.storage_slug,
             description=project.description,
             status=project.status,
             created_at=project.created_at,

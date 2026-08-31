@@ -54,6 +54,7 @@ def test_schema_can_be_created_without_a_live_database() -> None:
 
 
 def test_required_indexes_and_foreign_keys_are_declared() -> None:
+    assert Project.__table__.c.storage_slug.unique is True
     assert "ix_projects_owner_status" in {
         index.name for index in Project.__table__.indexes
     }

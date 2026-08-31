@@ -325,8 +325,7 @@ def project_storage_root(project: Project) -> Path:
     """Resolve one database project to its approved filesystem directory."""
 
     approved_projects_root = resolve_approved_root(PROJECT_ROOT)
-    project_name = normalize_project_name(project.name)
-    return resolve_approved_root(approved_projects_root / project_name)
+    return resolve_approved_root(approved_projects_root / project.storage_slug)
 
 
 def backup_storage_for_record(backup: Backup) -> BackupStoragePaths:
@@ -615,11 +614,27 @@ async def create_project(
     project: ProjectCreate, db: Session = Depends(get_db)
 ) -> ProjectResponse:
     owner = require_record(db, User, project.owner_id, "Project owner was not found.")
+    try:
+        storage_slug = normalize_project_name(project.title)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    if db.scalar(select(Project.id).where(Project.storage_slug == storage_slug)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A project already uses this storage folder. "
+                "Choose a title that produces a different folder name."
+            ),
+        )
     created_project = persist_record(
         db,
         Project(
             owner_id=owner.id,
             name=project.title,
+            storage_slug=storage_slug,
             description=project.description,
         ),
         "Project",
