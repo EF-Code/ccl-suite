@@ -9,6 +9,7 @@ from document_ingestion import (
     UnsupportedDocumentError,
     chunk_text,
     normalize_document_type,
+    prepare_document,
     read_document,
 )
 
@@ -69,6 +70,29 @@ def test_read_document_rejects_empty_binary_and_oversized_sources(tmp_path: Path
             media_type="text/plain",
             max_bytes=10,
         )
+
+
+def test_prepare_document_extracts_and_chunks_one_source(tmp_path: Path) -> None:
+    path = tmp_path / "rules.md"
+    path.write_text(
+        "# Access\n\nKeep originals.\n\n## Restore\n\n" + "Verify hashes. " * 40,
+        encoding="utf-8",
+    )
+
+    prepared = prepare_document(
+        path,
+        storage_key="incoming/rules.md",
+        media_type="text/markdown",
+        max_characters=80,
+        overlap_characters=10,
+    )
+
+    assert prepared.document.extension == ".md"
+    assert prepared.document.media_type == "text/markdown"
+    assert len(prepared.chunks) > 1
+    assert prepared.chunks[0].heading == "Access"
+    assert prepared.chunks[-1].heading == "Restore"
+    assert all(chunk.location.startswith("incoming/rules.md#L") for chunk in prepared.chunks)
 
 
 def test_chunk_text_preserves_markdown_heading_and_source_location() -> None:

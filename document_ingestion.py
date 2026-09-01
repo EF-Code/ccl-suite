@@ -67,6 +67,14 @@ class ChunkDraft:
     checksum_sha256: str
 
 
+@dataclass(frozen=True)
+class PreparedDocument:
+    """One extracted document and its deterministic chunk drafts."""
+
+    document: ExtractedDocument
+    chunks: tuple[ChunkDraft, ...]
+
+
 def normalize_document_type(storage_key: str, media_type: str) -> tuple[str, str]:
     """Validate a project-relative text document type and normalize its values."""
 
@@ -218,14 +226,20 @@ def chunk_text(
 
         content = normalized_text[start:end].strip()
         if content:
-            heading_index = max(0, bisect_right(line_positions, max(start, end - 1)) - 1)
+            heading_index = max(0, bisect_right(line_positions, start) - 1)
+            heading = line_headings[heading_index]
+            for line in normalized_text[start:end].splitlines():
+                candidate = _heading_for_line(line)
+                if candidate is not None:
+                    heading = candidate
+                    break
             line_start = _line_number(normalized_text, start)
             line_end = _line_number(normalized_text, max(start, end - 1))
             chunks.append(
                 ChunkDraft(
                     chunk_index=len(chunks),
                     content=content,
-                    heading=line_headings[heading_index],
+                    heading=heading,
                     location=f"{normalized_key}#L{line_start}-L{line_end}",
                     line_start=line_start,
                     line_end=line_end,
@@ -245,6 +259,39 @@ def chunk_text(
     return tuple(chunks)
 
 
+def prepare_document(
+    path: Path,
+    *,
+    storage_key: str,
+    media_type: str,
+    max_bytes: int = MAX_DOCUMENT_BYTES,
+    max_characters: int = DEFAULT_CHUNK_CHARACTERS,
+    overlap_characters: int = DEFAULT_CHUNK_OVERLAP,
+) -> PreparedDocument:
+    """Extract and chunk one approved text document without interpreting it.
+
+    The returned text is data only.  This function performs no prompt handling,
+    instruction execution, or model calls; later knowledge-base stages must
+    keep the same boundary between source content and application rules.
+    """
+
+    document = read_document(
+        path,
+        storage_key=storage_key,
+        media_type=media_type,
+        max_bytes=max_bytes,
+    )
+    return PreparedDocument(
+        document=document,
+        chunks=chunk_text(
+            document.text,
+            storage_key=storage_key,
+            max_characters=max_characters,
+            overlap_characters=overlap_characters,
+        ),
+    )
+
+
 __all__ = [
     "ChunkDraft",
     "DEFAULT_CHUNK_CHARACTERS",
@@ -254,9 +301,11 @@ __all__ = [
     "DocumentSourceError",
     "ExtractedDocument",
     "MAX_DOCUMENT_BYTES",
+    "PreparedDocument",
     "SUPPORTED_DOCUMENT_MEDIA_TYPES",
     "UnsupportedDocumentError",
     "chunk_text",
     "normalize_document_type",
+    "prepare_document",
     "read_document",
 ]
