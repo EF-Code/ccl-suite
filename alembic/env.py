@@ -9,9 +9,11 @@ from database import Base, get_database_url
 from models import (  # noqa: F401
     Approval,
     Backup,
+    DocumentChunk,
     File,
     FileHistory,
     FileVersion,
+    IngestionRun,
     KnowledgeSource,
     Project,
     SecurityEvent,

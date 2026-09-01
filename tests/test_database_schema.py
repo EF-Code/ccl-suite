@@ -5,9 +5,11 @@ from database import Base
 from models import (
     Approval,
     Backup,
+    DocumentChunk,
     File,
     FileHistory,
     FileVersion,
+    IngestionRun,
     KnowledgeSource,
     Project,
     SecurityEvent,
@@ -27,6 +29,8 @@ REQUIRED_TABLES = {
     "approvals",
     "security_events",
     "knowledge_sources",
+    "ingestion_runs",
+    "document_chunks",
 }
 
 
@@ -41,6 +45,11 @@ def test_relationship_mappers_configure() -> None:
     assert Project.files.property.mapper.class_ is File
     assert Project.backups.property.mapper.class_ is Backup
     assert Project.knowledge_sources.property.mapper.class_ is KnowledgeSource
+    assert Project.ingestion_runs.property.mapper.class_ is IngestionRun
+    assert Project.document_chunks.property.mapper.class_ is DocumentChunk
+    assert KnowledgeSource.ingestion_runs.property.mapper.class_ is IngestionRun
+    assert KnowledgeSource.document_chunks.property.mapper.class_ is DocumentChunk
+    assert IngestionRun.chunks.property.mapper.class_ is DocumentChunk
     assert File.history.property.mapper.class_ is FileHistory
     assert File.versions.property.mapper.class_ is FileVersion
     assert File.knowledge_sources.property.mapper.class_ is KnowledgeSource
@@ -85,6 +94,18 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     }
     assert "ix_backups_project_status" in {
         index.name for index in Backup.__table__.indexes
+    }
+    assert "ix_ingestion_runs_project_created_at" in {
+        index.name for index in IngestionRun.__table__.indexes
+    }
+    assert "ix_ingestion_runs_source_created_at" in {
+        index.name for index in IngestionRun.__table__.indexes
+    }
+    assert "ix_document_chunks_project_source_index" in {
+        index.name for index in DocumentChunk.__table__.indexes
+    }
+    assert "ix_document_chunks_ingestion_index" in {
+        index.name for index in DocumentChunk.__table__.indexes
     }
     assert "ix_workflows_project_status" in {
         index.name for index in Workflow.__table__.indexes

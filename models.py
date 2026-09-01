@@ -19,6 +19,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
 )
@@ -127,6 +128,12 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     knowledge_sources: Mapped[list[KnowledgeSource]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    ingestion_runs: Mapped[list[IngestionRun]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    document_chunks: Mapped[list[DocumentChunk]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -426,6 +433,118 @@ class KnowledgeSource(Base):
         foreign_keys=[reviewed_by_id],
     )
 
+    ingestion_runs: Mapped[list[IngestionRun]] = relationship(
+        back_populates="source", cascade="all, delete-orphan"
+    )
+    document_chunks: Mapped[list[DocumentChunk]] = relationship(
+        back_populates="source", cascade="all, delete-orphan"
+    )
+
+
+class IngestionRun(Base):
+    """One bounded extraction and chunking attempt for an approved source."""
+
+    __tablename__ = "ingestion_runs"
+    __table_args__ = (
+        Index("ix_ingestion_runs_project_created_at", "project_id", "created_at"),
+        Index("ix_ingestion_runs_source_created_at", "source_id", "created_at"),
+        CheckConstraint(
+            "length(source_checksum_sha256) = 64",
+            name="ck_ingestion_runs_source_checksum_sha256_length",
+        ),
+        CheckConstraint("chunk_count >= 0", name="ck_ingestion_runs_chunk_count_non_negative"),
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed')",
+            name="ck_ingestion_runs_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    source_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    project: Mapped[Project] = relationship(back_populates="ingestion_runs")
+    source: Mapped[KnowledgeSource] = relationship(back_populates="ingestion_runs")
+    chunks: Mapped[list[DocumentChunk]] = relationship(
+        back_populates="ingestion_run",
+        cascade="all, delete-orphan",
+        order_by="DocumentChunk.chunk_index",
+    )
+
+
+class DocumentChunk(Base):
+    """A bounded, source-linked text chunk prepared for future retrieval."""
+
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "ingestion_run_id",
+            "chunk_index",
+            name="uq_document_chunks_ingestion_index",
+        ),
+        Index(
+            "ix_document_chunks_project_source_index",
+            "project_id",
+            "source_id",
+            "chunk_index",
+        ),
+        Index("ix_document_chunks_ingestion_index", "ingestion_run_id", "chunk_index"),
+        CheckConstraint("chunk_index >= 0", name="ck_document_chunks_index_non_negative"),
+        CheckConstraint("line_start > 0", name="ck_document_chunks_line_start_positive"),
+        CheckConstraint("line_end >= line_start", name="ck_document_chunks_line_range"),
+        CheckConstraint(
+            "character_count > 0",
+            name="ck_document_chunks_character_count_positive",
+        ),
+        CheckConstraint("word_count > 0", name="ck_document_chunks_word_count_positive"),
+        CheckConstraint(
+            "length(checksum_sha256) = 64",
+            name="ck_document_chunks_checksum_sha256_length",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    ingestion_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("ingestion_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    heading: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    location: Mapped[str] = mapped_column(String(512), nullable=False)
+    line_start: Mapped[int] = mapped_column(Integer, nullable=False)
+    line_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    character_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    word_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    ingestion_run: Mapped[IngestionRun] = relationship(back_populates="chunks")
+    project: Mapped[Project] = relationship(back_populates="document_chunks")
+    source: Mapped[KnowledgeSource] = relationship(back_populates="document_chunks")
+
 
 class Workflow(Base):
     """Versioned workflow definition attached to one project."""
@@ -542,9 +661,11 @@ class SecurityEvent(Base):
 __all__ = [
     "Approval",
     "Backup",
+    "DocumentChunk",
     "File",
     "FileHistory",
     "FileVersion",
+    "IngestionRun",
     "KnowledgeSource",
     "Project",
     "SecurityEvent",
