@@ -195,6 +195,45 @@ class KnowledgeSourceResponse(BaseModel):
         )
 
 
+class DocumentChunkResponse(BaseModel):
+    """One source-linked chunk prepared for a later retrieval stage."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    ingestion_run_id: UUID
+    project_id: UUID
+    source_id: UUID
+    chunk_index: int = Field(ge=0)
+    title: str
+    heading: str | None
+    location: str
+    line_start: int = Field(gt=0)
+    line_end: int = Field(ge=1)
+    content: str
+    character_count: int = Field(gt=0)
+    word_count: int = Field(gt=0)
+    checksum_sha256: str
+    created_at: datetime
+
+
+class IngestionResponse(BaseModel):
+    """The result of one bounded extraction and chunking run."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    project_id: UUID
+    source_id: UUID
+    source_checksum_sha256: str
+    status: Literal["running", "completed", "failed"]
+    chunk_count: int = Field(ge=0)
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+    chunks: list[DocumentChunkResponse]
+
+
 class FileRestoreCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -463,6 +502,7 @@ __all__ = [
     "BackupVerifyResponse",
     "ConversionCreate",
     "ConversionResponse",
+    "DocumentChunkResponse",
     "FolderGenerateCreate",
     "FolderGenerateResponse",
     "FileCreate",
@@ -473,6 +513,7 @@ __all__ = [
     "FileResponse",
     "InventoryRecordResponse",
     "InventoryResponse",
+    "IngestionResponse",
     "KnowledgeSourceCreate",
     "KnowledgeSourceDecision",
     "KnowledgeSourceResponse",

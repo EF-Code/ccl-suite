@@ -24,6 +24,7 @@ from api_schemas import (
     BackupVerifyResponse,
     ConversionCreate,
     ConversionResponse,
+    DocumentChunkResponse,
     FileCreate,
     FileHistoryResponse,
     FileRestoreCreate,
@@ -34,6 +35,7 @@ from api_schemas import (
     FolderGenerateResponse,
     InventoryRecordResponse,
     InventoryResponse,
+    IngestionResponse,
     KnowledgeSourceCreate,
     KnowledgeSourceDecision,
     KnowledgeSourceResponse,
@@ -57,6 +59,7 @@ from api_schemas import (
 )
 from config import ENVIRONMENT
 from database import get_db
+from document_ingestion import ChunkDraft, DocumentProcessingError, prepare_document
 from file_converter import (
     ConversionDestinationExistsError,
     ConversionError,
@@ -119,12 +122,15 @@ from file_organizer import (
     write_plan,
 )
 from folder_generator import create_project_folder, normalize_project_name
+from knowledge_sources import build_approved_knowledge_sources_statement
 from logger import logger
 from models import (
     Approval,
     Backup,
+    DocumentChunk,
     File,
     FileVersion,
+    IngestionRun,
     KnowledgeSource,
     Project,
     SecurityEvent,
@@ -703,6 +709,243 @@ def require_project_knowledge_source(
             detail="Knowledge source was not found.",
         )
     return project, source
+
+
+def require_approved_knowledge_source(
+    db: Session,
+    project_id: UUID,
+    source_id: UUID,
+) -> tuple[Project, KnowledgeSource]:
+    """Load one source only when approval and active-file checks both pass."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    try:
+        source = db.scalar(
+            build_approved_knowledge_sources_statement(project_id).where(
+                KnowledgeSource.id == source_id
+            )
+        )
+    except SQLAlchemyError:
+        logger.error("Approved knowledge-source lookup failed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Approved knowledge source was not found.",
+        )
+    return project, source
+
+
+def record_failed_ingestion(
+    db: Session,
+    project_id: UUID,
+    source_id: UUID,
+    source_checksum_sha256: str,
+    error_message: str,
+) -> None:
+    """Persist a bounded failure record without storing source content."""
+
+    try:
+        db.add(
+            IngestionRun(
+                project_id=project_id,
+                source_id=source_id,
+                source_checksum_sha256=source_checksum_sha256,
+                status="failed",
+                error_message=error_message[:512],
+            )
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Document-ingestion failure could not be recorded for %s.", source_id)
+
+
+def ingestion_response(
+    ingestion_run: IngestionRun,
+    chunks: list[DocumentChunk],
+) -> IngestionResponse:
+    """Translate one completed ingestion and its source-linked chunks."""
+
+    return IngestionResponse(
+        id=ingestion_run.id,
+        project_id=ingestion_run.project_id,
+        source_id=ingestion_run.source_id,
+        source_checksum_sha256=ingestion_run.source_checksum_sha256,
+        status=ingestion_run.status,
+        chunk_count=ingestion_run.chunk_count,
+        error_message=ingestion_run.error_message,
+        created_at=ingestion_run.created_at,
+        completed_at=ingestion_run.completed_at,
+        chunks=[DocumentChunkResponse.model_validate(chunk) for chunk in chunks],
+    )
+
+
+def persist_document_ingestion(
+    db: Session,
+    project_id: UUID,
+    source_id: UUID,
+    source_title: str,
+    source_checksum_sha256: str,
+    chunks: tuple[ChunkDraft, ...],
+) -> tuple[IngestionRun, list[DocumentChunk]]:
+    """Persist a completed extraction and all of its deterministic chunks."""
+
+    ingestion_run = IngestionRun(
+        project_id=project_id,
+        source_id=source_id,
+        source_checksum_sha256=source_checksum_sha256,
+        status="completed",
+        chunk_count=len(chunks),
+        completed_at=utc_now(),
+    )
+    ingestion_run.chunks = [
+        DocumentChunk(
+            project_id=project_id,
+            source_id=source_id,
+            chunk_index=chunk.chunk_index,
+            title=source_title,
+            heading=chunk.heading,
+            location=chunk.location,
+            line_start=chunk.line_start,
+            line_end=chunk.line_end,
+            content=chunk.content,
+            character_count=chunk.character_count,
+            word_count=chunk.word_count,
+            checksum_sha256=chunk.checksum_sha256,
+        )
+        for chunk in chunks
+    ]
+    try:
+        db.add(ingestion_run)
+        db.commit()
+        db.refresh(ingestion_run)
+    except IntegrityError:
+        db.rollback()
+        logger.error("Document-ingestion records violated a database constraint.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Document ingestion could not be saved.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Document-ingestion records could not be saved.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    return ingestion_run, list(ingestion_run.chunks)
+
+
+@app.post(
+    "/projects/{project_id}/knowledge-sources/{source_id}/ingest",
+    response_model=IngestionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["knowledge-base"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def ingest_knowledge_source(
+    project_id: UUID,
+    source_id: UUID,
+    actor: User = Depends(require_permission("knowledge.ingest")),
+    db: Session = Depends(get_db),
+) -> IngestionResponse:
+    """Extract and chunk one approved source as untrusted data."""
+
+    project, source = require_approved_knowledge_source(db, project_id, source_id)
+    expected_checksum = source.file.checksum_sha256.lower()
+    try:
+        root = project_storage_root(project)
+        source_path = project_relative_path(root, source.file.storage_key, "Source file")
+        prepared = prepare_document(
+            source_path,
+            storage_key=source.file.storage_key,
+            media_type=source.file.media_type,
+        )
+        if prepared.document.checksum_sha256 != expected_checksum:
+            raise DocumentProcessingError(
+                "Source file changed since its inventory was recorded."
+            )
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        db.rollback()
+        record_failed_ingestion(
+            db,
+            project_id,
+            source_id,
+            expected_checksum,
+            "Project storage was not found.",
+        )
+        record_knowledge_source_event(
+            db,
+            actor.id,
+            source_id,
+            "knowledge_source.ingestion_failed",
+            "failure",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project storage was not found.",
+        ) from exc
+    except PermissionError as exc:
+        db.rollback()
+        record_failed_ingestion(
+            db,
+            project_id,
+            source_id,
+            expected_checksum,
+            "Project storage is not available for ingestion.",
+        )
+        record_knowledge_source_event(
+            db,
+            actor.id,
+            source_id,
+            "knowledge_source.ingestion_failed",
+            "failure",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project storage is not available for ingestion.",
+        ) from exc
+    except (DocumentProcessingError, OSError, ValueError) as exc:
+        db.rollback()
+        record_failed_ingestion(
+            db,
+            project_id,
+            source_id,
+            expected_checksum,
+            str(exc),
+        )
+        record_knowledge_source_event(
+            db,
+            actor.id,
+            source_id,
+            "knowledge_source.ingestion_failed",
+            "failure",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Document could not be ingested safely.",
+        ) from exc
+
+    ingestion_run, chunks = persist_document_ingestion(
+        db,
+        project_id,
+        source_id,
+        source.title,
+        prepared.document.checksum_sha256,
+        prepared.chunks,
+    )
+    record_knowledge_source_event(
+        db,
+        actor.id,
+        source_id,
+        "knowledge_source.ingested",
+        "success",
+    )
+    return ingestion_response(ingestion_run, chunks)
 
 
 @app.post(

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator, Generator
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -6,7 +7,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -21,7 +22,7 @@ from main import (
     persist_record,
     require_record,
 )
-from models import File, Project, User
+from models import DocumentChunk, File, IngestionRun, Project, User
 
 
 TEST_ENGINE = create_engine(
@@ -359,6 +360,192 @@ def test_knowledge_source_registration_is_project_scoped_and_active_only() -> No
     assert inactive.json() == {
         "detail": "Only active files can be registered as knowledge sources."
     }
+
+
+def test_approved_knowledge_source_ingestion_persists_chunks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Ingestion Project")
+    project_root = projects_root / str(project["storage_slug"])
+    (project_root / "incoming").mkdir(parents=True)
+    source_path = project_root / "incoming" / "rules.md"
+    source_path.write_text(
+        "# Access\n\nKeep originals.\n\n## Restore\n\n"
+        + "Verify hashes before restoring a file. " * 70,
+        encoding="utf-8",
+    )
+
+    inventory = request("POST", f"/projects/{project['id']}/inventory")
+    assert inventory.status_code == 201
+    file_record = request(
+        "GET", f"/projects/{project['id']}/files/search?query=rules&status=active"
+    ).json()[0]
+    registered = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources",
+        json={
+            "file_id": file_record["id"],
+            "owner_id": TEST_OWNER_ID,
+            "title": "Secure source rules",
+            "source_type": "sop",
+            "sensitivity": "internal",
+        },
+    )
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": "ingestion-supervisor", "role": "supervisor"},
+    )
+    approved = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{registered.json()['id']}/review",
+        headers={"X-User-ID": supervisor.json()["id"]},
+        json={"decision": "approved"},
+    )
+    ingested = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{registered.json()['id']}/ingest",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    )
+
+    assert inventory.status_code == 201
+    assert registered.status_code == 201
+    assert approved.status_code == 200
+    assert ingested.status_code == 201
+    payload = ingested.json()
+    assert payload["status"] == "completed"
+    assert payload["source_checksum_sha256"] == hashlib.sha256(
+        source_path.read_bytes()
+    ).hexdigest()
+    assert payload["chunk_count"] == len(payload["chunks"]) > 1
+    assert [chunk["chunk_index"] for chunk in payload["chunks"]] == list(
+        range(payload["chunk_count"])
+    )
+    assert payload["chunks"][0]["title"] == "Secure source rules"
+    assert payload["chunks"][0]["heading"] == "Access"
+    assert payload["chunks"][-1]["heading"] == "Restore"
+    assert payload["chunks"][0]["location"].startswith("incoming/rules.md#L")
+    assert all("system" not in chunk["content"].lower() for chunk in payload["chunks"])
+
+    with TestingSessionLocal() as session:
+        run = session.get(IngestionRun, UUID(payload["id"]))
+        assert run is not None
+        assert run.status == "completed"
+        assert run.chunk_count == payload["chunk_count"]
+        chunks = list(
+            session.scalars(
+                select(DocumentChunk)
+                .where(DocumentChunk.ingestion_run_id == run.id)
+                .order_by(DocumentChunk.chunk_index)
+            ).all()
+        )
+        assert len(chunks) == run.chunk_count
+        assert chunks[0].source_id == UUID(registered.json()["id"])
+        assert chunks[0].content == payload["chunks"][0]["content"]
+
+    events = request("GET", "/security-events").json()
+    assert any(
+        event["event_code"] == "knowledge_source.ingested"
+        and event["resource_ref"] == registered.json()["id"]
+        for event in events
+    )
+
+
+def test_ingestion_requires_approved_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Pending Ingestion Project")
+    project_root = projects_root / str(project["storage_slug"])
+    (project_root / "incoming").mkdir(parents=True)
+    source_path = project_root / "incoming" / "rules.md"
+    source_path.write_text("# Pending\n\nDo not ingest yet.", encoding="utf-8")
+    assert request("POST", f"/projects/{project['id']}/inventory").status_code == 201
+    file_record = request(
+        "GET", f"/projects/{project['id']}/files/search?query=rules&status=active"
+    ).json()[0]
+    source = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources",
+        json={
+            "file_id": file_record["id"],
+            "owner_id": TEST_OWNER_ID,
+            "title": "Pending rules",
+            "source_type": "project_rule",
+            "sensitivity": "internal",
+        },
+    )
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source.json()['id']}/ingest",
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Approved knowledge source was not found."}
+    with TestingSessionLocal() as session:
+        assert session.scalars(select(IngestionRun)).all() == []
+
+
+def test_ingestion_rejects_changed_source_and_records_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Changed Ingestion Project")
+    project_root = projects_root / str(project["storage_slug"])
+    (project_root / "incoming").mkdir(parents=True)
+    source_path = project_root / "incoming" / "rules.md"
+    source_path.write_text("# Original\n\nKeep the recorded checksum.", encoding="utf-8")
+    assert request("POST", f"/projects/{project['id']}/inventory").status_code == 201
+    file_record = request(
+        "GET", f"/projects/{project['id']}/files/search?query=rules&status=active"
+    ).json()[0]
+    source = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources",
+        json={
+            "file_id": file_record["id"],
+            "owner_id": TEST_OWNER_ID,
+            "title": "Recorded rules",
+            "source_type": "sop",
+            "sensitivity": "internal",
+        },
+    )
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": "changed-source-supervisor", "role": "supervisor"},
+    )
+    assert request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source.json()['id']}/review",
+        headers={"X-User-ID": supervisor.json()["id"]},
+        json={"decision": "approved"},
+    ).status_code == 200
+    source_path.write_text("# Changed\n\nThis is no longer the inventoried bytes.", encoding="utf-8")
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source.json()['id']}/ingest",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Document could not be ingested safely."}
+    with TestingSessionLocal() as session:
+        runs = session.scalars(select(IngestionRun)).all()
+        assert len(runs) == 1
+        assert runs[0].status == "failed"
+        assert runs[0].chunk_count == 0
+        assert "Changed" not in (runs[0].error_message or "")
+        assert session.scalars(select(DocumentChunk)).all() == []
 
 
 def test_knowledge_source_review_requires_privileged_role_and_rejection_reason() -> None:

@@ -34,6 +34,7 @@ PERMISSIONS: Final[tuple[str, ...]] = (
     "knowledge.read",
     "knowledge.register",
     "knowledge.approve",
+    "knowledge.ingest",
 )
 
 ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
@@ -58,6 +59,7 @@ ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
             "knowledge.read",
             "knowledge.register",
             "knowledge.approve",
+            "knowledge.ingest",
         }
     ),
     "staff": frozenset(
@@ -79,6 +81,7 @@ ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
             "security.write",
             "knowledge.read",
             "knowledge.register",
+            "knowledge.ingest",
         }
     ),
     "intern": frozenset({"project.read", "file.read"}),
