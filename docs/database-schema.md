@@ -21,6 +21,11 @@ erDiagram
     PROJECT ||--o{ BACKUP : stores
     PROJECT ||--o{ KNOWLEDGE_SOURCE : registers
     FILE ||--o{ KNOWLEDGE_SOURCE : references
+    PROJECT ||--o{ INGESTION_RUN : processes
+    KNOWLEDGE_SOURCE ||--o{ INGESTION_RUN : ingests
+    PROJECT ||--o{ DOCUMENT_CHUNK : contains
+    KNOWLEDGE_SOURCE ||--o{ DOCUMENT_CHUNK : supplies
+    INGESTION_RUN ||--o{ DOCUMENT_CHUNK : produces
     WORKFLOW ||--o{ APPROVAL : requires
 
     USER {
@@ -114,6 +119,34 @@ erDiagram
         datetime created_at
         datetime updated_at
     }
+    INGESTION_RUN {
+        UUID id PK
+        UUID project_id FK
+        UUID source_id FK
+        string source_checksum_sha256
+        string status
+        int chunk_count
+        string error_message
+        datetime created_at
+        datetime completed_at
+    }
+    DOCUMENT_CHUNK {
+        UUID id PK
+        UUID ingestion_run_id FK
+        UUID project_id FK
+        UUID source_id FK
+        int chunk_index
+        string title
+        string heading
+        string location
+        int line_start
+        int line_end
+        text content
+        int character_count
+        int word_count
+        string checksum_sha256
+        datetime created_at
+    }
     WORKFLOW {
         UUID id PK
         UUID project_id FK
@@ -162,8 +195,14 @@ erDiagram
   the database and outside the project source tree.
 - `knowledge_sources` registers only metadata for active project files. Its
   `pending`, `approved`, and `rejected` review state prevents unreviewed files
-  from entering future knowledge-base ingestion. No document contents are
-  stored in this table.
+  from entering knowledge-base ingestion. No document contents are stored in
+  this table.
+- `ingestion_runs` records each bounded extraction attempt, the source checksum,
+  status, chunk count, and a safe failure message. A run is linked to one
+  approved source and project.
+- `document_chunks` stores deterministic source text chunks with title,
+  heading, line location, counts, and a content checksum for later retrieval.
+  The content is untrusted data; it is not system policy or executable input.
 - `workflows` are versioned per project with a unique `(project_id, name,
   version)` key. `approvals` are separate records so each decision has its own
   lifecycle and actor references.
@@ -175,7 +214,8 @@ erDiagram
   without destroying audit history.
 - Indexes cover project ownership/status, file lookup by project/status,
   file-history lookup by file/time, workflow status, approval status, and
-  backup lookup by project/status and time, and security-event lookups by
+  backup lookup by project/status and time, ingestion lookup by project/source
+  and time, chunk lookup by project/source/index, and security-event lookups by
   actor/code and time.
 
 ## Migration

@@ -73,7 +73,11 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
   source metadata for active project files. New sources are always `pending`.
 - `POST /projects/{project_id}/knowledge-sources/{source_id}/review` lets a
   supervisor or administrator approve or reject a source. Only approved
-  sources with active files are eligible for future knowledge-base ingestion.
+  sources with active files are eligible for knowledge-base ingestion.
+- `POST /projects/{project_id}/knowledge-sources/{source_id}/ingest` extracts
+  one approved text source, creates deterministic chunks with source locations,
+  and persists the ingestion run and chunk metadata. It does not perform
+  embeddings, retrieval, or model calls.
 - `POST /projects/{project_id}/backups` creates and immediately verifies a
   project archive plus a checksummed manifest without changing the source.
 - `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
@@ -93,9 +97,14 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 The Monday Week 5 knowledge-source register is documented in
 [`docs/knowledge-sources.md`](docs/knowledge-sources.md). It records source
 ownership, type, sensitivity, review state, and file identity, but never stores
-document contents or system instructions.
+document contents or system instructions. The Tuesday extraction and chunking
+pipeline is documented in [`docs/document-ingestion.md`](docs/document-ingestion.md),
+with a safe sample source in
+[`samples/knowledge/company-rules.md`](samples/knowledge/company-rules.md).
 The completion checkpoint is in
 [`docs/week-5-monday-checkpoint.md`](docs/week-5-monday-checkpoint.md).
+The Tuesday checkpoint is in
+[`docs/week-5-tuesday-checkpoint.md`](docs/week-5-tuesday-checkpoint.md).
 
 Protected routes accept the authenticated user ID in the `X-User-ID` header.
 Development requests without the header use the first provisioned user for

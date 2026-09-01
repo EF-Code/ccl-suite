@@ -15,8 +15,8 @@ request is rejected and recorded as `access.denied`.
 | Role | Allowed operations |
 | --- | --- |
 | `administrator` | All project, file, backup, conversion, workflow, approval, security, knowledge-source, and user-management operations |
-| `supervisor` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/review, and security events |
-| `staff` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read, and security events |
+| `supervisor` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/review/ingestion, and security events |
+| `staff` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read/ingestion, and security events |
 | `intern` | Project and file metadata read only |
 
 The read-only matrix is available at `GET /permissions`. The API keeps the
@@ -42,7 +42,8 @@ Backup lifecycle routes use the separate `backup.read`, `backup.create`,
 backup operations record only the backup identifier and authenticated actor in
 security events.
 
-Knowledge-source routes use `knowledge.read`, `knowledge.register`, and
-`knowledge.approve`. Interns cannot access the register. Registration records
-only file metadata and always starts in `pending`; approval is required before
-future document ingestion may consume a source.
+Knowledge-source routes use `knowledge.read`, `knowledge.register`,
+`knowledge.approve`, and `knowledge.ingest`. Interns cannot access the
+register or ingest documents. Registration records only file metadata and
+always starts in `pending`; approval is required before ingestion may consume
+a source.
