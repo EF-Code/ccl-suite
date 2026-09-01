@@ -42,6 +42,13 @@ def installed_browser(playwright_api: object) -> str | None:
     return None
 
 
+def confirm_protected_action(page: Page) -> None:
+    """Confirm the dashboard's explicit guardrail for protected actions."""
+
+    page.locator("#confirm-dialog").wait_for(state="visible")
+    page.locator("#confirm-accept").click()
+
+
 @pytest.fixture
 def dashboard_page() -> Page:
     """Open one isolated browser page and close it after the workflow."""
@@ -107,6 +114,8 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     project_id = page.locator("#inventory-project-id").input_value()
     assert project_id
     assert page.locator("#organizer-project-id").input_value() == project_id
+    expect(page.locator("#active-project-title")).to_have_text(project_title)
+    expect(page.locator("#active-project-status")).to_have_text("Ready to operate")
 
     folder_form = page.locator("#folder-form")
     expected_slug = project_title.lower().replace(" ", "-")
@@ -136,6 +145,7 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     restore_destination = f"restored/browser-{suffix}"
     page.locator("#backup-destination").fill(restore_destination)
     page.locator("#backup-restore").click()
+    confirm_protected_action(page)
     expect(backup_result).to_contain_text("Restored")
     expect(backup_result).to_contain_text(restore_destination)
 
@@ -145,10 +155,12 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     expect(organizer_result).to_contain_text("No files are waiting in incoming/.")
 
     page.locator("#organizer-apply").click()
+    confirm_protected_action(page)
     expect(organizer_result).to_contain_text("Applied 0 of 0 action(s)")
     expect(organizer_result).to_contain_text("Journal: organization-journal.json")
 
     page.locator("#organizer-rollback").click()
+    confirm_protected_action(page)
     expect(organizer_result).to_contain_text("Restored 0 file(s)")
 
 

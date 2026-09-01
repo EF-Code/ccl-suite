@@ -91,6 +91,18 @@ def test_serves_operations_web_prototype() -> None:
     assert "Backup and restore" in response.text
 
 
+def test_dashboard_ui_exposes_guided_workflow_and_protected_actions() -> None:
+    response = request("GET", "/")
+
+    assert response.status_code == 200
+    assert 'href="#main-content"' in response.text
+    assert 'id="workflow-title"' in response.text
+    assert 'id="workspace-context"' in response.text
+    assert 'id="active-project-title"' in response.text
+    assert 'id="confirm-dialog"' in response.text
+    assert 'id="confirm-accept"' in response.text
+
+
 def test_serves_web_prototype_assets() -> None:
     response = request("GET", "/static/app.js")
 
