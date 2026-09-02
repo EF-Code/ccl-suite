@@ -46,4 +46,7 @@ Knowledge-source routes use `knowledge.read`, `knowledge.register`,
 `knowledge.approve`, and `knowledge.ingest`. Interns cannot access the
 register or ingest documents. Registration records only file metadata and
 always starts in `pending`; approval is required before ingestion may consume
-a source.
+a source. Semantic search uses `knowledge.read` and adds a project boundary:
+staff may retrieve only their owned project, while supervisors and
+administrators are the current global project operators. A denied search is
+returned as `404` and recorded without the query text.
