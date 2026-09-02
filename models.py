@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -487,7 +488,7 @@ class IngestionRun(Base):
 
 
 class DocumentChunk(Base):
-    """A bounded, source-linked text chunk prepared for future retrieval."""
+    """A bounded source-linked chunk and its derived retrieval vector."""
 
     __tablename__ = "document_chunks"
     __table_args__ = (
@@ -515,6 +516,11 @@ class DocumentChunk(Base):
             "length(checksum_sha256) = 64",
             name="ck_document_chunks_checksum_sha256_length",
         ),
+        CheckConstraint(
+            "(embedding_json IS NULL AND embedding_model IS NULL AND embedding_dimensions IS NULL) "
+            "OR (embedding_json IS NOT NULL AND embedding_model IS NOT NULL AND embedding_dimensions > 0)",
+            name="ck_document_chunks_embedding_metadata",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -537,6 +543,13 @@ class DocumentChunk(Base):
     character_count: Mapped[int] = mapped_column(Integer, nullable=False)
     word_count: Mapped[int] = mapped_column(Integer, nullable=False)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        JSON(none_as_null=True),
+        name="embedding_json",
+        nullable=True,
+    )
+    embedding_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    embedding_dimensions: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
