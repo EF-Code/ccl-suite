@@ -2061,3 +2061,65 @@ def test_security_event_can_omit_actor() -> None:
 
     assert response.status_code == 201
     assert response.json()["actor_id"] == TEST_OWNER_ID
+
+
+def _create_ingested_source(
+    project: dict[str, object],
+    projects_root: Path,
+    supervisor_id: str,
+    filename: str,
+    content: str,
+    *,
+    title: str,
+    source_type: str,
+    sensitivity: str,
+    owner_id: str | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Create one inventoried, approved, and ingested source for search tests."""
+
+    project_root = projects_root / str(project["storage_slug"])
+    incoming = project_root / "incoming"
+    incoming.mkdir(parents=True, exist_ok=True)
+    (incoming / filename).write_text(content, encoding="utf-8")
+
+    inventory = request("POST", f"/projects/{project['id']}/inventory")
+    assert inventory.status_code == 201
+    file_search = request(
+        "GET",
+        f"/projects/{project['id']}/files/search?query={filename}&status=active",
+    )
+    assert file_search.status_code == 200
+    file_records = file_search.json()
+    assert len(file_records) == 1
+    file_record = file_records[0]
+
+    registered = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources",
+        json={
+            "file_id": file_record["id"],
+            "owner_id": owner_id or TEST_OWNER_ID,
+            "title": title,
+            "source_type": source_type,
+            "sensitivity": sensitivity,
+        },
+    )
+    assert registered.status_code == 201
+    source = registered.json()
+    approved = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source['id']}/review",
+        headers={"X-User-ID": supervisor_id},
+        json={"decision": "approved"},
+    )
+    assert approved.status_code == 200
+    ingested = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-sources/{source['id']}/ingest",
+        headers={"X-User-ID": supervisor_id},
+    )
+    assert ingested.status_code == 201
+    assert ingested.json()["chunk_count"] > 0
+    return source, file_record
+
+
