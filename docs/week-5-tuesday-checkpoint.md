@@ -1,5 +1,9 @@
 # Week 5 Tuesday checkpoint
 
+This is the historical end-of-day Tuesday boundary. The Wednesday checkpoint
+extends the persisted chunks with a local retrieval vector and semantic-search
+endpoint; answer generation remains out of scope.
+
 ## Planned work
 
 - Learn: parsing, chunking, overlap, and source metadata.
