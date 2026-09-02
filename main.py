@@ -1004,6 +1004,169 @@ async def ingest_knowledge_source(
 
 
 @app.post(
+    "/projects/{project_id}/knowledge-search",
+    response_model=SemanticSearchResponse,
+    tags=["knowledge-base"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def search_project_knowledge(
+    project_id: UUID,
+    search_request: SemanticSearchRequest,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> SemanticSearchResponse:
+    """Return the best approved, active, project-authorised source passages."""
+
+    project = require_project_knowledge_access(db, request, project_id, actor)
+    try:
+        query_embedding = embed_text(search_request.query)
+    except EmbeddingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Search query must contain at least one indexable term.",
+        ) from exc
+
+    statement = (
+        select(DocumentChunk, KnowledgeSource, File, IngestionRun)
+        .join(KnowledgeSource, KnowledgeSource.id == DocumentChunk.source_id)
+        .join(File, File.id == KnowledgeSource.file_id)
+        .join(IngestionRun, IngestionRun.id == DocumentChunk.ingestion_run_id)
+        .where(
+            DocumentChunk.project_id == project_id,
+            KnowledgeSource.project_id == project_id,
+            File.project_id == project_id,
+            KnowledgeSource.approval_status == "approved",
+            File.status == "active",
+            IngestionRun.status == "completed",
+        )
+    )
+    if search_request.source_type is not None:
+        statement = statement.where(KnowledgeSource.source_type == search_request.source_type)
+    if search_request.sensitivity is not None:
+        statement = statement.where(KnowledgeSource.sensitivity == search_request.sensitivity)
+    if search_request.source_id is not None:
+        statement = statement.where(KnowledgeSource.id == search_request.source_id)
+
+    try:
+        rows = list(db.execute(statement).all())
+    except SQLAlchemyError:
+        logger.error("Semantic-search candidate lookup failed for %s.", project_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+
+    # Repeated ingestion runs can produce the same chunk index.  Search only
+    # the newest completed run for each approved source and chunk position.
+    latest_rows: dict[
+        tuple[UUID, int], tuple[DocumentChunk, KnowledgeSource, File, IngestionRun]
+    ] = {}
+    for row in rows:
+        chunk, source, file_record, ingestion_run = row
+        key = (source.id, chunk.chunk_index)
+        current = latest_rows.get(key)
+        if current is None or (
+            ingestion_run.created_at,
+            ingestion_run.id.int,
+        ) > (
+            current[3].created_at,
+            current[3].id.int,
+        ):
+            latest_rows[key] = (chunk, source, file_record, ingestion_run)
+
+    embeddings_changed = False
+    for chunk, source, _file_record, _ingestion_run in latest_rows.values():
+        try:
+            current_embedding = validate_embedding(chunk.embedding)
+        except EmbeddingError:
+            current_embedding = ()
+        if (
+            not current_embedding
+            or chunk.embedding_model != EMBEDDING_MODEL
+            or chunk.embedding_dimensions != EMBEDDING_DIMENSIONS
+        ):
+            try:
+                chunk.embedding = list(
+                    embed_text(
+                        build_chunk_embedding_text(
+                            source.title,
+                            chunk.heading,
+                            chunk.content,
+                        )
+                    )
+                )
+            except EmbeddingError as exc:
+                logger.error("Semantic-search index is invalid for chunk %s.", chunk.id)
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Semantic-search index is unavailable.",
+                ) from exc
+            chunk.embedding_model = EMBEDDING_MODEL
+            chunk.embedding_dimensions = EMBEDDING_DIMENSIONS
+            embeddings_changed = True
+
+    if embeddings_changed:
+        try:
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.error("Semantic-search index could not be updated for %s.", project_id)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database temporarily unavailable.",
+            )
+
+    ranked: list[tuple[float, DocumentChunk, KnowledgeSource, File]] = []
+    for chunk, source, file_record, _ingestion_run in latest_rows.values():
+        try:
+            score = cosine_similarity(query_embedding, validate_embedding(chunk.embedding))
+        except EmbeddingError as exc:
+            logger.error("Semantic-search index validation failed for chunk %s.", chunk.id)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Semantic-search index is unavailable.",
+            ) from exc
+        if score >= MIN_SEARCH_SCORE:
+            ranked.append((score, chunk, source, file_record))
+
+    ranked.sort(
+        key=lambda item: (
+            -item[0],
+            item[1].location,
+            item[1].id.int,
+        )
+    )
+    results = [
+        SemanticSearchResult(
+            chunk_id=chunk.id,
+            project_id=project.id,
+            source_id=source.id,
+            score=score,
+            title=source.title,
+            heading=chunk.heading,
+            location=chunk.location,
+            line_start=chunk.line_start,
+            line_end=chunk.line_end,
+            content=chunk.content,
+            source_type=source.source_type,
+            sensitivity=source.sensitivity,
+            file_name=file_record.name,
+            file_storage_key=file_record.storage_key,
+        )
+        for score, chunk, source, file_record in ranked[: search_request.limit]
+    ]
+    return SemanticSearchResponse(
+        project_id=project.id,
+        query=search_request.query,
+        embedding_model=EMBEDDING_MODEL,
+        embedding_dimensions=EMBEDDING_DIMENSIONS,
+        result_count=len(results),
+        results=results,
+    )
+
+
+@app.post(
     "/projects/{project_id}/knowledge-sources",
     response_model=KnowledgeSourceResponse,
     status_code=status.HTTP_201_CREATED,
