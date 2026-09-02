@@ -2272,3 +2272,67 @@ def test_semantic_search_rebuilds_missing_vectors_for_existing_chunks(
         assert len(rebuilt[0].embedding or []) == 256
 
 
+def test_semantic_search_blocks_non_owner_staff_and_records_denial(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    other_user = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"other-search-owner-{uuid4().hex}", "role": "member"},
+    )
+    assert other_user.status_code == 201
+    other_owner_id = other_user.json()["id"]
+    created_project = request(
+        "POST",
+        "/projects",
+        json={"title": "Other Owner Search Project", "owner_id": other_owner_id},
+    )
+    assert created_project.status_code == 201
+    project = created_project.json()
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"access-search-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+    source, _file_record = _create_ingested_source(
+        project,
+        projects_root,
+        supervisor.json()["id"],
+        "access.md",
+        "# Access\n\nOnly the project owner can retrieve these rules.",
+        title="Access Rules",
+        source_type="project_rule",
+        sensitivity="internal",
+        owner_id=other_owner_id,
+    )
+
+    denied = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-search",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "project owner rules"},
+    )
+    allowed = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-search",
+        headers={"X-User-ID": other_owner_id},
+        json={"query": "project owner rules", "source_id": source["id"]},
+    )
+
+    assert denied.status_code == 404
+    assert denied.json() == {"detail": "Project was not found."}
+    assert allowed.status_code == 200
+    assert allowed.json()["result_count"] == 1
+    events = request("GET", "/security-events").json()
+    assert any(
+        event["event_code"] == "access.denied"
+        and event["actor_id"] == TEST_OWNER_ID
+        and event["resource_ref"] == f"/projects/{project['id']}/knowledge-search"
+        for event in events
+    )
+
+
