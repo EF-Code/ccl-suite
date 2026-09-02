@@ -1,8 +1,9 @@
 # Document ingestion
 
-This is the Week 5 Tuesday pipeline. It processes one approved project source
-into bounded, deterministic text chunks for a later retrieval stage. It does
-not create embeddings, search vectors, generate answers, or call an AI model.
+This is the Week 5 Tuesday extraction pipeline. It processes one approved
+project source into bounded, deterministic text chunks. The Wednesday
+semantic-search layer now also materialises a deterministic local vector for
+each persisted chunk; it does not generate answers or call an AI model.
 
 ## Processing flow
 
@@ -17,6 +18,10 @@ not create embeddings, search vectors, generate answers, or call an AI model.
 5. The service reads bounded UTF-8 text and creates deterministic overlapping
    chunks. Each chunk keeps the source title, active Markdown heading, project
    relative location, line range, word/character counts, and content checksum.
+6. The semantic-search index stores a deterministic local-hash vector beside
+   each chunk. This portable MVP keeps ranking in the API process so it works
+   with the existing PostgreSQL and SQLite test schemas without an external
+   model or vector service.
 
 ## Supported sources
 
@@ -49,5 +54,6 @@ the normal workflow.
 
 The pipeline treats document text as untrusted reference data. It never
 executes source text, changes application rules, grants permissions, or bypasses
-approval. The source checksum and chunk content are retained for traceability;
-interpretation and retrieval controls belong to later stages of the plan.
+approval. The source checksum, chunk content, and derived vector are retained
+for traceability; answer generation, attribution, refusal behaviour, and
+evaluation belong to later stages of the plan.
