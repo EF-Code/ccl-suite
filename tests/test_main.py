@@ -2223,3 +2223,52 @@ def test_semantic_search_ranks_passages_and_applies_metadata_filters(
     assert archived.json()["results"] == []
 
 
+def test_semantic_search_rebuilds_missing_vectors_for_existing_chunks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Legacy Chunk Search Project")
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"legacy-search-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+    source, _file_record = _create_ingested_source(
+        project,
+        projects_root,
+        supervisor.json()["id"],
+        "legacy.md",
+        "# Integrity\n\nVerify the checksum before a restore.",
+        title="Legacy Integrity SOP",
+        source_type="sop",
+        sensitivity="internal",
+    )
+
+    with TestingSessionLocal() as session:
+        chunks = session.scalars(select(DocumentChunk)).all()
+        assert chunks
+        for chunk in chunks:
+            chunk.embedding = None
+            chunk.embedding_model = None
+            chunk.embedding_dimensions = None
+        session.commit()
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-search",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "checksum restore", "source_id": source["id"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["result_count"] == 1
+    with TestingSessionLocal() as session:
+        rebuilt = session.scalars(select(DocumentChunk)).all()
+        assert rebuilt[0].embedding_model == "local-hash-v1"
+        assert rebuilt[0].embedding_dimensions == 256
+        assert len(rebuilt[0].embedding or []) == 256
+
+
