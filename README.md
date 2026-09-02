@@ -76,8 +76,12 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
   sources with active files are eligible for knowledge-base ingestion.
 - `POST /projects/{project_id}/knowledge-sources/{source_id}/ingest` extracts
   one approved text source, creates deterministic chunks with source locations,
-  and persists the ingestion run and chunk metadata. It does not perform
-  embeddings, retrieval, or model calls.
+  stores a deterministic local retrieval vector, and persists the ingestion
+  run and chunk metadata. It does not generate answers or call a model.
+- `POST /projects/{project_id}/knowledge-search` ranks approved, active source
+  passages for a bounded query with optional source-type, sensitivity, and
+  source-ID filters. It enforces project-owner or supervisor/administrator
+  access and returns source metadata with each passage.
 - `POST /projects/{project_id}/backups` creates and immediately verifies a
   project archive plus a checksummed manifest without changing the source.
 - `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
@@ -105,6 +109,8 @@ The completion checkpoint is in
 [`docs/week-5-monday-checkpoint.md`](docs/week-5-monday-checkpoint.md).
 The Tuesday checkpoint is in
 [`docs/week-5-tuesday-checkpoint.md`](docs/week-5-tuesday-checkpoint.md).
+The Wednesday semantic-search checkpoint is in
+[`docs/week-5-wednesday-checkpoint.md`](docs/week-5-wednesday-checkpoint.md).
 
 Protected routes accept the authenticated user ID in the `X-User-ID` header.
 Development requests without the header use the first provisioned user for
