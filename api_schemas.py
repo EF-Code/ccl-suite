@@ -234,6 +234,48 @@ class IngestionResponse(BaseModel):
     chunks: list[DocumentChunkResponse]
 
 
+class SemanticSearchRequest(BaseModel):
+    """Bounded semantic-search input with allow-listed metadata filters."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    query: str = Field(min_length=1, max_length=500)
+    source_type: Literal["sop", "prompt_bank", "style_guide", "project_rule"] | None = None
+    sensitivity: Literal["public", "internal", "confidential", "restricted"] | None = None
+    source_id: UUID | None = None
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class SemanticSearchResult(BaseModel):
+    """One ranked, source-attributed passage returned to a caller."""
+
+    chunk_id: UUID
+    project_id: UUID
+    source_id: UUID
+    score: float = Field(ge=0.0, le=1.0)
+    title: str
+    heading: str | None
+    location: str
+    line_start: int = Field(gt=0)
+    line_end: int = Field(ge=1)
+    content: str
+    source_type: Literal["sop", "prompt_bank", "style_guide", "project_rule"]
+    sensitivity: Literal["public", "internal", "confidential", "restricted"]
+    file_name: str
+    file_storage_key: str
+
+
+class SemanticSearchResponse(BaseModel):
+    """Project-scoped ranked passages for one bounded query."""
+
+    project_id: UUID
+    query: str
+    embedding_model: str
+    embedding_dimensions: int = Field(gt=0)
+    result_count: int = Field(ge=0, le=20)
+    results: list[SemanticSearchResult]
+
+
 class FileRestoreCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -514,6 +556,9 @@ __all__ = [
     "InventoryRecordResponse",
     "InventoryResponse",
     "IngestionResponse",
+    "SemanticSearchRequest",
+    "SemanticSearchResult",
+    "SemanticSearchResponse",
     "KnowledgeSourceCreate",
     "KnowledgeSourceDecision",
     "KnowledgeSourceResponse",
