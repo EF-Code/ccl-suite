@@ -2336,3 +2336,32 @@ def test_semantic_search_blocks_non_owner_staff_and_records_denial(
     )
 
 
+def test_semantic_search_request_is_bounded_and_validated() -> None:
+    project = create_project("Search Validation Project")
+    base_path = f"/projects/{project['id']}/knowledge-search"
+
+    too_many = request(
+        "POST",
+        base_path,
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "rules", "limit": 21},
+    )
+    no_terms = request(
+        "POST",
+        base_path,
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "!!!"},
+    )
+    extra_field = request(
+        "POST",
+        base_path,
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "rules", "unexpected": "value"},
+    )
+
+    assert too_many.status_code == 422
+    assert no_terms.status_code == 422
+    assert no_terms.json() == {
+        "detail": "Search query must contain at least one indexable term."
+    }
+    assert extra_field.status_code == 422
