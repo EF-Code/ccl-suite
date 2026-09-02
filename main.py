@@ -724,6 +724,27 @@ def require_project_knowledge_source(
     return project, source
 
 
+def require_project_knowledge_access(
+    db: Session,
+    request: Request,
+    project_id: UUID,
+    actor: User,
+) -> Project:
+    """Allow retrieval only to a project owner or global knowledge operator."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    if project.owner_id != actor.id and canonical_role(actor.role) not in {
+        "administrator",
+        "supervisor",
+    }:
+        _record_access_denial(db, request, actor, "knowledge.search")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project was not found.",
+        )
+    return project
+
+
 def require_approved_knowledge_source(
     db: Session,
     project_id: UUID,
