@@ -48,6 +48,9 @@ from api_schemas import (
     PermissionMatrixResponse,
     ProjectCreate,
     ProjectResponse,
+    SemanticSearchRequest,
+    SemanticSearchResponse,
+    SemanticSearchResult,
     SecurityEventCreate,
     SecurityEventResponse,
     UserCreate,
@@ -139,6 +142,16 @@ from models import (
     utc_now,
 )
 from permissions import ROLES, canonical_role, permission_matrix, role_can
+from semantic_search import (
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL,
+    EmbeddingError,
+    MIN_SEARCH_SCORE,
+    build_chunk_embedding_text,
+    cosine_similarity,
+    embed_text,
+    validate_embedding,
+)
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -802,23 +815,44 @@ def persist_document_ingestion(
         chunk_count=len(chunks),
         completed_at=utc_now(),
     )
-    ingestion_run.chunks = [
-        DocumentChunk(
-            project_id=project_id,
-            source_id=source_id,
-            chunk_index=chunk.chunk_index,
-            title=source_title,
-            heading=chunk.heading,
-            location=chunk.location,
-            line_start=chunk.line_start,
-            line_end=chunk.line_end,
-            content=chunk.content,
-            character_count=chunk.character_count,
-            word_count=chunk.word_count,
-            checksum_sha256=chunk.checksum_sha256,
+    persisted_chunks: list[DocumentChunk] = []
+    for chunk in chunks:
+        try:
+            embedding = list(
+                embed_text(
+                    build_chunk_embedding_text(
+                        source_title,
+                        chunk.heading,
+                        chunk.content,
+                    )
+                )
+            )
+        except EmbeddingError as exc:
+            logger.error("Document chunk could not be indexed for source %s.", source_id)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Document could not be indexed safely.",
+            ) from exc
+        persisted_chunks.append(
+            DocumentChunk(
+                project_id=project_id,
+                source_id=source_id,
+                chunk_index=chunk.chunk_index,
+                title=source_title,
+                heading=chunk.heading,
+                location=chunk.location,
+                line_start=chunk.line_start,
+                line_end=chunk.line_end,
+                content=chunk.content,
+                character_count=chunk.character_count,
+                word_count=chunk.word_count,
+                checksum_sha256=chunk.checksum_sha256,
+                embedding=embedding,
+                embedding_model=EMBEDDING_MODEL,
+                embedding_dimensions=EMBEDDING_DIMENSIONS,
+            )
         )
-        for chunk in chunks
-    ]
+    ingestion_run.chunks = persisted_chunks
     try:
         db.add(ingestion_run)
         db.commit()
