@@ -4,3 +4,14 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+# SIWES frontend detailed handover — local only, never push
+docs/frontend-upgrade-detailed-UNTRACKED.md
+*UNTRACKED.md
+frontend/dist/
+frontend/node_modules/
+frontend/.parcel-cache/
+.tmp/
+tmp/
+# local backups — never push
+static/*.bak
+*.bak

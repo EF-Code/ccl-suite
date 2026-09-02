@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark production shell — no pure white anywhere */
+    --background: 200 38% 7%; /* #0a141e — deep navy */
+    --foreground: 210 20% 92%; /* #e6ebef — soft white */
+    --card: 200 28% 10%; /* #132433 — card surface, lighter than bg */
+    --card-foreground: 210 18% 92%;
+    --popover: 200 28% 10%;
+    --popover-foreground: 210 18% 92%;
+    --primary: 168 38% 46%; /* teal for primary actions on dark */
+    --primary-foreground: 200 38% 7%;
+    --secondary: 200 20% 16%; /* #1c2f3f — muted dark */
+    --secondary-foreground: 210 14% 88%;
+    --muted: 200 18% 15%;
+    --muted-foreground: 200 10% 62%;
+    --accent: 12 78% 58%; /* coral kept */
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62% 48%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 200 18% 18%; /* #23394a — subtle border on dark */
+    --input: 200 18% 18%;
+    --ring: 168 38% 46%;
+    --radius: 0.9rem;
+    --chart-1: 168 38% 46%;
+    --chart-2: 12 78% 58%;
+    --chart-3: 200 45% 14%;
+  }
+
+  .dark {
+    --background: 200 38% 7%;
+    --foreground: 210 20% 92%;
+    --card: 200 28% 10%;
+    --card-foreground: 210 18% 92%;
+    --popover: 200 28% 10%;
+    --popover-foreground: 210 18% 92%;
+    --primary: 168 38% 46%;
+    --primary-foreground: 200 38% 7%;
+    --secondary: 200 20% 16%;
+    --secondary-foreground: 210 14% 88%;
+    --muted: 200 18% 15%;
+    --muted-foreground: 200 10% 62%;
+    --accent: 12 78% 58%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62% 48%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 200 18% 18%;
+    --input: 200 18% 18%;
+    --ring: 168 38% 46%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    /* Dark shell with subtle depth — no whitish */
+    background:
+      radial-gradient(ellipse at 20% -10%, rgba(20,121,111,0.12), transparent 36rem),
+      radial-gradient(ellipse at 88% 0%, rgba(232,121,93,0.08), transparent 32rem),
+      linear-gradient(to bottom, rgba(255,255,255,0.015), transparent 24rem),
+      hsl(var(--background));
+  }
+  .card-elevated {
+    @apply bg-card shadow-[0_10px_36px_rgba(0,0,0,0.32),0_1px_0_rgba(255,255,255,0.04)] border border-border/70;
+  }
+}
+
+/* Focus and motion */
+@layer utilities {
+  .skip-link {
+    @apply bg-primary text-primary-foreground fixed left-4 top-0 z-20 rounded-b-lg px-3 py-2 text-xs font-bold -translate-y-full focus:translate-y-0 transition-transform;
+  }
+}
+
+/* Custom scrollbar — visible on dark */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 999px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Card accent — teal line */
+.card-accent {
+  position: relative;
+  overflow: hidden;
+}
+.card-accent::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(to bottom, hsl(var(--primary)), hsl(var(--chart-1)));
+  opacity: 0.85;
+}
