@@ -2123,3 +2123,103 @@ def _create_ingested_source(
     return source, file_record
 
 
+def test_semantic_search_ranks_passages_and_applies_metadata_filters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Semantic Search Project")
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"search-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+    supervisor_id = supervisor.json()["id"]
+
+    rules_source, _rules_file = _create_ingested_source(
+        project,
+        projects_root,
+        supervisor_id,
+        "rules.md",
+        "# Restore\n\nVerify file hashes before restoring a file. Keep the original intact.",
+        title="Restore SOP",
+        source_type="sop",
+        sensitivity="internal",
+    )
+    style_source, style_file = _create_ingested_source(
+        project,
+        projects_root,
+        supervisor_id,
+        "style.md",
+        "# Writing\n\nUse concise plain language in every response.",
+        title="Writing Style Guide",
+        source_type="style_guide",
+        sensitivity="public",
+    )
+
+    ranked = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-search",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "verify file hashes before restoring a file", "limit": 5},
+    )
+    style_filtered = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-search",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "query": "concise plain language",
+            "source_type": "style_guide",
+            "sensitivity": "public",
+            "source_id": style_source["id"],
+            "limit": 5,
+        },
+    )
+    wrong_type = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-search",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "concise plain language", "source_type": "sop"},
+    )
+
+    assert ranked.status_code == 200
+    ranked_payload = ranked.json()
+    assert ranked_payload["embedding_model"] == "local-hash-v1"
+    assert ranked_payload["embedding_dimensions"] == 256
+    assert ranked_payload["result_count"] > 0
+    assert ranked_payload["results"][0]["source_id"] == rules_source["id"]
+    assert ranked_payload["results"][0]["score"] > 0
+    assert ranked_payload["results"][0]["location"].startswith("incoming/rules.md#L")
+    assert "hashes" in ranked_payload["results"][0]["content"]
+    assert style_filtered.status_code == 200
+    assert style_filtered.json()["result_count"] == 1
+    assert style_filtered.json()["results"][0]["source_id"] == style_source["id"]
+    assert wrong_type.status_code == 200
+    assert wrong_type.json()["results"] == []
+
+    with TestingSessionLocal() as session:
+        stored_chunks = session.scalars(select(DocumentChunk)).all()
+        assert stored_chunks
+        assert all(
+            chunk.embedding_model == "local-hash-v1"
+            and chunk.embedding_dimensions == 256
+            and len(chunk.embedding or []) == 256
+            for chunk in stored_chunks
+        )
+        file_model = session.get(File, UUID(style_file["id"]))
+        assert file_model is not None
+        file_model.status = "archived"
+        session.commit()
+
+    archived = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-search",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "concise plain language", "source_id": style_source["id"]},
+    )
+    assert archived.status_code == 200
+    assert archived.json()["results"] == []
+
+
