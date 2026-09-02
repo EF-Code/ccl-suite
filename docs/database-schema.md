@@ -145,6 +145,9 @@ erDiagram
         int character_count
         int word_count
         string checksum_sha256
+        json embedding_json
+        string embedding_model
+        int embedding_dimensions
         datetime created_at
     }
     WORKFLOW {
@@ -201,8 +204,9 @@ erDiagram
   status, chunk count, and a safe failure message. A run is linked to one
   approved source and project.
 - `document_chunks` stores deterministic source text chunks with title,
-  heading, line location, counts, and a content checksum for later retrieval.
-  The content is untrusted data; it is not system policy or executable input.
+  heading, line location, counts, a content checksum, and the derived local
+  retrieval vector. The content and vector are untrusted data; they are not
+  system policy or executable input.
 - `workflows` are versioned per project with a unique `(project_id, name,
   version)` key. `approvals` are separate records so each decision has its own
   lifecycle and actor references.
