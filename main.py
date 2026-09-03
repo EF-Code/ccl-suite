@@ -36,6 +36,9 @@ from api_schemas import (
     InventoryRecordResponse,
     InventoryResponse,
     IngestionResponse,
+    KnowledgeAnswerRequest,
+    KnowledgeAnswerResponse,
+    KnowledgeCitation,
     KnowledgeSourceCreate,
     KnowledgeSourceDecision,
     KnowledgeSourceResponse,
@@ -126,6 +129,11 @@ from file_organizer import (
 )
 from folder_generator import create_project_folder, normalize_project_name
 from knowledge_sources import build_approved_knowledge_sources_statement
+from knowledge_answer import (
+    ANSWER_ENGINE,
+    GroundedAnswer,
+    compose_grounded_answer,
+)
 from logger import logger
 from models import (
     Approval,
@@ -507,6 +515,34 @@ def record_knowledge_source_event(
         logger.error(
             "Knowledge-source security event could not be recorded for %s.",
             source_id,
+        )
+
+
+def record_knowledge_answer_event(
+    db: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    event_code: str,
+    outcome: str,
+) -> None:
+    """Record answer/refusal state without storing the question or evidence."""
+
+    try:
+        db.add(
+            SecurityEvent(
+                actor_id=actor_id,
+                event_code=event_code,
+                outcome=outcome,
+                resource_type="project",
+                resource_ref=str(project_id),
+            )
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error(
+            "Knowledge-answer security event could not be recorded for %s.",
+            project_id,
         )
 
 
@@ -1003,22 +1039,13 @@ async def ingest_knowledge_source(
     return ingestion_response(ingestion_run, chunks)
 
 
-@app.post(
-    "/projects/{project_id}/knowledge-search",
-    response_model=SemanticSearchResponse,
-    tags=["knowledge-base"],
-    dependencies=[Depends(reject_oversized_requests)],
-)
-async def search_project_knowledge(
-    project_id: UUID,
+def retrieve_project_knowledge(
+    db: Session,
+    project: Project,
     search_request: SemanticSearchRequest,
-    request: Request,
-    actor: User = Depends(require_permission("knowledge.read")),
-    db: Session = Depends(get_db),
 ) -> SemanticSearchResponse:
-    """Return the best approved, active, project-authorised source passages."""
+    """Return ranked passages after applying the approved-source boundary."""
 
-    project = require_project_knowledge_access(db, request, project_id, actor)
     try:
         query_embedding = embed_text(search_request.query)
     except EmbeddingError as exc:
@@ -1033,9 +1060,9 @@ async def search_project_knowledge(
         .join(File, File.id == KnowledgeSource.file_id)
         .join(IngestionRun, IngestionRun.id == DocumentChunk.ingestion_run_id)
         .where(
-            DocumentChunk.project_id == project_id,
-            KnowledgeSource.project_id == project_id,
-            File.project_id == project_id,
+            DocumentChunk.project_id == project.id,
+            KnowledgeSource.project_id == project.id,
+            File.project_id == project.id,
             KnowledgeSource.approval_status == "approved",
             File.status == "active",
             IngestionRun.status == "completed",
@@ -1051,7 +1078,7 @@ async def search_project_knowledge(
     try:
         rows = list(db.execute(statement).all())
     except SQLAlchemyError:
-        logger.error("Semantic-search candidate lookup failed for %s.", project_id)
+        logger.error("Semantic-search candidate lookup failed for %s.", project.id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database temporarily unavailable.",
@@ -1111,7 +1138,7 @@ async def search_project_knowledge(
             db.commit()
         except SQLAlchemyError:
             db.rollback()
-            logger.error("Semantic-search index could not be updated for %s.", project_id)
+            logger.error("Semantic-search index could not be updated for %s.", project.id)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Database temporarily unavailable.",
@@ -1163,6 +1190,105 @@ async def search_project_knowledge(
         embedding_dimensions=EMBEDDING_DIMENSIONS,
         result_count=len(results),
         results=results,
+    )
+
+
+def grounded_answer_response(
+    project_id: UUID,
+    answer_request: KnowledgeAnswerRequest,
+    search_response: SemanticSearchResponse,
+    grounded: GroundedAnswer,
+) -> KnowledgeAnswerResponse:
+    """Translate the bounded answer composer into the public response contract."""
+
+    citations = [
+        KnowledgeCitation(
+            citation_number=number,
+            chunk_id=citation.chunk_id,
+            source_id=citation.source_id,
+            score=citation.score,
+            title=citation.title,
+            heading=citation.heading,
+            location=citation.location,
+            line_start=citation.line_start,
+            line_end=citation.line_end,
+            file_name=citation.file_name,
+            file_storage_key=citation.file_storage_key,
+            excerpt=citation.excerpt,
+        )
+        for number, citation in enumerate(grounded.citations, start=1)
+    ]
+    return KnowledgeAnswerResponse(
+        project_id=project_id,
+        query=answer_request.query,
+        status=grounded.status,
+        answer=grounded.answer,
+        refusal_reason=grounded.refusal_reason,
+        answer_engine=ANSWER_ENGINE,
+        embedding_model=search_response.embedding_model,
+        embedding_dimensions=search_response.embedding_dimensions,
+        retrieved_count=search_response.result_count,
+        citation_count=len(citations),
+        citations=citations,
+    )
+
+
+@app.post(
+    "/projects/{project_id}/knowledge-search",
+    response_model=SemanticSearchResponse,
+    tags=["knowledge-base"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def search_project_knowledge(
+    project_id: UUID,
+    search_request: SemanticSearchRequest,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> SemanticSearchResponse:
+    """Return the best approved, active, project-authorised source passages."""
+
+    project = require_project_knowledge_access(db, request, project_id, actor)
+    return retrieve_project_knowledge(db, project, search_request)
+
+
+@app.post(
+    "/projects/{project_id}/knowledge-answer",
+    response_model=KnowledgeAnswerResponse,
+    tags=["knowledge-base"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def answer_project_knowledge(
+    project_id: UUID,
+    answer_request: KnowledgeAnswerRequest,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> KnowledgeAnswerResponse:
+    """Answer only from approved evidence visible to the requesting actor."""
+
+    project = require_project_knowledge_access(db, request, project_id, actor)
+    search_request = SemanticSearchRequest(
+        query=answer_request.query,
+        source_type=answer_request.source_type,
+        sensitivity=answer_request.sensitivity,
+        source_id=answer_request.source_id,
+        limit=answer_request.evidence_limit,
+    )
+    search_response = retrieve_project_knowledge(db, project, search_request)
+    grounded = compose_grounded_answer(answer_request.query, search_response.results)
+    record_knowledge_answer_event(
+        db,
+        actor.id,
+        project.id,
+        f"knowledge_answer.{grounded.status}",
+        "success" if grounded.status == "answered" else "failure",
+    )
+    return grounded_answer_response(
+        project.id,
+        answer_request,
+        search_response,
+        grounded,
     )
 
 
