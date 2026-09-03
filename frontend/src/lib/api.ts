@@ -100,3 +100,32 @@ export type SearchResult = {
   line_start: number;
   line_end: number;
 };
+
+export type AnswerCitation = {
+  citation_number: number;
+  chunk_id: string;
+  source_id: string;
+  score: number;
+  title: string;
+  heading?: string | null;
+  location: string;
+  line_start: number;
+  line_end: number;
+  file_name: string;
+  file_storage_key: string;
+  excerpt: string;
+};
+
+export type KnowledgeAnswerResponse = {
+  project_id: string;
+  query: string;
+  status: "answered" | "refused";
+  answer: string;
+  refusal_reason: "unsupported_query" | "insufficient_evidence" | null;
+  answer_engine: string;
+  embedding_model: string;
+  embedding_dimensions: number;
+  retrieved_count: number;
+  citation_count: number;
+  citations: AnswerCitation[];
+};
