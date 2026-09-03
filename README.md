@@ -82,6 +82,10 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
   passages for a bounded query with optional source-type, sensitivity, and
   source-ID filters. It enforces project-owner or supervisor/administrator
   access and returns source metadata with each passage.
+- `POST /projects/{project_id}/knowledge-answer` composes a bounded,
+  extractive answer from the strongest approved passages, returns numbered
+  source citations, and refuses questions without sufficient evidence. It is
+  deliberately dependency-free and does not call an external model.
 - `POST /projects/{project_id}/backups` creates and immediately verifies a
   project archive plus a checksummed manifest without changing the source.
 - `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
