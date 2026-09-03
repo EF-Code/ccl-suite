@@ -83,6 +83,12 @@ def embed_text(text: str) -> tuple[float, ...]:
     return tuple(value / norm for value in vector)
 
 
+def search_terms(text: str) -> tuple[str, ...]:
+    """Return the normalised terms used by the local retrieval vocabulary."""
+
+    return _tokens(text)
+
+
 def build_chunk_embedding_text(
     title: str,
     heading: str | None,
@@ -146,5 +152,6 @@ __all__ = [
     "build_chunk_embedding_text",
     "cosine_similarity",
     "embed_text",
+    "search_terms",
     "validate_embedding",
 ]
