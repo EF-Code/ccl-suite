@@ -10,15 +10,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { Separator } from "@/components/ui/separator"
 import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type SearchResult } from "@/lib/api"
 import {
-  HeartPulse, Users, FolderKanban, Files, Search, RefreshCw, ShieldCheck,
+  Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
+  HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
   Database, FileText, ArrowLeftRight, Library,
-  AlertCircle, ChevronRight, ExternalLink, CheckCircle2
+  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp
 } from "lucide-react"
 
 // Helpers
 function escapeForTest(v: string) { return v }
+function compactId(v?: string) { return v ? `${v.slice(0, 13)}…` : "—" }
+type WorkspaceView = "operations" | "files" | "knowledge" | "recovery" | "setup"
 
 export default function App() {
   // Global
@@ -30,6 +35,8 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedId, setSelectedId] = useState("")
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [activeView, setActiveView] = useState<WorkspaceView>("operations")
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   // Forms + results
   const [ownerResult, setOwnerResult] = useState("")
@@ -407,96 +414,123 @@ export default function App() {
 
   const selectedProjectName = selectedProject?.title || "No project selected"
 
+  function activateProject(project: Project) {
+    setSelectedId(project.id)
+    setSelectedProject(project)
+    setAnswerResponse(null)
+    setAnswerError("")
+    const setVal = (selector: string, value: string) => {
+      const element = document.querySelector<HTMLInputElement>(selector)
+      if (element) element.value = value
+    }
+    setVal("#conversion-project-id", project.id)
+    setVal("#inventory-project-id", project.id)
+    setVal("#setup-inventory-project-id", project.id)
+    setVal("#organizer-project-id", project.id)
+    setVal("#backup-project-id", project.id)
+    setVal("#project-folder-name", project.storage_slug)
+    setVal("#knowledge-project-id", project.id)
+    setVal("#knowledge-owner-id", project.owner_id || "")
+  }
+
+  const navigation: Array<{ view: WorkspaceView; label: string; icon: typeof Gauge }> = [
+    { view: "operations", label: "Operations", icon: Gauge },
+    { view: "files", label: "Files", icon: Files },
+    { view: "knowledge", label: "Knowledge", icon: Library },
+    { view: "recovery", label: "Recovery", icon: ArchiveRestore },
+    { view: "setup", label: "Setup", icon: FolderCog },
+  ]
+
+  const viewCopy: Record<WorkspaceView, { title: string; description: string }> = {
+    operations: { title: "Operations", description: "Preview and run controlled work inside the active project." },
+    files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
+    knowledge: { title: "Knowledge", description: "Register, review, ingest, search, and answer from approved sources." },
+    recovery: { title: "Recovery", description: "Create, verify, and restore checksummed project backups." },
+    setup: { title: "Workspace setup", description: "Provision an owner, register a project, and prepare local storage." },
+  }
+
+  const openView = (view: WorkspaceView) => {
+    setActiveView(view)
+    setMobileNavOpen(false)
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
+
   return (
     <div className="min-h-screen">
       <a className="skip-link" href="#main-content">Skip to main content</a>
 
-      {/* Production Topbar */}
-      <header className="sticky top-0 z-30 bg-[#0e2a36] border-b border-white/10 shadow-[0_4px_20px_rgba(8,22,31,0.12)]">
-        <div className="mx-auto max-w-[1280px] px-4 lg:px-8 h-[56px] flex items-center justify-between gap-4">
-          <a className="flex items-center gap-3" href="/" aria-label="CCL AI Suite home">
-            <span className="w-9 h-9 rounded-xl bg-white text-[#0e2a36] grid place-items-center font-black text-[1.15rem] shadow-md">C</span>
-            <span className="hidden sm:block">
-              <strong className="block text-[0.95rem] leading-none tracking-tight text-white">CCL AI Suite</strong>
-              <small className="text-[0.70rem] text-white/60 tracking-wide">Operations Platform</small>
-            </span>
+      <aside className="app-sidebar hidden lg:flex" aria-label="Primary navigation">
+        <div className="sidebar-inner">
+          <a className="brand-lockup" href="/" aria-label="CCL AI Suite home">
+            <span className="brand-mark">CCL</span>
+            <strong className="brand-name">AI Suite</strong>
           </a>
-          <nav className="flex items-center gap-2" aria-label="Application links">
-            <a className="hidden md:inline-flex items-center gap-1.5 text-xs font-bold text-white/70 hover:text-white px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition-colors" href="#projects">Projects</a>
-            <a className="hidden md:inline-flex items-center gap-1.5 text-xs font-bold text-white/70 hover:text-white px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition-colors" href="#file-operations">Files</a>
-            <a className="hidden md:inline-flex items-center gap-1.5 text-xs font-bold text-white/70 hover:text-white px-2.5 py-1.5 rounded-lg hover:bg-white/10 transition-colors" href="#knowledge-base">Knowledge</a>
-            <span id="health-badge" className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[0.68rem] font-extrabold border ${health.ok ? "bg-emerald-500 text-white border-emerald-400" : "bg-amber-500 text-white border-amber-400"}`} role="status" aria-live="polite">
-              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" /> {healthBadge}
-            </span>
-            <a className="inline-flex items-center gap-1.5 text-xs font-bold bg-white text-[#0e2a36] px-3.5 py-2 rounded-full hover:bg-white/90 shadow-sm" href="/docs" target="_blank" rel="noreferrer">API docs <ExternalLink className="w-3 h-3" /></a>
+          <nav className="app-links">
+            <p className="nav-label">Operate</p>
+            {navigation.slice(0, 4).map(({ view, label, icon: Icon }) => (
+              <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
+                <Icon className="h-4 w-4" />{label}
+              </Button>
+            ))}
+            <Separator className="my-3 bg-white/10" />
+            <p className="nav-label">Administration</p>
+            {navigation.slice(4).map(({ view, label, icon: Icon }) => (
+              <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
+                <Icon className="h-4 w-4" />{label}
+              </Button>
+            ))}
           </nav>
+          <div className="sidebar-status">
+            <span id="health-badge" className={`health-pill ${health.ok ? "is-online" : "is-offline"}`} role="status" aria-live="polite">
+              <span className="health-pulse" /> {healthBadge}
+            </span>
+            <a className="docs-link" href="/docs" target="_blank" rel="noreferrer"><CircleHelp className="h-4 w-4" />API documentation <ExternalLink className="ml-auto h-3 w-3" /></a>
+          </div>
+        </div>
+      </aside>
+
+      <header className="app-topbar">
+        <div className="flex min-w-0 items-center gap-3">
+          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+            <SheetTrigger asChild><Button variant="outline" size="icon" className="lg:hidden" aria-label="Open navigation"><Menu className="h-4 w-4" /></Button></SheetTrigger>
+            <SheetContent side="left" className="w-[18rem] bg-[#101828] p-0 text-white">
+              <SheetHeader className="border-b border-white/10 p-5 text-left"><SheetTitle className="text-white">CCL AI Suite</SheetTitle><SheetDescription className="text-white/55">Controlled operations</SheetDescription></SheetHeader>
+              <nav className="mobile-links p-3">
+                {navigation.map(({ view, label, icon: Icon }) => (
+                  <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}><Icon className="h-4 w-4" />{label}</Button>
+                ))}
+              </nav>
+            </SheetContent>
+          </Sheet>
+          <div className="project-switcher">
+            <span className="hidden text-xs text-muted-foreground sm:inline">Project</span>
+            <Select value={selectedId || undefined} onValueChange={(value) => { const project = projects.find(item => item.id === value); if (project) activateProject(project) }}>
+              <SelectTrigger aria-label="Active project" className="w-[12rem] sm:w-[16rem]"><FolderKanban className="h-4 w-4" /><SelectValue placeholder="Select a project" /></SelectTrigger>
+              <SelectContent>{projects.map(project => <SelectItem key={project.id} value={project.id}>{project.title}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`service-state ${health.ok ? "is-online" : "is-offline"}`}><span />{health.ok ? "Ready" : "Unavailable"}</span>
+          <Separator orientation="vertical" className="hidden h-6 sm:block" />
+          <Button variant="ghost" size="icon" className="hidden sm:inline-flex" asChild><a href="/docs" target="_blank" rel="noreferrer" aria-label="Open API documentation"><CircleHelp className="h-4 w-4" /></a></Button>
+          <div className="operator-menu"><span>Operator</span><span className="operator-avatar">OP</span></div>
         </div>
       </header>
 
-      <main id="main-content" className="mx-auto max-w-[1280px] px-4 lg:px-8 py-8">
-        {/* Production Hero — Operate mode: task-first, no prototype language */}
-        <section className="relative overflow-hidden rounded-[1.5rem] bg-[#0e2a36] text-white mb-6">
-          <div className="absolute inset-0">
-            <div className="absolute -top-24 -right-24 w-[520px] h-[520px] rounded-full bg-[radial-gradient(circle_at_center,rgba(20,121,111,0.22),transparent_70%)]" />
-            <div className="absolute -bottom-32 -left-24 w-[640px] h-[640px] rounded-full bg-[radial-gradient(circle_at_center,rgba(232,121,93,0.14),transparent_70%)]" />
-            <div className="absolute inset-0 opacity-[0.04]" style={{backgroundImage: `linear-gradient(rgba(255,255,255,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.4) 1px, transparent 1px)`, backgroundSize: '32px 32px'}} />
-          </div>
-          <div className="relative grid lg:grid-cols-[1.15fr_0.85fr] gap-6 p-6 lg:p-8">
-            <div>
-              <div className="inline-flex items-center gap-2 text-[0.68rem] font-extrabold tracking-[0.14em] uppercase text-white/60 mb-3">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.2)]" /> Secure operations
-              </div>
-              <h1 id="page-title" className="text-[clamp(2.2rem,4.5vw,2.9rem)] font-black tracking-[-0.03em] leading-[0.95] mb-3">
-                Control your<br/>operations, end-to-end.
-              </h1>
-              <p className="text-white/70 max-w-[36rem] leading-relaxed">
-                Create an owner, open a project, and run file, knowledge and recovery workflows — all audited, reversible, and scoped to your workspace.
-              </p>
-              <div className="flex flex-wrap gap-2.5 mt-5">
-                <a className="inline-flex items-center gap-1.5 bg-white text-[#0e2a36] px-5 py-2.5 rounded-full text-sm font-extrabold shadow hover:bg-white/90" href="#setup">Start setup <ChevronRight className="w-4 h-4" /></a>
-                <a className="inline-flex items-center gap-1.5 bg-white/10 text-white border border-white/20 px-5 py-2 rounded-full text-sm font-bold hover:bg-white/15 backdrop-blur" href="#projects">View projects</a>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 lg:grid-cols-3 gap-3 content-start">
-              {[
-                { k: "Projects", v: String(projects.length), sub: `${projects.filter(p=>p.status==="active").length} active`, icon: FolderKanban },
-                { k: "Files", v: String(files.length), sub: "indexed", icon: Files },
-                { k: "Sources", v: String(knowledgeSources.length), sub: `${knowledgeSources.filter(s=>s.approval_status==="approved").length} approved`, icon: Library },
-              ].map(s=>(
-                <div key={s.k} className="rounded-2xl bg-white/[0.06] border border-white/10 p-3 backdrop-blur">
-                  <div className="flex items-center gap-2 text-white/60 mb-2"><s.icon className="w-3.5 h-3.5" /><span className="text-[0.68rem] font-extrabold tracking-widest uppercase">{s.k}</span></div>
-                  <div className="text-[1.6rem] font-black leading-none text-white">{s.v}</div>
-                  <div className="text-xs text-white/60 mt-1">{s.sub}</div>
-                </div>
-              ))}
-              <div className="col-span-3 rounded-2xl bg-white text-[#0e2a36] p-3 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <span className="w-8 h-8 rounded-xl bg-emerald-500 text-white grid place-items-center"><ShieldCheck className="w-4 h-4" /></span>
-                  <div><div className="text-xs font-extrabold">Audited & recoverable</div><div className="text-[0.70rem] text-muted-foreground">Backups verified · journals reversible</div></div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground" />
-              </div>
-            </div>
-          </div>
-        </section>
+      <main id="main-content" className="app-main" data-view={activeView}>
+        <header className={activeView === "operations" ? "sr-only" : "workspace-heading"}>
+          <div><h1 id="page-title">{viewCopy[activeView].title}</h1><p>{viewCopy[activeView].description}</p></div>
+          {activeView === "setup" && <Button id="workspace-projects-refresh" variant="outline" size="sm" onClick={() => refreshProjects()}><RefreshCw className="h-3.5 w-3.5" />Refresh projects</Button>}
+        </header>
 
         {/* Flash */}
-        <div id="flash" className={`rounded-xl border px-3 py-2.5 text-sm mb-4 shadow-sm ${showFlash ? "block" : "hidden"} ${flash.kind==="error" ? "bg-red-50 border-red-200 text-red-700" : "bg-emerald-50 border-emerald-200 text-emerald-800"}`} role={flash.kind==="error" ? "alert" : "status"} aria-live="polite" hidden={!showFlash}>{flash.msg}</div>
-
-        <nav className="flex flex-wrap items-center gap-1 bg-card border border-border/60 rounded-xl p-1.5 mb-4 shadow-sm" aria-label="Dashboard sections">
-          <span className="text-[0.70rem] font-extrabold text-muted-foreground px-2">Jump to</span>
-          <a className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-accent" href="#setup">Setup</a>
-          <a className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-accent" href="#projects">Projects</a>
-          <a className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-accent" href="#file-operations">Operations</a>
-          <a className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-accent" href="#files">Files</a>
-          <a className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-accent" href="#knowledge-base">Knowledge</a>
-          <a className="text-xs font-bold px-2.5 py-1.5 rounded-lg hover:bg-accent" href="#recovery">Recovery</a>
-        </nav>
+        <div id="flash" className={`rounded-lg border px-3 py-2.5 text-sm mb-4 ${showFlash ? "block" : "hidden"} ${flash.kind==="error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`} role={flash.kind==="error" ? "alert" : "status"} aria-live="polite" hidden={!showFlash}>{flash.msg}</div>
 
         {/* Workflow steps — production */}
-        <Card className="mb-4 card-elevated card-accent">
+        <Card className={`${activeView === "setup" ? "block" : "hidden"} workflow-panel major-panel mb-5 card-elevated`}>
           <CardHeader className="pb-2 flex flex-row items-end justify-between">
-            <div><p className="text-[0.68rem] font-extrabold tracking-widest uppercase text-teal-700">A clear path</p><CardTitle className="text-[1.1rem]">Complete the steps in order</CardTitle></div>
+            <div><CardTitle className="text-[1.1rem]">Build a ready workspace</CardTitle></div>
             <p className="text-xs text-muted-foreground hidden md:block">The active project is shared across the cards below.</p>
           </CardHeader>
           <CardContent>
@@ -507,8 +541,8 @@ export default function App() {
                 { n: 3, t: "Prepare storage", d: "Generate its controlled folder layout.", href: "#folder-setup" },
                 { n: 4, t: "Run operations", d: "Scan, convert, organise, or recover.", href: "#file-operations" },
               ].map(s=>(
-                <li key={s.n}><a href={s.href} className="flex gap-2.5 border rounded-xl p-3 hover:bg-accent transition-colors">
-                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground grid place-items-center text-xs font-extrabold">{s.n}</span>
+                <li key={s.n}><a href={s.href} className="workflow-step">
+                  <span className="workflow-marker">{s.n}</span>
                   <span><strong className="block text-xs">{s.t}</strong><small className="text-[0.70rem] text-muted-foreground">{s.d}</small></span>
                 </a></li>
               ))}
@@ -517,34 +551,40 @@ export default function App() {
         </Card>
 
         {/* Active project context - preserve ids */}
-        <div id="workspace-context" className={`flex flex-col md:flex-row items-start md:items-center gap-3 border rounded-2xl p-3.5 mb-6 shadow-sm ${selectedId ? "bg-[#e6f2ee] border-teal-300 shadow" : "bg-card card-elevated"}`}>
-          <div className="w-11 h-11 rounded-xl bg-[#e6f2ee] grid place-items-center text-teal-800">⌂</div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-teal-700">Active project</p>
-            <h2 id="active-project-title" className="text-[1rem] font-bold truncate">{selectedProjectName}</h2>
-            <p id="active-project-detail" className="text-xs text-muted-foreground truncate">Folder: {selectedProject?.storage_slug || "—"} · Owner: {selectedProject?.owner_id || "not assigned"}</p>
+        <div id="workspace-context" className="workspace-signal">
+          <div className="project-ledger-title">
+            <div className="min-w-0"><span>Project</span><h2 id="active-project-title">{selectedProjectName}</h2></div>
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <span id="active-project-status" className={`text-[0.68rem] font-extrabold px-2.5 py-1 rounded-full ${selectedId ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground"}`}>{selectedId ? "Ready to operate" : "Waiting for selection"}</span>
-            <span className="text-[0.60rem] font-extrabold tracking-widest uppercase text-muted-foreground">Project ID</span>
-            <code id="active-project-id" className="text-[0.68rem] text-muted-foreground max-w-[14rem] truncate bg-muted px-1.5 py-0.5 rounded">{selectedId || "—"}</code>
+          <details className="mobile-ledger-details">
+            <summary>Project details</summary>
+            <dl>
+              <div><dt>Project ID</dt><dd title={selectedId}>{compactId(selectedId)}</dd></div>
+              <div><dt>Owner</dt><dd>{selectedProject?.owner_id ? "Operator" : "not assigned"}</dd></div>
+              <div><dt>Storage</dt><dd>{selectedProject?.storage_slug || "—"}</dd></div>
+            </dl>
+          </details>
+          <div className="ledger-field"><span>Project ID</span><code id="active-project-id" title={selectedId}>{compactId(selectedId)}</code></div>
+          <div className="ledger-field"><span>Owner</span><code title={selectedProject?.owner_id}>{selectedProject?.owner_id ? "Operator" : "not assigned"}</code></div>
+          <div className="ledger-field"><span>Storage folder</span><code id="active-project-detail">{selectedProject?.storage_slug || "—"}</code></div>
+          <div className="ledger-status">
+            <span id="active-project-status" className={selectedId ? "ready" : "waiting"}><span />{selectedId ? "Ready to operate" : "Select project"}</span>
+            {!selectedId && <Button variant="outline" size="sm" onClick={() => openView("setup")}>Open setup</Button>}
           </div>
-          <a className="inline-flex items-center justify-center bg-secondary text-secondary-foreground px-3 py-2 rounded-xl text-xs font-bold" href="#projects">Choose project</a>
         </div>
 
         {/* Setup grid */}
-        <section id="setup" className="mb-6">
+        <section id="setup" className={activeView === "setup" ? "mb-6" : "hidden"}>
           <div className="flex items-end justify-between mb-3">
-            <div><p className="text-[0.68rem] font-extrabold tracking-widest uppercase text-teal-700">Workspace controls</p><h2 className="text-xl font-bold tracking-tight">Set up your workspace</h2></div>
+            <div><h2 className="text-xl font-bold tracking-tight">Set up your workspace</h2></div>
             <p className="hidden md:block text-xs text-muted-foreground">Start here when the API is online or when you need to prepare a new project.</p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="setup-deck">
             {/* Health - preserve ids */}
-            <Card id="service-health" className="card-elevated card-accent border-teal-100/60">
+            <Card id="service-health" className="setup-panel">
               <CardHeader className="pb-2 flex flex-row items-start justify-between">
-                <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">01 · Service</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><HeartPulse className="w-4 h-4 text-teal-600" />System health</CardTitle></div>
-                <span className="w-8 h-8 rounded-lg bg-[#e6f2ee] grid place-items-center">✦</span>
+                <div><p className="panel-label">Service</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><HeartPulse className="w-4 h-4 text-primary" />System health</CardTitle></div>
+                <span className="panel-icon"><Activity className="h-4 w-4" /></span>
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-xs text-muted-foreground">Confirm that the API is reachable before starting an operation.</p>
@@ -558,10 +598,10 @@ export default function App() {
             </Card>
 
             {/* Owner - preserve #user-form, #owner-id, #user-result */}
-            <Card id="owner-setup" className="card-elevated">
+            <Card id="owner-setup" className="setup-panel">
               <CardHeader className="pb-2 flex flex-row items-start justify-between">
-                <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">02 · Identity</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><Users className="w-4 h-4" />Development owner</CardTitle></div>
-                <span className="w-8 h-8 rounded-lg bg-[#e6f2ee] grid place-items-center">◎</span>
+                <div><p className="panel-label">Identity</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><Users className="w-4 h-4 text-primary" />Development owner</CardTitle></div>
+                <span className="panel-icon"><Users className="h-4 w-4" /></span>
               </CardHeader>
               <CardContent className="space-y-3">
                 <p id="owner-form-help" className="text-xs text-muted-foreground">Create the local owner whose opaque ID will be attached to new projects.</p>
@@ -586,15 +626,15 @@ export default function App() {
                   </div>
                   <Button type="submit">Create development owner</Button>
                 </form>
-                <div id="user-result" className={`rounded-xl border p-2.5 text-xs whitespace-pre-wrap ${ownerResult ? "bg-emerald-50 border-emerald-200 text-emerald-800 block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!ownerResult}>{ownerResult}</div>
+                <div id="user-result" className={`text-xs whitespace-pre-wrap ${ownerResult ? "quiet-result block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!ownerResult}>{ownerResult}</div>
               </CardContent>
             </Card>
 
             {/* Project - preserve #project-form, #owner-id */}
-            <Card id="project-setup" className="card-elevated">
+            <Card id="project-setup" className="setup-panel">
               <CardHeader className="pb-2 flex flex-row items-start justify-between">
-                <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">03 · Workspace</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><FolderKanban className="w-4 h-4" />Register a project</CardTitle></div>
-                <span className="w-8 h-8 rounded-lg bg-[#e6f2ee] grid place-items-center">＋</span>
+                <div><p className="panel-label">Workspace</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><FolderKanban className="w-4 h-4 text-primary" />Register a project</CardTitle></div>
+                <span className="panel-icon"><FolderPlus className="h-4 w-4" /></span>
               </CardHeader>
               <CardContent className="space-y-3">
                 <p id="project-form-help" className="text-xs text-muted-foreground">The title becomes one immutable, lowercase storage folder name.</p>
@@ -608,10 +648,10 @@ export default function App() {
             </Card>
 
             {/* Folder - preserve #folder-form, #project-folder-name, #folder-result */}
-            <Card id="folder-setup" className="card-elevated">
+            <Card id="folder-setup" className="setup-panel">
               <CardHeader className="pb-2 flex flex-row items-start justify-between">
-                <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">04 · Filesystem</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><FolderKanban className="w-4 h-4" />Generate project folders</CardTitle></div>
-                <span className="w-8 h-8 rounded-lg bg-[#e6f2ee] grid place-items-center">▦</span>
+                <div><p className="panel-label">Filesystem</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><FolderKanban className="w-4 h-4 text-primary" />Generate project folders</CardTitle></div>
+                <span className="panel-icon"><FolderCog className="h-4 w-4" /></span>
               </CardHeader>
               <CardContent className="space-y-3">
                 <p id="folder-form-help" className="text-xs text-muted-foreground">Select a project first, then create its safe incoming, working, output, and archive layout.</p>
@@ -619,30 +659,30 @@ export default function App() {
                   <div className="grid gap-1.5"><Label htmlFor="project-folder-name" className="text-xs">Project folder name</Label><Input id="project-folder-name" name="project_name" placeholder="Select a project below" required maxLength={100} defaultValue={selectedProject?.storage_slug || ""} /></div>
                   <Button type="submit">Generate folder layout</Button>
                 </form>
-                <div id="folder-result" className={`rounded-xl border p-2.5 text-xs whitespace-pre-wrap ${folderResult ? "bg-emerald-50 border-emerald-200 block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!folderResult}>{folderResult}</div>
+                <div id="folder-result" className={`text-xs whitespace-pre-wrap ${folderResult ? "quiet-result block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!folderResult}>{folderResult}</div>
               </CardContent>
             </Card>
 
             {/* Inventory - preserve #inventory-form, #inventory-project-id, #inventory-result */}
-            <Card id="inventory" className="card-elevated">
+            <Card id="setup-inventory" className="setup-panel">
               <CardHeader className="pb-2 flex flex-row items-start justify-between">
-                <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">05 · Inventory</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><Files className="w-4 h-4" />Scan project files</CardTitle></div>
-                <span className="w-8 h-8 rounded-lg bg-[#e6f2ee] grid place-items-center">≋</span>
+                <div><p className="panel-label">Inventory</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><Files className="w-4 h-4 text-primary" />Scan project files</CardTitle></div>
+                <span className="panel-icon"><ScanLine className="h-4 w-4" /></span>
               </CardHeader>
               <CardContent className="space-y-3">
-                <p id="inventory-form-help" className="text-xs text-muted-foreground">After storage exists, create JSON and CSV manifests with MIME checks and SHA-256 hashes.</p>
-                <form id="inventory-form" onSubmit={handleInventory} className="grid gap-3" aria-describedby="inventory-form-help">
-                  <div className="grid gap-1.5"><Label htmlFor="inventory-project-id" className="text-xs">Project ID</Label><Input id="inventory-project-id" name="project_id" placeholder="Select a project below" required defaultValue={selectedId} /></div>
+                <p id="setup-inventory-form-help" className="text-xs text-muted-foreground">After storage exists, create JSON and CSV manifests with MIME checks and SHA-256 hashes.</p>
+                <form id="setup-inventory-form" onSubmit={handleInventory} className="grid gap-3" aria-describedby="setup-inventory-form-help">
+                  <div className="grid gap-1.5"><Label htmlFor="setup-inventory-project-id" className="text-xs">Project ID</Label><Input id="setup-inventory-project-id" name="project_id" placeholder="Select a project below" required defaultValue={selectedId} /></div>
                   <Button variant="secondary" type="submit">Scan project files</Button>
                 </form>
-                <div id="inventory-result" className={`rounded-xl border p-2.5 text-xs whitespace-pre-wrap ${inventoryResult ? "bg-emerald-50 border-emerald-200 block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!inventoryResult}>{inventoryResult}</div>
+                <div id="setup-inventory-result" className={`text-xs whitespace-pre-wrap ${inventoryResult ? "quiet-result block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!inventoryResult}>{inventoryResult}</div>
               </CardContent>
             </Card>
 
-            <Card className="card-elevated border-amber-200/50">
+            <Card className="setup-panel">
               <CardHeader className="pb-2">
-                <p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">Upload</p>
-                <CardTitle className="text-[1rem] flex items-center gap-1.5"><ShieldCheck className="w-4 h-4" />Secure upload</CardTitle>
+                <p className="panel-label">Upload</p>
+                <CardTitle className="text-[1rem] flex items-center gap-1.5"><HardDriveUpload className="w-4 h-4 text-primary" />Secure upload</CardTitle>
                 <CardDescription className="text-xs">Allowlisted upload with size, extension, MIME checks.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -656,9 +696,9 @@ export default function App() {
         </section>
 
         {/* Projects list - preserve #projects, #projects-list, #projects-refresh */}
-        <Card id="projects" className="mb-6 card-elevated">
+        <Card id="projects" className={`${activeView === "setup" ? "block" : "hidden"} major-panel mb-8 card-elevated`}>
           <CardHeader className="flex flex-row items-center justify-between">
-            <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">06 · Workspaces</p><CardTitle>Registered projects</CardTitle><CardDescription className="text-xs">Choose <strong>Use project</strong> to populate every operation form with the same project.</CardDescription></div>
+            <div><CardTitle>Registered projects</CardTitle><CardDescription className="text-xs">Choose <strong>Use project</strong> to populate every operation form with the same project.</CardDescription></div>
             <Button id="projects-refresh" variant="secondary" size="sm" onClick={()=>refreshProjects()}><RefreshCw className="w-3.5 h-3.5 mr-1" />Refresh list</Button>
           </CardHeader>
           <CardContent>
@@ -669,21 +709,11 @@ export default function App() {
                     <TableHeader><TableRow><TableHead>Project</TableHead><TableHead>Status</TableHead><TableHead>Description</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {projects.map(p=>(
-                        <TableRow key={p.id} className={p.id===selectedId ? "bg-emerald-50/60" : ""}>
+                        <TableRow key={p.id} className={p.id===selectedId ? "bg-primary/10" : ""}>
                           <TableCell><span className="font-extrabold block">{escapeForTest(p.title)}</span><span className="font-mono text-xs text-muted-foreground">{p.id}</span><div className="text-xs text-muted-foreground">/{p.storage_slug}</div></TableCell>
                           <TableCell><Badge variant="secondary" className={p.status==="active" ? "bg-emerald-100 text-emerald-700" : ""}>{p.status}</Badge></TableCell>
                           <TableCell className="max-w-[260px] truncate text-xs">{p.description || "—"}</TableCell>
-                          <TableCell><Button size="sm" variant={p.id===selectedId ? "default" : "secondary"} data-project-id={p.id} data-project-slug={p.storage_slug} data-project-title={p.title} data-project-owner={p.owner_id} aria-pressed={p.id===selectedId} className={`select-project ${p.id===selectedId ? "is-selected" : ""}`} onClick={()=>{
-                            setSelectedId(p.id); setSelectedProject(p); setAnswerResponse(null); setAnswerError("");
-                            const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
-                            setVal("#conversion-project-id", p.id);
-                            setVal("#inventory-project-id", p.id);
-                            setVal("#organizer-project-id", p.id);
-                            setVal("#backup-project-id", p.id);
-                            setVal("#project-folder-name", p.storage_slug);
-                            setVal("#knowledge-project-id", p.id);
-                            setVal("#knowledge-owner-id", p.owner_id || "");
-                          }}>Use project</Button></TableCell>
+                          <TableCell><Button size="sm" variant={p.id===selectedId ? "default" : "secondary"} data-project-id={p.id} data-project-slug={p.storage_slug} data-project-title={p.title} data-project-owner={p.owner_id} aria-pressed={p.id===selectedId} className={`select-project ${p.id===selectedId ? "is-selected" : ""}`} onClick={()=>activateProject(p)}>Use project</Button></TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -695,58 +725,117 @@ export default function App() {
         </Card>
 
         {/* File operations */}
-        <section id="file-operations" className="mb-6">
-          <div className="flex items-end justify-between mb-3">
-            <div><p className="text-[0.68rem] font-extrabold tracking-widest uppercase text-teal-700">Operate with guardrails</p><h2 className="text-xl font-bold">File operations</h2></div>
-            <p className="hidden md:block text-xs text-muted-foreground">Every action is scoped to the active project shown above.</p>
-          </div>
-          <div className="grid lg:grid-cols-2 gap-4">
-            <Card className="card-elevated">
-              <CardHeader className="pb-2 flex flex-row items-start justify-between">
-                <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">07 · Conversion</p><CardTitle className="flex items-center gap-1.5"><ArrowLeftRight className="w-4 h-4" />Controlled conversion</CardTitle></div>
-                <span className="w-8 h-8 rounded-lg bg-[#e6f2ee] grid place-items-center">↗</span>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-xs text-muted-foreground">Convert files inside a generated project folder. The source is preserved and existing destinations are never replaced.</p>
-                <div className="flex flex-wrap gap-1"><Badge variant="outline">CSV ↔ JSON</Badge><Badge variant="outline">MD ↔ TXT</Badge><Badge variant="outline">PNG ↔ JPG</Badge></div>
-                <form id="conversion-form" onSubmit={handleConversion} className="grid gap-3">
-                  <div className="grid gap-1.5"><Label htmlFor="conversion-project-id" className="text-xs">Project ID</Label><Input id="conversion-project-id" name="project_id" placeholder="Select a project below" required defaultValue={selectedId} /></div>
-                  <div className="grid gap-1.5"><Label htmlFor="conversion-source-path" className="text-xs">Source path</Label><Input id="conversion-source-path" name="source_path" defaultValue="incoming/records.csv" required /></div>
-                  <div className="grid gap-1.5"><Label htmlFor="conversion-destination-path" className="text-xs">Destination path</Label><Input id="conversion-destination-path" name="destination_path" defaultValue="output/records.json" required /></div>
-                  <Button type="submit" className="bg-[#e9765b] hover:bg-[#ce6048]">Run conversion</Button>
-                </form>
-                <div id="conversion-result" className={`rounded-xl border p-2.5 text-xs whitespace-pre-wrap ${conversionResult ? "bg-emerald-50 border-emerald-200 block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!conversionResult}>{conversionResult}</div>
-              </CardContent>
-            </Card>
+        <section id="file-operations" className={activeView === "operations" ? "operation-workspace" : "hidden"}>
+          <Tabs defaultValue="organize" className="operation-tabs">
+            <TabsList aria-label="Operation type">
+              <TabsTrigger value="upload"><HardDriveUpload className="h-4 w-4" />Upload</TabsTrigger>
+              <TabsTrigger value="organize"><FolderKanban className="h-4 w-4" />Organize</TabsTrigger>
+              <TabsTrigger value="convert"><ArrowLeftRight className="h-4 w-4" />Convert</TabsTrigger>
+              <TabsTrigger value="inventory"><ScanLine className="h-4 w-4" />Inventory</TabsTrigger>
+            </TabsList>
+            <p className="mobile-tab-hint">Swipe to see all operations →</p>
 
-            <Card className="card-elevated">
-              <CardHeader className="pb-2 flex flex-row items-start justify-between">
-                <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">08 · Organisation</p><CardTitle className="flex items-center gap-1.5"><FolderKanban className="w-4 h-4" />Preview and apply</CardTitle></div>
-                <span className="w-8 h-8 rounded-lg bg-[#e6f2ee] grid place-items-center">⇢</span>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-xs text-muted-foreground">Preview moves from <code className="bg-muted px-1 rounded">incoming/</code> to categorised <code className="bg-muted px-1 rounded">working/</code> folders. Applying creates a rollback journal and can quarantine conflicts.</p>
-                <div className="flex flex-wrap gap-1"><Badge variant="outline">Dry run first</Badge><Badge variant="outline">No overwrite</Badge><Badge variant="outline">Hash-checked rollback</Badge></div>
-                <div className="grid gap-2">
-                  <div className="grid gap-1.5"><Label htmlFor="organizer-project-id" className="text-xs">Project ID</Label><Input id="organizer-project-id" placeholder="Select a project below" required defaultValue={selectedId} /></div>
-                  <label className="flex items-center gap-2 text-xs font-bold"><input id="quarantine-conflicts" type="checkbox" className="accent-teal-600" />Quarantine conflicts when applying</label>
-                  <div className="flex gap-2">
-                    <Button id="organizer-preview" variant="secondary" className="flex-1" onClick={handleOrganizerPreview}>Preview plan</Button>
-                    <Button id="organizer-apply" className="flex-1 bg-[#e9765b] hover:bg-[#ce6048]" onClick={handleOrganizerApply}>Apply safe moves</Button>
+            <TabsContent value="upload" className="mt-0">
+              <div className="task-layout">
+                <div className="task-surface">
+                  <div className="task-header"><div><h2>Upload a file</h2><p>Add an allowlisted text file to the active project and index its metadata.</p></div><Badge variant="outline">Maximum {uploadPolicy ? `${Math.round(uploadPolicy.max_size_bytes/1024/1024)} MB` : "size loading"}</Badge></div>
+                  <div className="task-body grid gap-5">
+                    <div className="grid gap-2"><Label htmlFor="operation-upload-key">Storage key</Label><Input id="operation-upload-key" value={uploadStorageKey} onChange={event => setUploadStorageKey(event.target.value)} placeholder="incoming/example.txt" /></div>
+                    {uploadPolicy && <div className="flex flex-wrap gap-1.5">{Object.entries(uploadPolicy.allowed_extensions as any).map(([category, extensions]: any) => <Badge key={category} variant="secondary">{category}: {(extensions as string[]).join(", ")}</Badge>)}</div>}
+                    <Button onClick={handleUpload} className="w-fit"><HardDriveUpload className="h-4 w-4" />Upload text file</Button>
                   </div>
-                  <div className="grid gap-1.5"><Label htmlFor="journal-path" className="text-xs">Journal path for rollback</Label><Input id="journal-path" defaultValue="organization-journal.json" required /></div>
-                  <Button id="organizer-rollback" variant="ghost" size="sm" onClick={handleRollback}>Roll back journal</Button>
                 </div>
-                <div id="organizer-result" className={`rounded-xl border p-2.5 text-xs whitespace-pre-wrap ${organizerResult ? "bg-emerald-50 border-emerald-200 block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!organizerResult}>{organizerResult}</div>
-              </CardContent>
-            </Card>
-          </div>
+                <aside className="evidence-rail" aria-label="Upload safeguards"><div className="evidence-panel"><div className="evidence-title"><ShieldCheck className="h-4 w-4" />Upload policy</div><ul><li><CheckCircle2 />Extension and MIME type must agree</li><li><CheckCircle2 />Storage paths remain project-scoped</li><li><CheckCircle2 />Rejected attempts are audited</li></ul></div><div className="evidence-panel"><div className="evidence-title"><FolderKanban className="h-4 w-4" />Destination</div><p><code>{uploadStorageKey || "Choose a storage key"}</code></p></div></aside>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="organize" className="mt-0">
+              <div className="task-layout">
+                <div className="task-surface">
+                  <div className="task-header">
+                    <div><h2>Organize project files</h2><p>Preview every proposed move before applying it to the active project.</p></div>
+                    <Badge variant="outline">Dry run first</Badge>
+                  </div>
+                  <div className="task-body">
+                    <div className="form-section">
+                      <div className="form-section-heading"><h3>Project scope</h3><p>Only files inside this project can be moved.</p></div>
+                      <div className="scope-grid">
+                        <div className="grid gap-2"><Label htmlFor="organizer-project-id">Project ID</Label><Input id="organizer-project-id" placeholder="Select a project" required defaultValue={selectedId} readOnly /></div>
+                        <div><Label>Source location</Label><code>incoming/</code></div>
+                        <div><Label>Destination</Label><code>working/</code></div>
+                      </div>
+                    </div>
+                    <Separator />
+                    <div className="form-section">
+                      <div className="form-section-heading"><h3>Plan controls</h3><p>Conflicts remain untouched unless quarantine is enabled.</p></div>
+                      <div className="plan-control-grid">
+                        <div className="grid gap-2"><Label htmlFor="plan-mode">Plan mode</Label><select id="plan-mode" defaultValue="dry-run"><option value="dry-run">Dry run (preview only)</option></select></div>
+                        <div className="grid gap-2"><Label htmlFor="conflict-resolution">Conflict resolution</Label><select id="conflict-resolution" defaultValue="never-overwrite"><option value="never-overwrite">Never overwrite</option></select></div>
+                        <label className="checkbox-row"><input id="quarantine-conflicts" type="checkbox" /> <span><strong>Quarantine conflicts</strong><small>Move conflicts to a protected quarantine folder.</small></span></label>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button id="organizer-preview" onClick={handleOrganizerPreview}>Preview plan</Button>
+                        {organizerResult && <Button id="organizer-apply" variant="outline" onClick={handleOrganizerApply}>Apply safe moves</Button>}
+                        <span className="text-xs text-muted-foreground">Generates a proposed change set. No files move.</span>
+                      </div>
+                    </div>
+                    <Separator />
+                    <div className="preview-region">
+                      <div className="preview-region-heading"><div><h3>Proposed changes</h3><p>The dry-run plan will appear here before any file moves.</p></div><Badge variant="secondary">0 changes</Badge></div>
+                      <div className="preview-table-shell">
+                        <Table>
+                          <TableHeader><TableRow><TableHead>Action</TableHead><TableHead>Source</TableHead><TableHead>Destination</TableHead><TableHead>Type</TableHead><TableHead>Reason</TableHead></TableRow></TableHeader>
+                        </Table>
+                        <div className="preview-empty"><ScanLine className="h-5 w-5" /><strong>No preview yet</strong><span>{selectedId ? "Run Preview plan to inspect each proposed source and destination." : "Select a project, then preview the plan to inspect proposed changes."}</span></div>
+                      </div>
+                    </div>
+                    <div id="organizer-result" className={organizerResult ? "result-panel" : "hidden"} role="status" aria-live="polite" tabIndex={-1} hidden={!organizerResult}>{organizerResult}</div>
+                  </div>
+                </div>
+                <aside className="evidence-rail" aria-label="Operation evidence">
+                  <div className="evidence-panel"><div className="evidence-title"><ShieldCheck className="h-4 w-4" />Safety constraints</div><ul><li><CheckCircle2 />Source files are never overwritten</li><li><CheckCircle2 />Preview makes no file changes</li><li><CheckCircle2 />Applied moves write a rollback journal</li><li><CheckCircle2 />Conflicts remain protected</li></ul></div>
+                  <div className="evidence-panel"><div className="evidence-title"><FolderKanban className="h-4 w-4" />Project scope</div><dl><div><dt>Project</dt><dd>{selectedProjectName}</dd></div><div><dt>Source</dt><dd><code>{selectedProject?.storage_slug ? `${selectedProject.storage_slug}/incoming/` : "incoming/"}</code></dd></div><div><dt>Target</dt><dd><code>{selectedProject?.storage_slug ? `${selectedProject.storage_slug}/working/` : "working/"}</code></dd></div><div><dt>Indexed items</dt><dd>{files.length} files</dd></div></dl><Button variant="link" className="mt-2 h-auto p-0 text-xs" onClick={() => openView("files")}>View in Files <ExternalLink className="h-3 w-3" /></Button></div>
+                  <div className="evidence-panel"><div className="evidence-title"><RefreshCw className="h-4 w-4" />Rollback journal</div><div className="grid gap-2"><Label htmlFor="journal-path">Journal path</Label><Input id="journal-path" defaultValue="organization-journal.json" required /><Button id="organizer-rollback" variant="secondary" size="sm" onClick={handleRollback}>Roll back journal</Button></div></div>
+                  <div className="evidence-panel"><div className="evidence-title"><Activity className="h-4 w-4" />Latest result</div>{organizerResult ? <pre>{organizerResult}</pre> : <dl><div><dt>Status</dt><dd>Awaiting preview</dd></div><div><dt>Plan created</dt><dd>—</dd></div><div><dt>Changes</dt><dd>0 proposed</dd></div></dl>}</div>
+                </aside>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="convert" className="mt-0">
+              <div className="task-layout">
+                <div className="task-surface">
+                  <div className="task-header"><div><h2>Convert a file</h2><p>Create a new format inside the active project without replacing the source.</p></div><div className="flex gap-1"><Badge variant="outline">CSV ↔ JSON</Badge><Badge variant="outline">MD ↔ TXT</Badge><Badge variant="outline">PNG ↔ JPG</Badge></div></div>
+                  <form id="conversion-form" onSubmit={handleConversion} className="task-body grid gap-5">
+                    <div className="grid gap-2"><Label htmlFor="conversion-project-id">Project ID</Label><Input id="conversion-project-id" name="project_id" placeholder="Select a project" required defaultValue={selectedId} readOnly /></div>
+                    <div className="grid gap-2 md:grid-cols-2"><div className="grid gap-2"><Label htmlFor="conversion-source-path">Source path</Label><Input id="conversion-source-path" name="source_path" defaultValue="incoming/records.csv" required /></div><div className="grid gap-2"><Label htmlFor="conversion-destination-path">Destination path</Label><Input id="conversion-destination-path" name="destination_path" defaultValue="output/records.json" required /></div></div>
+                    <Button type="submit" className="w-fit">Run conversion</Button>
+                    <div id="conversion-result" className={conversionResult ? "result-panel" : "hidden"} role="status" aria-live="polite" tabIndex={-1} hidden={!conversionResult}>{conversionResult}</div>
+                  </form>
+                </div>
+                <aside className="evidence-rail" aria-label="Conversion safeguards"><div className="evidence-panel"><div className="evidence-title"><ShieldCheck className="h-4 w-4" />Conversion safeguards</div><ul><li><CheckCircle2 />Source remains unchanged</li><li><CheckCircle2 />Existing destinations are rejected</li><li><CheckCircle2 />Paths stay inside project storage</li></ul></div><div className="evidence-panel"><div className="evidence-title"><Activity className="h-4 w-4" />Latest result</div>{conversionResult ? <pre>{conversionResult}</pre> : <p>Run a conversion to see the generated artifact.</p>}</div></aside>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="inventory" className="mt-0">
+              <div className="task-layout">
+                <div className="task-surface">
+                  <div className="task-header"><div><h2>Scan project inventory</h2><p>Create JSON and CSV manifests with MIME checks and SHA-256 hashes.</p></div><Badge variant="outline">Read-only scan</Badge></div>
+                  <form id="inventory-form" onSubmit={handleInventory} className="task-body grid gap-5">
+                    <div className="grid gap-2"><Label htmlFor="inventory-project-id">Project ID</Label><Input id="inventory-project-id" name="project_id" placeholder="Select a project" required defaultValue={selectedId} readOnly /></div>
+                    <Button type="submit" className="w-fit"><ScanLine className="h-4 w-4" />Scan project files</Button>
+                    <div id="inventory-result" className={inventoryResult ? "result-panel" : "hidden"} role="status" aria-live="polite" tabIndex={-1} hidden={!inventoryResult}>{inventoryResult}</div>
+                  </form>
+                </div>
+                <aside className="evidence-rail" aria-label="Inventory outputs"><div className="evidence-panel"><div className="evidence-title"><ShieldCheck className="h-4 w-4" />Scan behavior</div><ul><li><CheckCircle2 />File contents are not modified</li><li><CheckCircle2 />Checksums identify duplicates</li><li><CheckCircle2 />History and versions remain immutable</li></ul></div><div className="evidence-panel"><div className="evidence-title"><Activity className="h-4 w-4" />Latest result</div>{inventoryResult ? <pre>{inventoryResult}</pre> : <p>Run an inventory scan to see manifest details.</p>}</div></aside>
+              </div>
+            </TabsContent>
+          </Tabs>
         </section>
 
         {/* Files - NEW */}
-        <Card id="files" className="mb-6 card-elevated border-teal-200/60">
+        <Card id="files" className={`${activeView === "files" ? "block" : "hidden"} workspace-card major-panel`}>
           <CardHeader className="flex flex-row items-center justify-between">
-            <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-teal-700">Asset Management</p><CardTitle className="flex items-center gap-1.5"><Database className="w-4 h-4" />File browser & versions</CardTitle><CardDescription className="text-xs">Search, history and version restore</CardDescription></div>
+            <div><CardTitle className="flex items-center gap-1.5"><Database className="w-4 h-4 text-primary" />File browser & versions</CardTitle><CardDescription className="text-xs">Search, history and version restore</CardDescription></div>
             <Badge className="bg-emerald-100 text-emerald-700">Active</Badge>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -763,7 +852,7 @@ export default function App() {
                     <TableBody>
                       {files.length===0 ? <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">No active files. Scan inventory or upload.</TableCell></TableRow> :
                         files.map(f=>(
-                          <TableRow key={f.id} className={selectedFile?.id===f.id ? "bg-teal-50" : ""}>
+                          <TableRow key={f.id} className={selectedFile?.id===f.id ? "bg-primary/10" : ""}>
                             <TableCell className="font-medium max-w-[160px] truncate">{f.name}</TableCell>
                             <TableCell className="font-mono text-xs max-w-[200px] truncate">{f.storage_key}</TableCell>
                             <TableCell className="text-xs">{f.media_type}</TableCell>
@@ -807,15 +896,15 @@ export default function App() {
         </Card>
 
         {/* Recovery */}
-        <Card id="recovery" className="mb-6 card-elevated">
+        <Card id="recovery" className={`${activeView === "recovery" ? "block" : "hidden"} workspace-card major-panel`}>
           <CardHeader className="flex flex-row items-start justify-between">
-            <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-muted-foreground">09 · Recovery</p><CardTitle className="flex items-center gap-1.5"><RefreshCw className="w-4 h-4" />Backup and restore</CardTitle><CardDescription className="text-xs">Create a checksummed project archive, re-verify every manifest entry, and restore a safe copy without replacing the original.</CardDescription></div>
-            <span className="w-8 h-8 rounded-lg bg-[#e6f2ee] grid place-items-center">⟳</span>
+            <div><p className="panel-label">Recovery</p><CardTitle className="flex items-center gap-1.5"><RefreshCw className="w-4 h-4 text-primary" />Backup and restore</CardTitle><CardDescription className="text-xs">Create a checksummed project archive, re-verify every manifest entry, and restore a safe copy without replacing the original.</CardDescription></div>
+            <span className="panel-icon"><ArchiveRestore className="h-4 w-4" /></span>
           </CardHeader>
           <CardContent className="grid md:grid-cols-[1.2fr_1fr] gap-6">
             <div className="space-y-2 text-xs text-muted-foreground">
               <div className="flex flex-wrap gap-1"><Badge variant="outline">SHA-256 manifest</Badge><Badge variant="outline">Originals preserved</Badge><Badge variant="outline">No-overwrite restore</Badge></div>
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 flex gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" /><p><strong>Safe by default.</strong> Restores use a new destination and never overwrite the source project.</p></div>
+              <div className="quiet-result flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5" /><p><strong>Safe by default.</strong> Restores use a new destination and never overwrite the source project.</p></div>
             </div>
             <div className="grid gap-3">
               <div className="grid gap-1.5"><Label htmlFor="backup-project-id" className="text-xs">Project ID</Label><Input id="backup-project-id" placeholder="Select a project below" required defaultValue={selectedId} /></div>
@@ -823,16 +912,16 @@ export default function App() {
               <div className="grid gap-1.5"><Label htmlFor="backup-id" className="text-xs">Backup ID</Label><Input id="backup-id" placeholder="Create or select a backup" required /></div>
               <Button id="backup-verify" variant="secondary" onClick={handleBackupVerify}>Verify backup</Button>
               <div className="grid gap-1.5"><Label htmlFor="backup-destination" className="text-xs">New restore destination</Label><Input id="backup-destination" defaultValue="restored/sample-project-check" required /></div>
-              <Button id="backup-restore" className="bg-[#e9765b] hover:bg-[#ce6048]" onClick={handleBackupRestore}>Restore safe copy</Button>
-              <div id="backup-result" className={`rounded-xl border p-2.5 text-xs whitespace-pre-wrap ${backupResult ? "bg-emerald-50 border-emerald-200 block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!backupResult}>{backupResult}</div>
+              <Button id="backup-restore" onClick={handleBackupRestore}>Restore safe copy</Button>
+              <div id="backup-result" className={`text-xs whitespace-pre-wrap ${backupResult ? "quiet-result block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!backupResult}>{backupResult}</div>
             </div>
           </CardContent>
         </Card>
 
         {/* Knowledge base - enhanced */}
-        <Card id="knowledge-base" className="mb-6 card-elevated">
+        <Card id="knowledge-base" className={`${activeView === "knowledge" ? "block" : "hidden"} workspace-card major-panel`}>
           <CardHeader className="flex flex-row items-center justify-between">
-            <div><p className="text-[0.65rem] font-extrabold tracking-widest uppercase text-teal-700">Knowledge Base</p><CardTitle className="flex items-center gap-1.5"><Library className="w-4 h-4" />Company Knowledge Base</CardTitle><CardDescription className="text-xs">Register metadata for SOPs, prompt banks, style guides, and project rules. New sources stay pending until a supervisor or administrator approves them.</CardDescription></div>
+            <div><CardTitle className="flex items-center gap-1.5"><Library className="w-4 h-4 text-primary" />Company Knowledge Base</CardTitle><CardDescription className="text-xs">Register metadata for SOPs, prompt banks, style guides, and project rules. New sources stay pending until a supervisor or administrator approves them.</CardDescription></div>
             <Button id="knowledge-files-refresh" variant="secondary" size="sm" onClick={()=>refreshKnowledgeFiles(selectedId)}><RefreshCw className="w-3.5 h-3.5 mr-1" />Refresh files</Button>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -851,29 +940,29 @@ export default function App() {
                     <div className="grid gap-1.5"><Label htmlFor="knowledge-owner-id" className="text-xs">Accountable owner ID</Label><Input id="knowledge-owner-id" name="owner_id" placeholder="Selected project owner" readOnly required defaultValue={selectedProject?.owner_id || ""} /></div>
                   </div>
                   <div className="grid gap-1.5"><Label htmlFor="knowledge-file-id" className="text-xs">Source file</Label>
-                    <select id="knowledge-file-id" name="file_id" required className="h-9 rounded-xl border bg-card px-3 text-sm">
-                      <option value="" disabled selected>Select an active project file</option>
+                    <select id="knowledge-file-id" name="file_id" required defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                      <option value="" disabled>Select an active project file</option>
                       {files.map(f=><option key={f.id} value={f.id}>{f.name} · {f.storage_key}</option>)}
                     </select>
                   </div>
                   <div className="grid gap-1.5"><Label htmlFor="knowledge-source-title" className="text-xs">Source title</Label><Input id="knowledge-source-title" name="title" placeholder="e.g. Customer support SOP" required maxLength={200} /></div>
                   <div className="grid md:grid-cols-2 gap-3">
                     <div className="grid gap-1.5"><Label htmlFor="knowledge-source-type" className="text-xs">Source type</Label>
-                      <select id="knowledge-source-type" name="source_type" required className="h-9 rounded-xl border bg-card px-3 text-sm">
+                      <select id="knowledge-source-type" name="source_type" required className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
                         <option value="sop">SOP</option><option value="prompt_bank">Prompt bank</option><option value="style_guide">Style guide</option><option value="project_rule">Project rule</option>
                       </select>
                     </div>
                     <div className="grid gap-1.5"><Label htmlFor="knowledge-sensitivity" className="text-xs">Sensitivity</Label>
-                      <select id="knowledge-sensitivity" name="sensitivity" required className="h-9 rounded-xl border bg-card px-3 text-sm">
+                      <select id="knowledge-sensitivity" name="sensitivity" required className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
                         <option value="internal">Internal</option><option value="public">Public</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option>
                       </select>
                     </div>
                   </div>
                   <Button id="knowledge-register" type="submit" disabled={!selectedId}>Register source for review</Button>
                 </form>
-                <div id="knowledge-result" className={`rounded-xl border p-2.5 text-xs whitespace-pre-wrap ${knowledgeResult ? "bg-emerald-50 border-emerald-200 block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!knowledgeResult}>{knowledgeResult}</div>
+                <div id="knowledge-result" className={`text-xs whitespace-pre-wrap ${knowledgeResult ? "quiet-result block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!knowledgeResult}>{knowledgeResult}</div>
                 <div id="knowledge-sources-list">
-                  {knowledgeSources.length===0 ? <p className="border border-dashed rounded-xl p-3 text-sm text-muted-foreground">Select a project to view its knowledge sources.</p> :
+                  {knowledgeSources.length===0 ? <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed p-4"><div><strong className="text-sm">No knowledge sources yet</strong><p className="mt-1 text-xs text-muted-foreground">{selectedId ? "Upload or choose an active project file, then register it for review." : "Select a project to view and register its knowledge sources."}</p></div>{selectedId && <Button type="button" variant="outline" size="sm" onClick={() => openView("operations")}>Open file operations</Button>}</div> :
                     <div className="overflow-x-auto border rounded-xl">
                       <Table className="knowledge-table">
                         <TableHeader><TableRow><TableHead>Source</TableHead><TableHead>Type</TableHead><TableHead>Sensitivity</TableHead><TableHead>Review</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
@@ -898,8 +987,8 @@ export default function App() {
               </TabsContent>
 
               <TabsContent value="ingest" className="space-y-3 mt-4">
-                <Alert className="bg-card border-teal-800/50"><FileText className="w-4 h-4" /><AlertDescription className="text-xs"><strong>Document Ingestion:</strong> Extracts approved text, chunks with heading/location, stores deterministic vectors. Endpoint <code className="bg-muted px-1 rounded">POST /knowledge-sources/{"{id}"}/ingest</code>. Only approved sources with active files.</AlertDescription></Alert>
-                {ingestResult && <div className="rounded-xl border bg-emerald-50 border-emerald-200 p-2.5 text-xs whitespace-pre-wrap">{ingestResult}</div>}
+                <Alert className="border-teal-200 bg-teal-50/60"><FileText className="w-4 h-4 text-primary" /><AlertDescription className="text-xs"><strong>Document Ingestion:</strong> Extracts approved text, chunks with heading/location, stores deterministic vectors. Endpoint <code className="bg-white px-1 rounded">POST /knowledge-sources/{"{id}"}/ingest</code>. Only approved sources with active files.</AlertDescription></Alert>
+                {ingestResult && <div className="quiet-result text-xs whitespace-pre-wrap">{ingestResult}</div>}
                 <div className="overflow-x-auto border rounded-xl">
                   <Table>
                     <TableHeader><TableRow><TableHead>Approved sources</TableHead><TableHead>File</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
@@ -914,7 +1003,7 @@ export default function App() {
               </TabsContent>
 
               <TabsContent value="search" className="space-y-3 mt-4">
-                <Alert className="bg-card border-teal-800/50"><Search className="w-4 h-4" /><AlertDescription className="text-xs"><strong>Semantic Search:</strong> 256-dim local embedding, cosine ranking, newest-ingestion dedup, project + approval + active-file filtering. Staff sees own project only; supervisor/admin global. <code className="bg-muted px-1 rounded">POST /knowledge-search</code></AlertDescription></Alert>
+                <Alert className="border-teal-200 bg-teal-50/60"><Search className="w-4 h-4 text-primary" /><AlertDescription className="text-xs"><strong>Semantic Search:</strong> 256-dim local embedding, cosine ranking, newest-ingestion dedup, project + approval + active-file filtering. Staff sees own project only; supervisor/admin global. <code className="bg-white px-1 rounded">POST /knowledge-search</code></AlertDescription></Alert>
                 <form onSubmit={handleSearch} className="flex gap-2">
                   <Input name="query" placeholder="Search approved, active source passages (e.g. 'backup recovery')" required className="flex-1" />
                   <Button type="submit"><Search className="w-4 h-4 mr-1" />Search</Button>
@@ -933,7 +1022,7 @@ export default function App() {
               </TabsContent>
 
               <TabsContent value="answer" className="space-y-3 mt-4">
-                <Alert className="bg-card border-[#e9765b]/50">
+                <Alert className="border-border bg-card">
                   <ShieldCheck className="w-4 h-4" />
                   <AlertDescription className="text-xs">
                     <strong>Grounded answers:</strong> the MVP quotes only approved, active source evidence visible in this project. If the evidence is not strong enough, it refuses instead of guessing.
@@ -945,32 +1034,32 @@ export default function App() {
                     <Input id="knowledge-answer-query" name="query" placeholder="Ask about an approved company rule" required maxLength={500} />
                     <p className="text-[0.68rem] text-muted-foreground">Answers are extractive and source-linked; they do not apply document text as system instructions.</p>
                   </div>
-                  <Button id="knowledge-answer-submit" type="submit" disabled={!selectedId || answerLoading} className="md:self-end bg-[#e9765b] hover:bg-[#ce6048]">
+                  <Button id="knowledge-answer-submit" type="submit" disabled={!selectedId || answerLoading} className="md:self-end">
                     <ShieldCheck className="w-4 h-4 mr-1" />{answerLoading ? "Checking evidence…" : "Ask from evidence"}
                   </Button>
                 </form>
-                {answerError && <div id="knowledge-answer-error" className="rounded-xl border border-red-400/40 bg-red-950/30 p-3 text-sm text-red-200" role="alert">{answerError}</div>}
+                {answerError && <div id="knowledge-answer-error" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">{answerError}</div>}
                 {!answerResponse && !answerError && <p className="border border-dashed rounded-xl p-4 text-sm text-muted-foreground text-center">Ask a question after ingesting an approved source.</p>}
                 {answerResponse && (
                   <div id="knowledge-answer-result" className="grid gap-3" aria-live="polite">
-                    <div className={`rounded-2xl border p-4 ${answerResponse.status === "answered" ? "border-teal-500/40 bg-teal-950/25" : "border-amber-500/40 bg-amber-950/25"}`}>
+                    <div className={`rounded-2xl border p-4 ${answerResponse.status === "answered" ? "border-teal-200 bg-teal-50" : "border-amber-200 bg-amber-50"}`}>
                       <div className="flex flex-wrap items-center gap-2 mb-3">
-                        <Badge className={answerResponse.status === "answered" ? "bg-teal-500 text-[#071b21]" : "bg-amber-400 text-[#241507]"}>{answerResponse.status}</Badge>
+                        <Badge className={answerResponse.status === "answered" ? "bg-teal-700 text-white" : "bg-amber-500 text-amber-950"}>{answerResponse.status}</Badge>
                         <span className="text-[0.68rem] text-muted-foreground">{answerResponse.answer_engine} · {answerResponse.retrieved_count} {answerResponse.status === "answered" ? "evidence" : "candidate"} passage{answerResponse.retrieved_count === 1 ? "" : "s"}</span>
                       </div>
                       <p className="text-sm leading-relaxed whitespace-pre-wrap">{answerResponse.answer}</p>
-                      {answerResponse.refusal_reason && <p className="mt-3 text-xs text-amber-200">Refusal: {answerResponse.refusal_reason.replaceAll("_", " ")}</p>}
+                      {answerResponse.refusal_reason && <p className="mt-3 text-xs text-amber-800">Refusal: {answerResponse.refusal_reason.replaceAll("_", " ")}</p>}
                     </div>
                     {answerResponse.citations.length > 0 && (
                       <div className="grid gap-2">
                         <div className="flex items-center justify-between">
-                          <p className="text-[0.68rem] font-extrabold tracking-widest uppercase text-teal-400">Evidence rail</p>
+                          <p className="text-[0.68rem] font-extrabold tracking-widest uppercase text-teal-700">Evidence rail</p>
                           <span className="text-[0.68rem] text-muted-foreground">{answerResponse.citation_count} citation{answerResponse.citation_count === 1 ? "" : "s"}</span>
                         </div>
                         {answerResponse.citations.map(citation=>(
-                          <Card key={citation.chunk_id} className="border-teal-500/30 bg-card/70">
+                          <Card key={citation.chunk_id} className="border-teal-200 bg-white">
                             <CardHeader className="pb-2">
-                              <CardTitle className="text-sm flex items-center gap-2"><Badge variant="outline" className="border-teal-400/50 text-teal-300">[{citation.citation_number}]</Badge>{citation.title}<Badge variant="outline" className="ml-auto text-[0.65rem]">score {citation.score.toFixed(3)}</Badge></CardTitle>
+                              <CardTitle className="text-sm flex items-center gap-2"><Badge variant="outline" className="border-teal-300 text-teal-800">[{citation.citation_number}]</Badge>{citation.title}<Badge variant="outline" className="ml-auto text-[0.65rem]">score {citation.score.toFixed(3)}</Badge></CardTitle>
                               <CardDescription className="text-xs">{citation.heading || "Source passage"} · {citation.location} · {citation.file_name} · lines {citation.line_start}-{citation.line_end}</CardDescription>
                             </CardHeader>
                             <CardContent><p className="text-sm whitespace-pre-wrap bg-muted/40 p-2.5 rounded-xl">{citation.excerpt}</p><p className="text-[0.68rem] text-muted-foreground mt-2 font-mono">{citation.file_storage_key}</p></CardContent>
@@ -992,17 +1081,17 @@ export default function App() {
           <DialogHeader><DialogTitle id="confirm-title">{confirm.title}</DialogTitle><DialogDescription id="confirm-message" className="text-sm">{confirm.msg}</DialogDescription></DialogHeader>
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="secondary" onClick={()=>{ confirm.resolve?.(false); setConfirm(c=>({...c, open:false})) }}>Cancel</Button>
-            <Button id="confirm-accept" className="bg-[#e9765b] hover:bg-[#ce6048]" onClick={()=>{ confirm.resolve?.(true); setConfirm(c=>({...c, open:false})) }}>{confirm.label}</Button>
+            <Button id="confirm-accept" variant="destructive" onClick={()=>{ confirm.resolve?.(true); setConfirm(c=>({...c, open:false})) }}>{confirm.label}</Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      <footer className="mx-auto max-w-[1280px] px-4 lg:px-8 py-8 flex flex-col md:flex-row justify-between gap-4 text-xs text-muted-foreground border-t mt-8">
+      <footer className="app-footer">
         <div className="flex items-center gap-3">
           <span className="w-8 h-8 rounded-lg bg-[#0e2a36] text-white grid place-items-center font-black">C</span>
           <div>
             <strong className="text-foreground">CCL AI Suite</strong> — Secure Operations Platform
-            <br/><span className="text-[0.70rem]">© 2026 Controcontrollos · Audited · Recoverable</span>
+            <br/><span className="text-[0.70rem]">Local operations · Audited · Recoverable</span>
           </div>
         </div>
         <div className="flex items-center gap-4">
