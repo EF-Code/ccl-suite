@@ -219,3 +219,84 @@ def test_dashboard_registers_a_pending_knowledge_source(dashboard_page: Page) ->
     expect(knowledge_result).to_contain_text("Status: pending")
     expect(page.locator(".knowledge-table tbody tr")).to_contain_text("Company rules")
     expect(page.locator(".knowledge-table tbody tr")).to_contain_text("pending")
+
+
+def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
+    """Exercise the grounded-answer UI with an approved, ingested source."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+
+    suffix = uuid4().hex[:10]
+    owner_ref = f"answer-browser-owner-{suffix}"
+    project_title = f"Answer Browser {suffix}"
+
+    user_form = page.locator("#user-form")
+    user_form.locator("input[name='external_ref']").fill(owner_ref)
+    user_form.get_by_role("button", name="Create development owner").click()
+    page.locator("#user-result").wait_for(state="visible")
+    owner_id = page.locator("#owner-id").input_value()
+
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_row.wait_for(state="visible")
+    project_row.get_by_role("button", name="Use project").click()
+    project_id = page.locator("#knowledge-project-id").input_value()
+
+    folder_form = page.locator("#folder-form")
+    folder_form.get_by_role("button", name="Generate folder layout").click()
+    page.locator("#folder-result").wait_for(state="visible")
+
+    supervisor_response = page.request.post(
+        f"{BASE_URL}/users",
+        data={"external_ref": f"answer-browser-supervisor-{suffix}", "role": "supervisor"},
+    )
+    assert supervisor_response.status == 201
+    supervisor_id = supervisor_response.json()["id"]
+    upload_response = page.request.put(
+        f"{BASE_URL}/projects/{project_id}/uploads/incoming/company-rules.md",
+        headers={"X-User-ID": owner_id, "Content-Type": "text/markdown"},
+        data="# Restore\n\nVerify file hashes before restoring a file. Keep the original intact.",
+    )
+    assert upload_response.status == 201
+    file_id = upload_response.json()["file_id"]
+
+    page.locator("#knowledge-files-refresh").click()
+    page.locator(f"#knowledge-file-id option[value='{file_id}']").wait_for(state="attached")
+    page.locator("#knowledge-file-id").select_option(file_id)
+    page.locator("#knowledge-source-form input[name='title']").fill("Restore SOP")
+    page.locator("#knowledge-source-form").get_by_role(
+        "button", name="Register source for review"
+    ).click()
+    page.locator("#knowledge-result").wait_for(state="visible")
+
+    source_response = page.request.get(
+        f"{BASE_URL}/projects/{project_id}/knowledge-sources",
+        headers={"X-User-ID": owner_id},
+    )
+    assert source_response.status == 200
+    source_id = source_response.json()[0]["id"]
+    approved = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/knowledge-sources/{source_id}/review",
+        headers={"X-User-ID": supervisor_id},
+        data={"decision": "approved"},
+    )
+    assert approved.status == 200
+    ingested = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/knowledge-sources/{source_id}/ingest",
+        headers={"X-User-ID": supervisor_id},
+    )
+    assert ingested.status == 201
+
+    page.get_by_role("tab", name="Answer").click()
+    page.locator("#knowledge-answer-query").fill(
+        "How do we verify a file before restoring it?"
+    )
+    page.locator("#knowledge-answer-submit").click()
+    answer_result = page.locator("#knowledge-answer-result")
+    answer_result.wait_for(state="visible")
+    expect(answer_result).to_contain_text("answered")
+    expect(answer_result).to_contain_text("Verify file hashes before restoring a file.")
+    expect(answer_result).to_contain_text("Evidence rail")
