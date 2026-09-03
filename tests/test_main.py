@@ -2365,3 +2365,168 @@ def test_semantic_search_request_is_bounded_and_validated() -> None:
         "detail": "Search query must contain at least one indexable term."
     }
     assert extra_field.status_code == 422
+
+
+def test_knowledge_answer_returns_citations_and_audit_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Grounded Answer Project")
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"answer-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+
+    _source, _file_record = _create_ingested_source(
+        project,
+        projects_root,
+        supervisor.json()["id"],
+        "restore.md",
+        "# Restore\n\nVerify file hashes before restoring a file. "
+        "Keep the original intact.\n\nEscalate failed verification.",
+        title="Restore SOP",
+        source_type="sop",
+        sensitivity="internal",
+    )
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-answer",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "How do we verify a file before restoring it?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "answered"
+    assert payload["answer_engine"] == "local-extractive-v1"
+    assert payload["refusal_reason"] is None
+    assert payload["citation_count"] == 1
+    assert payload["citations"][0]["citation_number"] == 1
+    assert payload["citations"][0]["title"] == "Restore SOP"
+    assert payload["citations"][0]["location"].startswith("incoming/restore.md#L")
+    assert payload["citations"][0]["excerpt"] == "Verify file hashes before restoring a file."
+    assert "[1] Verify file hashes before restoring a file." in payload["answer"]
+
+    events = request("GET", "/security-events").json()
+    assert any(
+        event["event_code"] == "knowledge_answer.answered"
+        and event["outcome"] == "success"
+        and event["resource_ref"] == project["id"]
+        and event["request_ref"] is None
+        for event in events
+    )
+
+
+def test_knowledge_answer_refuses_without_supporting_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Refusal Project")
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"refusal-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+    _create_ingested_source(
+        project,
+        projects_root,
+        supervisor.json()["id"],
+        "rules.md",
+        "# Restore\n\nVerify file hashes before restoring a file.",
+        title="Restore SOP",
+        source_type="sop",
+        sensitivity="internal",
+    )
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-answer",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "What is the office lunch menu?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "refused"
+    assert payload["refusal_reason"] == "insufficient_evidence"
+    assert payload["citation_count"] == 0
+    assert payload["citations"] == []
+    assert payload["retrieved_count"] == 0
+    events = request("GET", "/security-events").json()
+    assert any(
+        event["event_code"] == "knowledge_answer.refused"
+        and event["outcome"] == "failure"
+        and event["resource_ref"] == project["id"]
+        for event in events
+    )
+
+
+def test_knowledge_answer_preserves_project_access_and_request_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    other_user = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"answer-other-owner-{uuid4().hex}", "role": "member"},
+    )
+    assert other_user.status_code == 201
+    other_owner_id = other_user.json()["id"]
+    created_project = request(
+        "POST",
+        "/projects",
+        json={"title": "Protected Answer Project", "owner_id": other_owner_id},
+    )
+    assert created_project.status_code == 201
+    project = created_project.json()
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"answer-access-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+    _create_ingested_source(
+        project,
+        projects_root,
+        supervisor.json()["id"],
+        "access.md",
+        "# Access\n\nOnly the project owner can retrieve these rules.",
+        title="Access Rules",
+        source_type="project_rule",
+        sensitivity="internal",
+        owner_id=other_owner_id,
+    )
+
+    denied = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-answer",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"query": "project owner rules"},
+    )
+    too_many = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-answer",
+        headers={"X-User-ID": other_owner_id},
+        json={"query": "rules", "evidence_limit": 9},
+    )
+    extra_field = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-answer",
+        headers={"X-User-ID": other_owner_id},
+        json={"query": "rules", "unexpected": "value"},
+    )
+
+    assert denied.status_code == 404
+    assert denied.json() == {"detail": "Project was not found."}
+    assert too_many.status_code == 422
+    assert extra_field.status_code == 422
