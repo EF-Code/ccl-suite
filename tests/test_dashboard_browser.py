@@ -49,6 +49,14 @@ def confirm_protected_action(page: Page) -> None:
     page.locator("#confirm-accept").click()
 
 
+def open_workspace(page: Page, label: str) -> None:
+    """Open one desktop workspace from the persistent product navigation."""
+
+    page.locator(".app-sidebar").get_by_role(
+        "button", name=label, exact=True
+    ).click()
+
+
 @pytest.fixture
 def dashboard_page() -> Page:
     """Open one isolated browser page and close it after the workflow."""
@@ -87,6 +95,7 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     assert page.title() == "CCL AI Suite | Operations"
     expect(page.locator("#health-badge")).to_have_text("API online")
     expect(page.locator("#health-text")).to_have_text("Service is ready")
+    open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
     owner_ref = f"browser-owner-{suffix}"
@@ -110,10 +119,10 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
 
     project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
     project_row.wait_for(state="visible")
-    project_row.get_by_role("button", name="Use project").click()
-    project_id = page.locator("#inventory-project-id").input_value()
+    project_button = project_row.get_by_role("button", name="Use project")
+    project_id = project_button.get_attribute("data-project-id")
+    project_button.click()
     assert project_id
-    assert page.locator("#organizer-project-id").input_value() == project_id
     expect(page.locator("#active-project-title")).to_have_text(project_title)
     expect(page.locator("#active-project-status")).to_have_text("Ready to operate")
 
@@ -125,6 +134,9 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     folder_result.wait_for(state="visible")
     assert f"Created {expected_slug}" in folder_result.inner_text()
 
+    open_workspace(page, "Operations")
+    page.get_by_role("tab", name="Inventory").click()
+    assert page.locator("#inventory-project-id").input_value() == project_id
     inventory_form = page.locator("#inventory-form")
     inventory_form.get_by_role("button", name="Scan project files").click()
     inventory_result = page.locator("#inventory-result")
@@ -132,6 +144,7 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     expect(inventory_result).to_contain_text("Scanned 0 file(s)")
     expect(inventory_result).to_contain_text("JSON: manifest.json")
 
+    open_workspace(page, "Recovery")
     page.locator("#backup-create").click()
     backup_result = page.locator("#backup-result")
     backup_result.wait_for(state="visible")
@@ -149,6 +162,9 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     expect(backup_result).to_contain_text("Restored")
     expect(backup_result).to_contain_text(restore_destination)
 
+    open_workspace(page, "Operations")
+    page.get_by_role("tab", name="Organize").click()
+    assert page.locator("#organizer-project-id").input_value() == project_id
     page.locator("#organizer-preview").click()
     organizer_result = page.locator("#organizer-result")
     organizer_result.wait_for(state="visible")
@@ -169,6 +185,7 @@ def test_dashboard_registers_a_pending_knowledge_source(dashboard_page: Page) ->
 
     page = dashboard_page
     page.goto(BASE_URL, wait_until="networkidle")
+    open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
     owner_ref = f"knowledge-browser-owner-{suffix}"
@@ -204,6 +221,7 @@ def test_dashboard_registers_a_pending_knowledge_source(dashboard_page: Page) ->
     assert file_response.status == 201
     file_id = file_response.json()["id"]
 
+    open_workspace(page, "Knowledge")
     page.locator("#knowledge-files-refresh").click()
     page.locator(f"#knowledge-file-id option[value='{file_id}']").wait_for(state="attached")
     page.locator("#knowledge-file-id").select_option(file_id)
@@ -226,6 +244,7 @@ def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
 
     page = dashboard_page
     page.goto(BASE_URL, wait_until="networkidle")
+    open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
     owner_ref = f"answer-browser-owner-{suffix}"
@@ -263,6 +282,7 @@ def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
     assert upload_response.status == 201
     file_id = upload_response.json()["file_id"]
 
+    open_workspace(page, "Knowledge")
     page.locator("#knowledge-files-refresh").click()
     page.locator(f"#knowledge-file-id option[value='{file_id}']").wait_for(state="attached")
     page.locator("#knowledge-file-id").select_option(file_id)
