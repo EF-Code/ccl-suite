@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type SearchResult } from "@/lib/api"
 import {
   HeartPulse, Users, FolderKanban, Files, Search, RefreshCw, ShieldCheck,
   Database, FileText, ArrowLeftRight, Library,
@@ -40,8 +40,11 @@ export default function App() {
   const [backupResult, setBackupResult] = useState("")
   const [knowledgeResult, setKnowledgeResult] = useState("")
   const [ingestResult, setIngestResult] = useState("")
-  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [searchMeta, setSearchMeta] = useState("")
+  const [answerResponse, setAnswerResponse] = useState<KnowledgeAnswerResponse | null>(null)
+  const [answerError, setAnswerError] = useState("")
+  const [answerLoading, setAnswerLoading] = useState(false)
   const [files, setFiles] = useState<FileRecord[]>([])
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
   const [uploadPolicy, setUploadPolicy] = useState<any>(null)
@@ -146,7 +149,7 @@ export default function App() {
     const body = Object.fromEntries(fd.entries())
     try {
       const proj: any = await apiRequest("/projects", { method: "POST", body: JSON.stringify(body) })
-      setSelectedId(proj.id); setSelectedProject(proj)
+      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError("")
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
@@ -329,6 +332,33 @@ export default function App() {
       setSearchMeta(`${data.result_count} passages · ${data.embedding_model} ${data.embedding_dimensions}d`)
       showMessage(`Found ${data.result_count} passages.`)
     } catch (err: any) { setSearchMeta((err as Error).message); showMessage((err as Error).message, "error") }
+  }
+  async function handleAnswer(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const form = e.currentTarget as HTMLFormElement
+    const query = String(new FormData(form).get("query") || "").trim()
+    if (!selectedId) return showMessage("Select a project before asking a question.", "error")
+    setAnswerLoading(true)
+    setAnswerError("")
+    setAnswerResponse(null)
+    try {
+      const data = await apiRequest<KnowledgeAnswerResponse>(`/projects/${selectedId}/knowledge-answer`, {
+        method: "POST",
+        body: JSON.stringify({ query, evidence_limit: 5 }),
+      })
+      setAnswerResponse(data)
+      if (data.status === "answered") {
+        showMessage(`Grounded answer ready with ${data.citation_count} citation${data.citation_count === 1 ? "" : "s"}.`)
+      } else {
+        showMessage("No approved evidence supported that question.", "error")
+      }
+    } catch (err: any) {
+      const message = (err as Error).message
+      setAnswerError(message)
+      showMessage(message, "error")
+    } finally {
+      setAnswerLoading(false)
+    }
   }
 
   // File browser
@@ -644,7 +674,7 @@ export default function App() {
                           <TableCell><Badge variant="secondary" className={p.status==="active" ? "bg-emerald-100 text-emerald-700" : ""}>{p.status}</Badge></TableCell>
                           <TableCell className="max-w-[260px] truncate text-xs">{p.description || "—"}</TableCell>
                           <TableCell><Button size="sm" variant={p.id===selectedId ? "default" : "secondary"} data-project-id={p.id} data-project-slug={p.storage_slug} data-project-title={p.title} data-project-owner={p.owner_id} aria-pressed={p.id===selectedId} className={`select-project ${p.id===selectedId ? "is-selected" : ""}`} onClick={()=>{
-                            setSelectedId(p.id); setSelectedProject(p);
+                            setSelectedId(p.id); setSelectedProject(p); setAnswerResponse(null); setAnswerError("");
                             const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
                             setVal("#conversion-project-id", p.id);
                             setVal("#inventory-project-id", p.id);
@@ -807,10 +837,11 @@ export default function App() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Tabs defaultValue="register" className="w-full">
-              <TabsList className="grid grid-cols-3 w-full">
+              <TabsList className="grid grid-cols-4 w-full">
                 <TabsTrigger value="register">Register</TabsTrigger>
-                <TabsTrigger value="ingest">Ingest · Tue</TabsTrigger>
-                <TabsTrigger value="search">Search · Wed</TabsTrigger>
+                <TabsTrigger value="ingest">Ingest</TabsTrigger>
+                <TabsTrigger value="search">Search</TabsTrigger>
+                <TabsTrigger value="answer">Answer</TabsTrigger>
               </TabsList>
 
               <TabsContent value="register" className="space-y-3 mt-4">
@@ -899,6 +930,56 @@ export default function App() {
                     ))}
                   </div>
                 }
+              </TabsContent>
+
+              <TabsContent value="answer" className="space-y-3 mt-4">
+                <Alert className="bg-card border-[#e9765b]/50">
+                  <ShieldCheck className="w-4 h-4" />
+                  <AlertDescription className="text-xs">
+                    <strong>Grounded answers:</strong> the MVP quotes only approved, active source evidence visible in this project. If the evidence is not strong enough, it refuses instead of guessing.
+                  </AlertDescription>
+                </Alert>
+                <form id="knowledge-answer-form" onSubmit={handleAnswer} className="grid md:grid-cols-[1fr_auto] gap-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="knowledge-answer-query" className="text-xs">Question</Label>
+                    <Input id="knowledge-answer-query" name="query" placeholder="Ask about an approved company rule" required maxLength={500} />
+                    <p className="text-[0.68rem] text-muted-foreground">Answers are extractive and source-linked; they do not apply document text as system instructions.</p>
+                  </div>
+                  <Button id="knowledge-answer-submit" type="submit" disabled={!selectedId || answerLoading} className="md:self-end bg-[#e9765b] hover:bg-[#ce6048]">
+                    <ShieldCheck className="w-4 h-4 mr-1" />{answerLoading ? "Checking evidence…" : "Ask from evidence"}
+                  </Button>
+                </form>
+                {answerError && <div id="knowledge-answer-error" className="rounded-xl border border-red-400/40 bg-red-950/30 p-3 text-sm text-red-200" role="alert">{answerError}</div>}
+                {!answerResponse && !answerError && <p className="border border-dashed rounded-xl p-4 text-sm text-muted-foreground text-center">Ask a question after ingesting an approved source.</p>}
+                {answerResponse && (
+                  <div id="knowledge-answer-result" className="grid gap-3" aria-live="polite">
+                    <div className={`rounded-2xl border p-4 ${answerResponse.status === "answered" ? "border-teal-500/40 bg-teal-950/25" : "border-amber-500/40 bg-amber-950/25"}`}>
+                      <div className="flex flex-wrap items-center gap-2 mb-3">
+                        <Badge className={answerResponse.status === "answered" ? "bg-teal-500 text-[#071b21]" : "bg-amber-400 text-[#241507]"}>{answerResponse.status}</Badge>
+                        <span className="text-[0.68rem] text-muted-foreground">{answerResponse.answer_engine} · {answerResponse.retrieved_count} {answerResponse.status === "answered" ? "evidence" : "candidate"} passage{answerResponse.retrieved_count === 1 ? "" : "s"}</span>
+                      </div>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{answerResponse.answer}</p>
+                      {answerResponse.refusal_reason && <p className="mt-3 text-xs text-amber-200">Refusal: {answerResponse.refusal_reason.replaceAll("_", " ")}</p>}
+                    </div>
+                    {answerResponse.citations.length > 0 && (
+                      <div className="grid gap-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[0.68rem] font-extrabold tracking-widest uppercase text-teal-400">Evidence rail</p>
+                          <span className="text-[0.68rem] text-muted-foreground">{answerResponse.citation_count} citation{answerResponse.citation_count === 1 ? "" : "s"}</span>
+                        </div>
+                        {answerResponse.citations.map(citation=>(
+                          <Card key={citation.chunk_id} className="border-teal-500/30 bg-card/70">
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm flex items-center gap-2"><Badge variant="outline" className="border-teal-400/50 text-teal-300">[{citation.citation_number}]</Badge>{citation.title}<Badge variant="outline" className="ml-auto text-[0.65rem]">score {citation.score.toFixed(3)}</Badge></CardTitle>
+                              <CardDescription className="text-xs">{citation.heading || "Source passage"} · {citation.location} · {citation.file_name} · lines {citation.line_start}-{citation.line_end}</CardDescription>
+                            </CardHeader>
+                            <CardContent><p className="text-sm whitespace-pre-wrap bg-muted/40 p-2.5 rounded-xl">{citation.excerpt}</p><p className="text-[0.68rem] text-muted-foreground mt-2 font-mono">{citation.file_storage_key}</p></CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </TabsContent>
             </Tabs>
           </CardContent>
