@@ -276,6 +276,51 @@ class SemanticSearchResponse(BaseModel):
     results: list[SemanticSearchResult]
 
 
+class KnowledgeAnswerRequest(BaseModel):
+    """Bounded input for an evidence-grounded knowledge answer."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    query: str = Field(min_length=1, max_length=500)
+    source_type: Literal["sop", "prompt_bank", "style_guide", "project_rule"] | None = None
+    sensitivity: Literal["public", "internal", "confidential", "restricted"] | None = None
+    source_id: UUID | None = None
+    evidence_limit: int = Field(default=5, ge=1, le=8)
+
+
+class KnowledgeCitation(BaseModel):
+    """A bounded source citation attached to a grounded answer."""
+
+    citation_number: int = Field(gt=0, le=3)
+    chunk_id: UUID
+    source_id: UUID
+    score: float = Field(ge=0.0, le=1.0)
+    title: str
+    heading: str | None
+    location: str
+    line_start: int = Field(gt=0)
+    line_end: int = Field(ge=1)
+    file_name: str
+    file_storage_key: str
+    excerpt: str = Field(min_length=1, max_length=800)
+
+
+class KnowledgeAnswerResponse(BaseModel):
+    """A structured answer or refusal grounded in approved source excerpts."""
+
+    project_id: UUID
+    query: str
+    status: Literal["answered", "refused"]
+    answer: str = Field(min_length=1, max_length=2_500)
+    refusal_reason: Literal["unsupported_query", "insufficient_evidence"] | None
+    answer_engine: str
+    embedding_model: str
+    embedding_dimensions: int = Field(gt=0)
+    retrieved_count: int = Field(ge=0, le=8)
+    citation_count: int = Field(ge=0, le=3)
+    citations: list[KnowledgeCitation]
+
+
 class FileRestoreCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
