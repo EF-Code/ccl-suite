@@ -1,10 +1,11 @@
 # Knowledge-source register
 
 The Week 5 source register is a controlled metadata layer for documents that
-may supply the company knowledge base. Document parsing, chunking, and the
-first bounded semantic-search endpoint are now available. Answer generation,
-source-grounded citations, and refusal behaviour remain later scheduled
-activities.
+may supply the company knowledge base. Document parsing, chunking, bounded
+semantic search, and the first evidence-grounded answer MVP are available.
+The answer MVP is deterministic and extractive: it quotes approved passages,
+returns source-linked citations, and refuses unsupported questions rather than
+calling a model or inventing a rule.
 
 ## Source lifecycle
 
@@ -91,6 +92,25 @@ requested project, and permits that project's owner or a supervisor/admin
 operator. A denied non-owner request returns `404` and records an
 `access.denied` event without storing the query text.
 
+Answer from approved source evidence:
+
+```bash
+curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-answer \
+  -H 'Content-Type: application/json' \
+  -H 'X-User-ID: <PROJECT_OWNER_ID>' \
+  -d '{
+    "query":"How do we verify a file before restoring it?",
+    "evidence_limit":5
+  }'
+```
+
+The answer endpoint reuses the same project, approval, active-file, completed
+ingestion, and role-access boundaries as search. An `answered` response
+contains a short extractive answer plus numbered citations. A `refused`
+response contains no citations and identifies either an unsupported query or
+insufficient evidence. Answer and refusal audit events store only the project
+and authenticated actor; they do not store the question or document text.
+
 ## Safety boundaries
 
 - Source registration references an existing active file; it does not accept
@@ -108,6 +128,9 @@ operator. A denied non-owner request returns `404` and records an
   than trusting a caller-supplied source identifier alone.
 - The current local-hash vector is a dependency-free retrieval baseline, not a
   claim of model-level semantic understanding or production-scale ANN search.
+- The current answer engine is a dependency-free extractive composer, not a
+  generative model. Provider-backed generation and the evaluation benchmark
+  are later milestones.
 - Security events contain only the source identifier and authenticated actor;
   request bodies and credentials are not recorded. Chunk content and its
   derived vector are stored only in the source-linked chunk table.
