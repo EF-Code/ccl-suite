@@ -178,7 +178,10 @@ class HealthResponse(BaseModel):
 async def web_app() -> HTMLResponse:
     """Serve the browser prototype for the current API operations."""
 
-    return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
+    return HTMLResponse(
+        (STATIC_DIR / "index.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/static/styles.css", include_in_schema=False)
