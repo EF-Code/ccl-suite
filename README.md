@@ -102,19 +102,15 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `POST /approvals/{approval_id}/decision` records one approval decision.
 - `POST` and `GET /security-events` manage structured security audit events.
 
-The Monday Week 5 knowledge-source register is documented in
-[`docs/knowledge-sources.md`](docs/knowledge-sources.md). It records source
-ownership, type, sensitivity, review state, and file identity, but never stores
-document contents or system instructions. The Tuesday extraction and chunking
-pipeline is documented in [`docs/document-ingestion.md`](docs/document-ingestion.md),
-with a safe sample source in
-[`samples/knowledge/company-rules.md`](samples/knowledge/company-rules.md).
-The completion checkpoint is in
-[`docs/week-5-monday-checkpoint.md`](docs/week-5-monday-checkpoint.md).
-The Tuesday checkpoint is in
-[`docs/week-5-tuesday-checkpoint.md`](docs/week-5-tuesday-checkpoint.md).
-The Wednesday semantic-search checkpoint is in
-[`docs/week-5-wednesday-checkpoint.md`](docs/week-5-wednesday-checkpoint.md).
+Knowledge-base capability documentation covers the controlled
+[source register](docs/knowledge-sources.md),
+[document ingestion](docs/document-ingestion.md),
+[semantic search](docs/semantic-search-checkpoint.md), and
+[grounded answers](docs/knowledge-answer-checkpoint.md). The
+[evaluation report](docs/knowledge-answer-evaluation.md) records the fixed
+20-case evidence, refusal, and conflicting-information validation suite.
+A non-sensitive [sample source](samples/knowledge/company-rules.md) is
+available for the normal ingestion workflow.
 
 Protected routes accept the authenticated user ID in the `X-User-ID` header.
 Development requests without the header use the first provisioned user for
