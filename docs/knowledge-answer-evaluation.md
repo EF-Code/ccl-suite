@@ -25,6 +25,34 @@ The recorded evaluation result is **20/20 passed**:
 | Conflicting evidence retained | 3 | 3 |
 | Total | 20 | 20 |
 
+## Representative media operations acceptance suite
+
+The repository also includes a clearly labelled, fictional representative
+corpus for a small multi-role media company operating YouTube and TikTok
+accounts. It is sanitized: it contains no real people, account handles,
+credentials, private links, customer data, production media, or commercial
+figures.
+
+The end-to-end acceptance test registers, approves, and ingests the corpus in
+an isolated project before exercising the live FastAPI application boundary.
+Its 20 scenarios all passed:
+
+| Category | Cases | Expected behavior |
+| --- | ---: | --- |
+| Supported company operations questions | 14 | Cited evidence from the intended source. |
+| Missing information | 3 | Safe refusal with no citations. |
+| Conflicting retention information | 2 | Both contradictory sources remain cited. |
+| Wrong-project retrieval | 1 | `404` denial, no source content, and an `access.denied` event. |
+
+Run it with:
+
+```bash
+~/.venv/bin/python -m pytest -q tests/test_main.py -k representative_media_corpus
+```
+
+The source files and human-readable acceptance matrix are in
+[`samples/knowledge/representative-media-company`](../samples/knowledge/representative-media-company).
+
 Run the evaluation directly from the repository root:
 
 ```bash

@@ -19,6 +19,9 @@
   cited rather than being silently arbitrated.
 - Documented the 20/20 result and the benchmark limitations in
   `knowledge-answer-evaluation.md`.
+- Added and executed a 20-scenario representative media operations corpus
+  through registration, approval, ingestion, retrieval, answer composition,
+  refusal, and cross-project denial.
 
 ## Verification
 
@@ -30,6 +33,10 @@
 
 The fixed suite passed all 20 cases: 12 supported, 5 refusal, and 3 conflict
 cases.
+
+The representative end-to-end suite also passed all 20 scenarios: 14 supported
+operations questions, 3 missing-information refusals, 2 conflict cases, and 1
+wrong-project security denial.
 
 ## Boundary
 
