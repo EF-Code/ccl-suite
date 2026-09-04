@@ -1,6 +1,6 @@
 # Knowledge-source register
 
-The Week 5 source register is a controlled metadata layer for documents that
+The source register is a controlled metadata layer for documents that
 may supply the company knowledge base. Document parsing, chunking, bounded
 semantic search, and the first evidence-grounded answer MVP are available.
 The answer MVP is deterministic and extractive: it quotes approved passages,
@@ -69,7 +69,7 @@ curl -X POST \
 The response contains the completed run, source checksum, chunk count, and
 source-linked chunk records. Supported document types are `.txt`, `.md`, `.csv`,
 and `.json`, with a maximum source size of 1 MiB. The sample source used for
-the Tuesday checkpoint is
+the ingestion checkpoint is
 [`samples/knowledge/company-rules.md`](../samples/knowledge/company-rules.md).
 
 Search approved source passages for one project:

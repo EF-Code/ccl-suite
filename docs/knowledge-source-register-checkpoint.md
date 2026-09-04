@@ -1,4 +1,4 @@
-# Week 5 Monday checkpoint
+# Knowledge Source Register capability checkpoint
 
 ## Deliverable
 
@@ -27,5 +27,5 @@ node --check static/app.js
 .venv/bin/python -m alembic heads
 ```
 
-The Tuesday parsing and chunking pipeline has not been started in this
+The parsing and chunking pipeline has not been started in this
 checkpoint.
