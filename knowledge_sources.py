@@ -32,7 +32,7 @@ def build_approved_knowledge_sources_statement(
 ) -> Select[tuple[KnowledgeSource]]:
     """Return the only source set eligible for future knowledge-base use.
 
-    Keeping this filter in one helper gives the Tuesday ingestion work a
+    Keeping this filter in one helper gives the ingestion pipeline a
     single fail-closed query to reuse.  A source must be approved and its
     referenced file must still be active; registration alone is insufficient.
     """
