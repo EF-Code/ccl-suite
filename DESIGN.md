@@ -2,7 +2,7 @@
 name: CCL AI Suite
 description: A controlled-ledger interface for project-scoped file, knowledge, and recovery operations.
 colors:
-  canvas: "hsl(220 33% 98%)"
+  canvas: "hsl(220 20% 95%)"
   surface: "#ffffff"
   evidence-surface: "#fbfcfe"
   sidebar: "#101828"

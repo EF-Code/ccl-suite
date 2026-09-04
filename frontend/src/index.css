@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    --background: 220 33% 98%; --foreground: 221 39% 11%;
+    --background: 220 20% 95%; --foreground: 221 39% 11%;
     --card: 0 0% 100%; --card-foreground: 221 39% 11%;
     --popover: 0 0% 100%; --popover-foreground: 221 39% 11%;
     --primary: 222 71% 49%; --primary-foreground: 0 0% 100%;
@@ -140,8 +140,8 @@
 }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-thumb { background: #c5ccd8; border: 2px solid #f5f7fa; border-radius: 999px; }
-::-webkit-scrollbar-track { background: #f5f7fa; }
+::-webkit-scrollbar-thumb { background: #bcc4d0; border: 2px solid #f0f2f5; border-radius: 999px; }
+::-webkit-scrollbar-track { background: #f0f2f5; }
 
 @media (max-width: 767px) {
   .workspace-heading { @apply mb-4; } .workspace-heading h1 { @apply text-xl; }
