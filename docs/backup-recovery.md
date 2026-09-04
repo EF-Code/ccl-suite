@@ -1,6 +1,6 @@
 # Project backup and recovery runbook
 
-This runbook records the Week 4 Friday recovery procedure for the Digital
+This runbook records the recovery procedure for the Digital
 Asset System Version 1. It covers project files and their integrity evidence;
 the relational database remains managed separately through Alembic and the
 database provider's backup policy.

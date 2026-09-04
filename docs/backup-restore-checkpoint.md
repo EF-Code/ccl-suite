@@ -1,4 +1,4 @@
-# Week 4 Friday checkpoint: backup and restore
+# Backup and restore capability checkpoint
 
 ## Planned work
 
