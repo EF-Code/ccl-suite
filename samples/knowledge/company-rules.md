@@ -1,7 +1,7 @@
 # Company File Handling Rules
 
-This sample is a non-sensitive training document for the Week 5 Tuesday
-ingestion checkpoint. It describes the kind of approved internal source that
+This sample is a non-sensitive training document for the ingestion pipeline.
+It describes the kind of approved internal source that
 can be registered, reviewed, extracted, and split into source-linked chunks.
 
 ## Approved project locations
