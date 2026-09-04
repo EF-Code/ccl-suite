@@ -17,7 +17,7 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     id: 1,
     title: "Secure File Automation",
     purpose: "Organise, track, convert, protect and restore company files",
-    weeks: "Week 3-4 · 17-28 Aug",
+    weeks: "Foundation delivery · 17-28 Aug",
     status: "complete",
     backendReady: true,
     frontendCoverage: "full",
@@ -38,7 +38,7 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     id: 2,
     title: "Company Knowledge Base",
     purpose: "Answer questions from approved SOPs and project rules",
-    weeks: "Week 5-6 · 31 Aug - 11 Sep",
+    weeks: "Knowledge delivery · 31 Aug - 11 Sep",
     status: "current",
     backendReady: true,
     frontendCoverage: "full",
@@ -55,7 +55,7 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     id: 3,
     title: "Research Evidence Agent",
     purpose: "Extract claims and flag missing or mismatched evidence",
-    weeks: "Week 7 · 14-18 Sep",
+    weeks: "Research delivery · 14-18 Sep",
     status: "upcoming",
     backendReady: false,
     frontendCoverage: "placeholder",
@@ -66,7 +66,7 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     id: 4,
     title: "Workflow Orchestrator",
     purpose: "Move projects through controlled tasks and approvals",
-    weeks: "Week 8-9 · 21 Sep - 2 Oct",
+    weeks: "Workflow delivery · 21 Sep - 2 Oct",
     status: "upcoming",
     backendReady: true, // workflows/approvals exist in backend
     frontendCoverage: "partial",
@@ -82,7 +82,7 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     id: 5,
     title: "Security Dashboard",
     purpose: "Monitor project status, agent actions, failures and incidents",
-    weeks: "Week 10-12 · 5-22 Oct",
+    weeks: "Security delivery · 5-22 Oct",
     status: "planned",
     backendReady: true,
     frontendCoverage: "partial",
@@ -91,5 +91,5 @@ export const SIWES_TIMELINE: TimelineModule[] = [
   },
 ];
 
-export const CURRENT_WEEK = "Week 5 · Wednesday · 2 Sep 2026";
-export const CURRENT_PHASE = "Knowledge Base · Semantic Search";
+export const CURRENT_WEEK = "Current capability";
+export const CURRENT_PHASE = "Knowledge Base · Grounded Answers";
