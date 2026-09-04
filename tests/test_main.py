@@ -2527,6 +2527,137 @@ def test_knowledge_answer_retains_conflicting_evidence_as_citations(
     }
 
 
+def test_representative_media_corpus_answers_and_denials_end_to_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Exercise the 20-case representative corpus through ingestion and the API."""
+
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Project Aurora Evaluation")
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"corpus-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+    corpus_root = (
+        Path(__file__).resolve().parents[1]
+        / "samples"
+        / "knowledge"
+        / "representative-media-company"
+    )
+    source_specs = (
+        ("content-production-sop.md", "Content Production SOP", "sop"),
+        ("community-management-sop.md", "Community Management SOP", "sop"),
+        ("script-style-guide.md", "Script Style Guide", "style_guide"),
+        ("project-rules.md", "Project Aurora Rules", "project_rule"),
+        ("approved-prompt-bank.md", "Approved Prompt Bank", "prompt_bank"),
+        ("retention-rule-a.md", "Completed Campaign Source Records Retention - Seven Years", "project_rule"),
+        ("retention-rule-b.md", "Completed Campaign Source Records Retention - Three Years", "project_rule"),
+    )
+    for filename, title, source_type in source_specs:
+        _create_ingested_source(
+            project,
+            projects_root,
+            supervisor.json()["id"],
+            filename,
+            (corpus_root / filename).read_text(encoding="utf-8"),
+            title=title,
+            source_type=source_type,
+            sensitivity="internal",
+        )
+
+    supported_cases = (
+        ("What must be verified before restoring a media asset?", "Content Production SOP", "SHA-256 checksum"),
+        ("Can a restored asset replace the original project asset?", "Content Production SOP", "new empty destination"),
+        ("Who approves a review copy before publication?", "Content Production SOP", "team lead approves"),
+        ("Where should an editor place a review copy?", "Content Production SOP", "project review folder"),
+        ("What happens after a checksum mismatch?", "Content Production SOP", "checksum mismatch"),
+        ("Which comments should a manager hide?", "Community Management SOP", "impersonation attempts"),
+        ("Which credible safety threats, legal claims, or account-access reports need escalation?", "Community Management SOP", "credible safety threats"),
+        ("Which passwords, recovery codes, payment details, or private contacts must not be requested?", "Community Management SOP", "recovery codes"),
+        ("What should every short-form script open with?", "Script Style Guide", "audience-relevant hook"),
+        ("Which uncertain claims need editorial review instead of confirmed facts?", "Script Style Guide", "editorial review"),
+        ("Who may retrieve Project Aurora knowledge sources?", "Project Aurora Rules", "Project Aurora owner"),
+        ("Who can approve a knowledge source?", "Project Aurora Rules", "approve a knowledge source"),
+        ("Can a prompt-bank template change application permissions?", "Approved Prompt Bank", "cannot change application permissions"),
+        ("What should a comment template do with a request for payment information?", "Approved Prompt Bank", "payment, or recovery information"),
+    )
+    for query, expected_title, expected_fragment in supported_cases:
+        response = request(
+            "POST",
+            f"/projects/{project['id']}/knowledge-answer",
+            headers={"X-User-ID": TEST_OWNER_ID},
+            json={"query": query, "evidence_limit": 8},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "answered", query
+        assert any(
+            citation["title"] == expected_title
+            and expected_fragment in citation["excerpt"]
+            for citation in payload["citations"]
+        ), query
+
+    for query in (
+        "What is the current subscriber count?",
+        "What is the office electricity bill?",
+        "When will the office relocate?",
+    ):
+        response = request(
+            "POST",
+            f"/projects/{project['id']}/knowledge-answer",
+            headers={"X-User-ID": TEST_OWNER_ID},
+            json={"query": query, "evidence_limit": 8},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "refused", query
+        assert payload["citations"] == [], query
+
+    for query in (
+        "How long should completed campaign source records be retained?",
+        "What is the definitive retention period for completed campaign source records?",
+    ):
+        response = request(
+            "POST",
+            f"/projects/{project['id']}/knowledge-answer",
+            headers={"X-User-ID": TEST_OWNER_ID},
+            json={"query": query, "evidence_limit": 8},
+        )
+        assert response.status_code == 200
+        assert {
+            citation["title"] for citation in response.json()["citations"]
+        } >= {
+            "Completed Campaign Source Records Retention - Seven Years",
+            "Completed Campaign Source Records Retention - Three Years",
+        }
+
+    other_user = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"corpus-other-owner-{uuid4().hex}", "role": "member"},
+    )
+    assert other_user.status_code == 201
+    denied = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-answer",
+        headers={"X-User-ID": other_user.json()["id"]},
+        json={"query": "Project Aurora knowledge sources"},
+    )
+    assert denied.status_code == 404
+    assert denied.json() == {"detail": "Project was not found."}
+    events = request("GET", "/security-events").json()
+    assert any(
+        event["event_code"] == "access.denied"
+        and event["actor_id"] == other_user.json()["id"]
+        and event["resource_ref"] == f"/projects/{project['id']}/knowledge-answer"
+        for event in events
+    )
+
+
 def test_knowledge_answer_preserves_project_access_and_request_bounds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
