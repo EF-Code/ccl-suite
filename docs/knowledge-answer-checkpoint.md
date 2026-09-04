@@ -1,4 +1,4 @@
-# Week 5 Thursday checkpoint
+# Knowledge Base Answer capability checkpoint
 
 ## Planned work
 
@@ -42,6 +42,6 @@ excerpt selection and unsupported queries.
 
 ## Boundary
 
-This checkpoint does not include Friday's 20-question evaluation report,
-conflicting-information benchmark, or Week 6 prompt-instruction and
-prompt-injection work.
+This checkpoint does not include the fixed 20-question evaluation report,
+conflicting-information benchmark, or prompt-instruction and prompt-injection
+work.
