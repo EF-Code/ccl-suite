@@ -1,4 +1,4 @@
-# Week 5 Wednesday checkpoint
+# Semantic Search capability checkpoint
 
 ## Planned work
 
@@ -19,7 +19,7 @@
   and source-ID filters.
 - Added deterministic cosine ranking and newest-ingestion deduplication.
 - Re-materialise missing or invalid vectors during search so chunks created by
-  the Tuesday migration remain searchable without exposing an indexing route.
+  the ingestion migration remain searchable without exposing an indexing route.
 - Enforced the approved-source, active-file, project, and completed-ingestion
   boundaries in the retrieval query.
 - Restricted staff retrieval to the project owner; supervisor and
