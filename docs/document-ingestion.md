@@ -1,9 +1,9 @@
 # Document ingestion
 
-This is the Week 5 Tuesday extraction pipeline. It processes one approved
-project source into bounded, deterministic text chunks. The Wednesday
-semantic-search layer now also materialises a deterministic local vector for
-each persisted chunk; it does not generate answers or call an AI model.
+This extraction pipeline processes one approved project source into bounded,
+deterministic text chunks. The semantic-search layer also materialises a
+deterministic local vector for each persisted chunk; it does not generate
+answers or call an AI model.
 
 ## Processing flow
 
@@ -25,7 +25,7 @@ each persisted chunk; it does not generate answers or call an AI model.
 
 ## Supported sources
 
-The Tuesday stage accepts `.txt`, `.md`, `.csv`, and `.json` files up to 1 MiB.
+The pipeline accepts `.txt`, `.md`, `.csv`, and `.json` files up to 1 MiB.
 Files must use an allow-listed MIME type, contain valid UTF-8 text, and be
 regular files inside the approved project root. Empty, binary, symlinked,
 oversized, or changed sources are rejected.

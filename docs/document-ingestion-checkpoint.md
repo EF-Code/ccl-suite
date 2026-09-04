@@ -1,6 +1,6 @@
-# Week 5 Tuesday checkpoint
+# Document Ingestion capability checkpoint
 
-This is the historical end-of-day Tuesday boundary. The Wednesday checkpoint
+This is the historical implementation boundary. The semantic-search checkpoint
 extends the persisted chunks with a local retrieval vector and semantic-search
 endpoint; answer generation remains out of scope.
 
@@ -48,4 +48,4 @@ recording.
 This checkpoint intentionally stops after extraction, chunking, and persistence.
 Embeddings, vector search, source-grounded answers, evaluation, and prompt-
 injection testing remain scheduled for later days and are not part of this
-Tuesday deliverable.
+document-ingestion deliverable.
