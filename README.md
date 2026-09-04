@@ -111,6 +111,8 @@ Knowledge-base capability documentation covers the controlled
 20-case evidence, refusal, and conflicting-information validation suite.
 A non-sensitive [sample source](samples/knowledge/company-rules.md) is
 available for the normal ingestion workflow.
+The [representative media operations corpus](samples/knowledge/representative-media-company/README.md)
+provides a clearly labelled, sanitized end-to-end acceptance set.
 
 Protected routes accept the authenticated user ID in the `X-User-ID` header.
 Development requests without the header use the first provisioned user for
