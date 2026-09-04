@@ -2469,6 +2469,64 @@ def test_knowledge_answer_refuses_without_supporting_evidence(
     )
 
 
+def test_knowledge_answer_retains_conflicting_evidence_as_citations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Conflicting source facts remain visible; the local composer does not arbitrate."""
+
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Conflicting Answer Project")
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"conflict-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+
+    _create_ingested_source(
+        project,
+        projects_root,
+        supervisor.json()["id"],
+        "retention-a.md",
+        "# Retention\n\nRetain project invoices for seven years.",
+        title="Retention Rule A",
+        source_type="sop",
+        sensitivity="internal",
+    )
+    _create_ingested_source(
+        project,
+        projects_root,
+        supervisor.json()["id"],
+        "retention-b.md",
+        "# Retention\n\nDelete project invoices after three years.",
+        title="Retention Rule B",
+        source_type="sop",
+        sensitivity="internal",
+    )
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/knowledge-answer",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        # Include the shared subject and both disputed retention terms so the
+        # deterministic hash retriever returns both passages before composition.
+        json={"query": "project invoices retain delete seven three years"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "answered"
+    assert payload["citation_count"] == 2
+    assert {
+        citation["excerpt"] for citation in payload["citations"]
+    } == {
+        "Retain project invoices for seven years.",
+        "Delete project invoices after three years.",
+    }
+
+
 def test_knowledge_answer_preserves_project_access_and_request_bounds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
