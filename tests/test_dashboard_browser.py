@@ -181,7 +181,7 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
 
 
 def test_dashboard_registers_a_pending_knowledge_source(dashboard_page: Page) -> None:
-    """Exercise Monday's source-register workflow through the live dashboard."""
+    """Exercise the source-register workflow through the live dashboard."""
 
     page = dashboard_page
     page.goto(BASE_URL, wait_until="networkidle")
