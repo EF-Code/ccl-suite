@@ -5,7 +5,7 @@ set -euo pipefail
 base_url="${CCL_API_URL:-http://127.0.0.1:8000}"
 project_root="${CCL_PROJECT_ROOT:-projects}"
 suffix="$(date +%s%N)"
-project_name="friday-backup-demo-${suffix}"
+project_name="backup-recovery-demo-${suffix}"
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl is required." >&2
@@ -24,7 +24,7 @@ owner_id="$(printf '%s' "${owner_json}" | jq -r '.id')"
 project_json="$(curl --fail --silent --show-error -X POST "${base_url}/projects" \
   -H 'Content-Type: application/json' \
   -H "X-User-ID: ${owner_id}" \
-  -d "{\"title\":\"${project_name}\",\"description\":\"Friday backup recovery demo\",\"owner_id\":\"${owner_id}\"}")"
+  -d "{\"title\":\"${project_name}\",\"description\":\"Backup recovery demonstration\",\"owner_id\":\"${owner_id}\"}")"
 project_id="$(printf '%s' "${project_json}" | jq -r '.id')"
 
 curl --fail --silent --show-error -X POST "${base_url}/project-folders" \
@@ -34,7 +34,7 @@ curl --fail --silent --show-error -X POST "${base_url}/project-folders" \
 
 sample_path="${project_root}/${project_name}/incoming/recovery-check.txt"
 mkdir -p "$(dirname -- "${sample_path}")"
-printf 'Friday recovery check\n' >"${sample_path}"
+printf 'Recovery check\n' >"${sample_path}"
 
 backup_json="$(curl --fail --silent --show-error -X POST "${base_url}/projects/${project_id}/backups" \
   -H 'Content-Type: application/json' \
