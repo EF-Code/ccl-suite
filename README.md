@@ -107,6 +107,9 @@ Knowledge-base capability documentation covers the controlled
 [document ingestion](docs/document-ingestion.md),
 [semantic search](docs/semantic-search-checkpoint.md), and
 [grounded answers](docs/knowledge-answer-checkpoint.md). The
+[knowledge-agent contract](docs/knowledge-agent-contract.md) defines the
+versioned instructions, response schema, extractive mode, and evidence
+boundary. The
 [evaluation report](docs/knowledge-answer-evaluation.md) records the fixed
 20-case evidence, refusal, and conflicting-information validation suite.
 A non-sensitive [sample source](samples/knowledge/company-rules.md) is
