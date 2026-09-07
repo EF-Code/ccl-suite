@@ -1,0 +1,31 @@
+{
+  "contract_version": "grounded-answer-v1",
+  "instruction_version": "knowledge-agent-v1",
+  "answer_mode": "extractive",
+  "project_id": "00000000-0000-0000-0000-000000000001",
+  "query": "What should every short-form script open with?",
+  "status": "answered",
+  "answer": "Approved source evidence indicates:\n[1] Open with an audience-relevant hook.",
+  "refusal_reason": null,
+  "answer_engine": "local-extractive-v1",
+  "embedding_model": "local-hash-v1",
+  "embedding_dimensions": 64,
+  "retrieved_count": 1,
+  "citation_count": 1,
+  "citations": [
+    {
+      "citation_number": 1,
+      "chunk_id": "00000000-0000-0000-0000-000000000002",
+      "source_id": "00000000-0000-0000-0000-000000000003",
+      "score": 0.8125,
+      "title": "Script Style Guide",
+      "heading": "Opening hooks",
+      "location": "script-style-guide.md#L12-L14",
+      "line_start": 12,
+      "line_end": 14,
+      "file_name": "script-style-guide.md",
+      "file_storage_key": "incoming/script-style-guide.md",
+      "excerpt": "Open with an audience-relevant hook."
+    }
+  ]
+}
