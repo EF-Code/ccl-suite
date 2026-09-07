@@ -2402,6 +2402,9 @@ def test_knowledge_answer_returns_citations_and_audit_event(
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["contract_version"] == "grounded-answer-v1"
+    assert payload["instruction_version"] == "knowledge-agent-v1"
+    assert payload["answer_mode"] == "extractive"
     assert payload["status"] == "answered"
     assert payload["answer_engine"] == "local-extractive-v1"
     assert payload["refusal_reason"] is None
