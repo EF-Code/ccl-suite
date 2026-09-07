@@ -117,6 +117,9 @@ export type AnswerCitation = {
 };
 
 export type KnowledgeAnswerResponse = {
+  contract_version: "grounded-answer-v1";
+  instruction_version: "knowledge-agent-v1";
+  answer_mode: "extractive";
   project_id: string;
   query: string;
   status: "answered" | "refused";
