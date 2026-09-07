@@ -134,6 +134,11 @@ from knowledge_answer import (
     GroundedAnswer,
     compose_grounded_answer,
 )
+from knowledge_contract import (
+    AGENT_INSTRUCTION_VERSION,
+    ANSWER_CONTRACT_VERSION,
+    ANSWER_MODE,
+)
 from logger import logger
 from models import (
     Approval,
@@ -1222,6 +1227,9 @@ def grounded_answer_response(
         for number, citation in enumerate(grounded.citations, start=1)
     ]
     return KnowledgeAnswerResponse(
+        contract_version=ANSWER_CONTRACT_VERSION,
+        instruction_version=AGENT_INSTRUCTION_VERSION,
+        answer_mode=ANSWER_MODE,
         project_id=project_id,
         query=answer_request.query,
         status=grounded.status,
