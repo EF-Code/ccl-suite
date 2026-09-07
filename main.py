@@ -133,6 +133,7 @@ from knowledge_answer import (
     ANSWER_ENGINE,
     GroundedAnswer,
     compose_grounded_answer,
+    validate_grounded_answer,
 )
 from knowledge_contract import (
     AGENT_INSTRUCTION_VERSION,
@@ -1209,6 +1210,7 @@ def grounded_answer_response(
 ) -> KnowledgeAnswerResponse:
     """Translate the bounded answer composer into the public response contract."""
 
+    validate_grounded_answer(grounded)
     citations = [
         KnowledgeCitation(
             citation_number=number,
