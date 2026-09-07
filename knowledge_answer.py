@@ -88,6 +88,46 @@ class GroundedAnswer:
     citations: tuple[GroundedCitation, ...]
 
 
+class GroundedAnswerContractError(ValueError):
+    """Raised when an answer/refusal violates the public answer contract."""
+
+
+def validate_grounded_answer(result: GroundedAnswer) -> GroundedAnswer:
+    """Validate answer/refusal invariants before exposing a response.
+
+    Keeping this check beside the local composer gives future answer providers
+    one small boundary to satisfy before their output reaches the API model.
+    """
+
+    if not result.answer or len(result.answer) > 2_500:
+        raise GroundedAnswerContractError("Answer text is outside the contract bounds.")
+    if len(result.citations) > MAX_ANSWER_CITATIONS:
+        raise GroundedAnswerContractError("Answer has too many citations.")
+
+    if result.status == "answered":
+        if result.refusal_reason is not None:
+            raise GroundedAnswerContractError(
+                "Answered results cannot include a refusal reason."
+            )
+        if not result.citations:
+            raise GroundedAnswerContractError(
+                "Answered results must include at least one citation."
+            )
+    elif result.status == "refused":
+        if result.refusal_reason is None:
+            raise GroundedAnswerContractError(
+                "Refused results must include a refusal reason."
+            )
+        if result.citations:
+            raise GroundedAnswerContractError(
+                "Refused results cannot include citations."
+            )
+    else:
+        raise GroundedAnswerContractError("Answer status is not supported.")
+
+    return result
+
+
 def _meaningful_terms(query: str) -> frozenset[str]:
     """Remove conversational filler before comparing question and evidence."""
 
@@ -202,5 +242,7 @@ __all__ = [
     "MIN_ANSWER_SCORE",
     "GroundedAnswer",
     "GroundedCitation",
+    "GroundedAnswerContractError",
     "compose_grounded_answer",
+    "validate_grounded_answer",
 ]
