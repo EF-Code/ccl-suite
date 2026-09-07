@@ -1045,7 +1045,9 @@ export default function App() {
                     <div className={`rounded-2xl border p-4 ${answerResponse.status === "answered" ? "border-teal-200 bg-teal-50" : "border-amber-200 bg-amber-50"}`}>
                       <div className="flex flex-wrap items-center gap-2 mb-3">
                         <Badge className={answerResponse.status === "answered" ? "bg-teal-700 text-white" : "bg-amber-500 text-amber-950"}>{answerResponse.status}</Badge>
-                        <span className="text-[0.68rem] text-muted-foreground">{answerResponse.answer_engine} · {answerResponse.retrieved_count} {answerResponse.status === "answered" ? "evidence" : "candidate"} passage{answerResponse.retrieved_count === 1 ? "" : "s"}</span>
+                        <span className="text-[0.68rem] text-muted-foreground" title={`Instructions ${answerResponse.instruction_version}`}>
+                          {answerResponse.answer_engine} · {answerResponse.answer_mode} · {answerResponse.contract_version} · {answerResponse.retrieved_count} {answerResponse.status === "answered" ? "evidence" : "candidate"} passage{answerResponse.retrieved_count === 1 ? "" : "s"}
+                        </span>
                       </div>
                       <p className="text-sm leading-relaxed whitespace-pre-wrap">{answerResponse.answer}</p>
                       {answerResponse.refusal_reason && <p className="mt-3 text-xs text-amber-800">Refusal: {answerResponse.refusal_reason.replaceAll("_", " ")}</p>}
