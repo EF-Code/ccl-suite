@@ -1,7 +1,13 @@
+from dataclasses import replace
 from uuid import UUID, uuid4
 
+import pytest
 from api_schemas import SemanticSearchResult
-from knowledge_answer import compose_grounded_answer
+from knowledge_answer import (
+    GroundedAnswerContractError,
+    compose_grounded_answer,
+    validate_grounded_answer,
+)
 
 
 def passage(
@@ -81,3 +87,24 @@ def test_composer_refuses_queries_without_meaningful_terms() -> None:
     assert result.status == "refused"
     assert result.refusal_reason == "unsupported_query"
     assert result.citations == ()
+
+
+def test_answer_contract_rejects_answer_without_evidence() -> None:
+    result = compose_grounded_answer(
+        "How do we verify a file?",
+        [passage("Verify file hashes before restoring a file.", score=0.67)],
+    )
+
+    with pytest.raises(GroundedAnswerContractError, match="at least one citation"):
+        validate_grounded_answer(replace(result, citations=()))
+
+
+def test_answer_contract_rejects_refusal_with_citations() -> None:
+    answered = compose_grounded_answer(
+        "How do we verify a file?",
+        [passage("Verify file hashes before restoring a file.", score=0.67)],
+    )
+    refused = compose_grounded_answer("How do we?", [passage("Evidence", score=0.99)])
+
+    with pytest.raises(GroundedAnswerContractError, match="cannot include citations"):
+        validate_grounded_answer(replace(refused, citations=answered.citations))
