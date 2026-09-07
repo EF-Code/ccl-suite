@@ -22,6 +22,33 @@ class KnowledgeAgentInstructions:
     evidence_label: str
 
 
+@dataclass(frozen=True)
+class KnowledgeAgentContext:
+    """Separated inputs for an answer provider.
+
+    ``user_question`` and ``retrieved_evidence`` are data fields. They are
+    intentionally kept separate from the immutable instruction set so a future
+    provider cannot mistake document text for control instructions.
+    """
+
+    instructions: KnowledgeAgentInstructions
+    user_question: str
+    retrieved_evidence: tuple[str, ...]
+
+
+def build_agent_context(
+    user_question: str,
+    retrieved_evidence: tuple[str, ...],
+) -> KnowledgeAgentContext:
+    """Build the labelled, provider-neutral context for one answer request."""
+
+    return KnowledgeAgentContext(
+        instructions=KNOWLEDGE_AGENT_INSTRUCTIONS,
+        user_question=user_question,
+        retrieved_evidence=retrieved_evidence,
+    )
+
+
 KNOWLEDGE_AGENT_INSTRUCTIONS: Final = KnowledgeAgentInstructions(
     version=AGENT_INSTRUCTION_VERSION,
     role="Answer questions from approved, project-scoped company evidence.",
@@ -41,6 +68,8 @@ __all__ = [
     "AGENT_INSTRUCTION_VERSION",
     "ANSWER_CONTRACT_VERSION",
     "ANSWER_MODE",
+    "build_agent_context",
+    "KnowledgeAgentContext",
     "KNOWLEDGE_AGENT_INSTRUCTIONS",
     "KnowledgeAgentInstructions",
 ]
