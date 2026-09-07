@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -85,3 +87,14 @@ def test_response_schema_rejects_mismatched_citation_count() -> None:
 def test_response_schema_rejects_answered_state_without_citations() -> None:
     with pytest.raises(ValidationError, match="Answered responses"):
         answer_response(citations=[], citation_count=0)
+
+
+def test_documented_answer_example_matches_response_schema() -> None:
+    example_path = Path(__file__).parents[1] / "docs" / "knowledge-answer-v1.example.json"
+    payload = json.loads(example_path.read_text(encoding="utf-8"))
+
+    response = KnowledgeAnswerResponse.model_validate(payload)
+
+    assert response.contract_version == ANSWER_CONTRACT_VERSION
+    assert response.instruction_version == AGENT_INSTRUCTION_VERSION
+    assert response.answer_mode == ANSWER_MODE
