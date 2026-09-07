@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from knowledge_contract import (
     AGENT_INSTRUCTION_VERSION,
@@ -327,6 +327,19 @@ class KnowledgeAnswerResponse(BaseModel):
     retrieved_count: int = Field(ge=0, le=8)
     citation_count: int = Field(ge=0, le=3)
     citations: list[KnowledgeCitation]
+
+    @model_validator(mode="after")
+    def validate_answer_state(self) -> KnowledgeAnswerResponse:
+        """Keep status, refusal, and citation fields mutually consistent."""
+
+        if self.citation_count != len(self.citations):
+            raise ValueError("citation_count must match the citations list.")
+        if self.status == "answered":
+            if self.refusal_reason is not None or not self.citations:
+                raise ValueError("Answered responses require citations and no refusal reason.")
+        elif self.refusal_reason is None or self.citations:
+            raise ValueError("Refused responses require a reason and no citations.")
+        return self
 
 
 class FileRestoreCreate(BaseModel):
