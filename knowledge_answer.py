@@ -9,6 +9,7 @@ from typing import Final, Literal
 from uuid import UUID
 
 from api_schemas import SemanticSearchResult
+from knowledge_contract import build_agent_context
 from semantic_search import search_terms
 
 
@@ -162,7 +163,8 @@ def compose_grounded_answer(
     produce a refusal rather than an invented policy.
     """
 
-    terms = _meaningful_terms(query)
+    context = build_agent_context(query, tuple(passage.content for passage in passages))
+    terms = _meaningful_terms(context.user_question)
     if not terms:
         return GroundedAnswer(
             status="refused",
@@ -172,10 +174,10 @@ def compose_grounded_answer(
         )
 
     candidates: list[tuple[float, int, SemanticSearchResult, str]] = []
-    for passage in passages:
+    for passage, evidence in zip(passages, context.retrieved_evidence):
         if passage.score < MIN_ANSWER_SCORE:
             continue
-        excerpt, overlap = _best_excerpt(passage.content, terms)
+        excerpt, overlap = _best_excerpt(evidence, terms)
         if not excerpt or overlap == 0:
             continue
         candidates.append((passage.score, overlap, passage, excerpt))
