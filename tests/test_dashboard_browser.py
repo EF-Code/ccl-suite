@@ -318,5 +318,7 @@ def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
     answer_result = page.locator("#knowledge-answer-result")
     answer_result.wait_for(state="visible")
     expect(answer_result).to_contain_text("answered")
+    expect(answer_result).to_contain_text("grounded-answer-v1")
+    expect(answer_result).to_contain_text("extractive")
     expect(answer_result).to_contain_text("Verify file hashes before restoring a file.")
     expect(answer_result).to_contain_text("Evidence rail")
