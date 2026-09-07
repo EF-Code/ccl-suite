@@ -8,6 +8,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from knowledge_contract import (
+    AGENT_INSTRUCTION_VERSION,
+    ANSWER_CONTRACT_VERSION,
+    ANSWER_MODE,
+)
 from models import Approval, File, KnowledgeSource, Project, SecurityEvent, User, Workflow
 
 
@@ -308,6 +313,9 @@ class KnowledgeCitation(BaseModel):
 class KnowledgeAnswerResponse(BaseModel):
     """A structured answer or refusal grounded in approved source excerpts."""
 
+    contract_version: Literal[ANSWER_CONTRACT_VERSION]
+    instruction_version: Literal[AGENT_INSTRUCTION_VERSION]
+    answer_mode: Literal[ANSWER_MODE]
     project_id: UUID
     query: str
     status: Literal["answered", "refused"]
