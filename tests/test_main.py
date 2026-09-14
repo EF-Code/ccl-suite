@@ -2429,6 +2429,38 @@ def test_global_operator_source_filter_cannot_cross_project_boundary(
     assert answer.json()["citations"] == []
 
 
+def test_intern_knowledge_request_is_denied_and_audited_before_project_access() -> None:
+    intern = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"knowledge-intern-{uuid4().hex}", "role": "intern"},
+    )
+    assert intern.status_code == 201
+    project = request(
+        "POST",
+        "/projects",
+        json={"title": "Intern Knowledge Project", "owner_id": intern.json()["id"]},
+    )
+    assert project.status_code == 201
+
+    response = request(
+        "POST",
+        f"/projects/{project.json()['id']}/knowledge-search",
+        headers={"X-User-ID": intern.json()["id"]},
+        json={"query": "rules"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "You do not have permission to perform this action."}
+    events = request("GET", "/security-events").json()
+    assert any(
+        event["event_code"] == "access.denied"
+        and event["actor_id"] == intern.json()["id"]
+        and event["resource_ref"] == f"/projects/{project.json()['id']}/knowledge-search"
+        for event in events
+    )
+
+
 def test_semantic_search_request_is_bounded_and_validated() -> None:
     project = create_project("Search Validation Project")
     base_path = f"/projects/{project['id']}/knowledge-search"
