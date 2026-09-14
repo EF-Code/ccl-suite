@@ -110,6 +110,8 @@ contains a short extractive answer plus numbered citations. A `refused`
 response contains no citations and identifies either an unsupported query or
 insufficient evidence. Answer and refusal audit events store only the project
 and authenticated actor; they do not store the question or document text.
+The complete authorization order and role matrix are documented in the
+[knowledge access control](knowledge-access-control.md) note.
 
 ## Safety boundaries
 
@@ -126,6 +128,12 @@ and authenticated actor; they do not store the question or document text.
   system policy, or call a model.
 - Retrieval uses the approved-source and active-file boundary again rather
   than trusting a caller-supplied source identifier alone.
+- Retrieval authorization runs before the candidate query: the server checks
+  `knowledge.read`, then the project owner/operator boundary, then applies
+  project, approval, active-file, completed-ingestion, and metadata filters.
+- Staff/member access is limited to owned projects; supervisor/reviewer and
+  administrator access is global; interns and unknown roles cannot retrieve
+  knowledge even when a request names a project they own.
 - The current local-hash vector is a dependency-free retrieval baseline, not a
   claim of model-level semantic understanding or production-scale ANN search.
 - The current answer engine is a dependency-free extractive composer, not a
