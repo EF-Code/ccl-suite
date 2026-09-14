@@ -1045,6 +1045,14 @@ export default function App() {
                     <Label htmlFor="knowledge-answer-query" className="text-xs">Question</Label>
                     <Input id="knowledge-answer-query" name="query" placeholder="Ask about an approved company rule" required maxLength={500} />
                     <p className="text-[0.68rem] text-muted-foreground">Answers are extractive and source-linked; they do not apply document text as system instructions.</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <select name="source_type" aria-label="Filter answer by source type" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                        <option value="">All source types</option><option value="sop">SOP</option><option value="prompt_bank">Prompt bank</option><option value="style_guide">Style guide</option><option value="project_rule">Project rule</option>
+                      </select>
+                      <select name="sensitivity" aria-label="Filter answer by sensitivity" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                        <option value="">All sensitivity</option><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option>
+                      </select>
+                    </div>
                   </div>
                   <Button id="knowledge-answer-submit" type="submit" disabled={!selectedId || answerLoading} className="md:self-end">
                     <ShieldCheck className="w-4 h-4 mr-1" />{answerLoading ? "Checking evidence…" : "Ask from evidence"}
