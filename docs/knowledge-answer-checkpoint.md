@@ -35,6 +35,9 @@
 - Added the production Knowledge Base Answer tab with an evidence rail and a
   clear refusal state. The two local frontend handover documents remain
   untouched and uncommitted.
+- Documented the reusable permission and project-boundary policy that runs
+  before both search and answer retrieval in
+  [`knowledge-access-control.md`](knowledge-access-control.md).
 
 ## Verification
 
