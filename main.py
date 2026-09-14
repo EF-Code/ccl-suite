@@ -128,6 +128,7 @@ from file_organizer import (
     write_plan,
 )
 from folder_generator import create_project_folder, normalize_project_name
+from knowledge_access import evaluate_project_knowledge_access
 from knowledge_sources import build_approved_knowledge_sources_statement
 from knowledge_answer import (
     ANSWER_ENGINE,
@@ -775,13 +776,15 @@ def require_project_knowledge_access(
     project_id: UUID,
     actor: User,
 ) -> Project:
-    """Allow retrieval only to a project owner or global knowledge operator."""
+    """Apply the project boundary before any knowledge retrieval occurs."""
 
     project = require_record(db, Project, project_id, "Project was not found.")
-    if project.owner_id != actor.id and canonical_role(actor.role) not in {
-        "administrator",
-        "supervisor",
-    }:
+    decision = evaluate_project_knowledge_access(
+        actor_id=actor.id,
+        actor_role=actor.role,
+        project_owner_id=project.owner_id,
+    )
+    if not decision.allowed:
         _record_access_denial(db, request, actor, "knowledge.search")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1075,6 +1078,8 @@ def retrieve_project_knowledge(
             KnowledgeSource.approval_status == "approved",
             File.status == "active",
             IngestionRun.status == "completed",
+            IngestionRun.project_id == project.id,
+            IngestionRun.source_id == KnowledgeSource.id,
         )
     )
     if search_request.source_type is not None:
