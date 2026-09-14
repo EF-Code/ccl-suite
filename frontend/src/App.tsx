@@ -1012,10 +1012,10 @@ export default function App() {
                 <Alert className="border-teal-200 bg-teal-50/60"><Search className="w-4 h-4 text-primary" /><AlertDescription className="text-xs"><strong>Semantic Search:</strong> 256-dim local embedding, cosine ranking, newest-ingestion dedup, project + approval + active-file filtering. Staff sees own project only; supervisor/admin global. <code className="bg-white px-1 rounded">POST /knowledge-search</code></AlertDescription></Alert>
                 <form onSubmit={handleSearch} className="grid gap-2 sm:grid-cols-[1fr_10rem_10rem_auto]">
                   <Input name="query" placeholder="Search approved, active source passages (e.g. 'backup recovery')" required className="min-w-0" />
-                  <select name="source_type" aria-label="Filter by source type" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                  <select id="knowledge-search-source-type" name="source_type" aria-label="Filter by source type" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
                     <option value="">All source types</option><option value="sop">SOP</option><option value="prompt_bank">Prompt bank</option><option value="style_guide">Style guide</option><option value="project_rule">Project rule</option>
                   </select>
-                  <select name="sensitivity" aria-label="Filter by sensitivity" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                  <select id="knowledge-search-sensitivity" name="sensitivity" aria-label="Filter by sensitivity" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
                     <option value="">All sensitivity</option><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option>
                   </select>
                   <Button type="submit"><Search className="w-4 h-4 mr-1" />Search</Button>
@@ -1046,10 +1046,10 @@ export default function App() {
                     <Input id="knowledge-answer-query" name="query" placeholder="Ask about an approved company rule" required maxLength={500} />
                     <p className="text-[0.68rem] text-muted-foreground">Answers are extractive and source-linked; they do not apply document text as system instructions.</p>
                     <div className="grid grid-cols-2 gap-2">
-                      <select name="source_type" aria-label="Filter answer by source type" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                      <select id="knowledge-answer-source-type" name="source_type" aria-label="Filter answer by source type" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
                         <option value="">All source types</option><option value="sop">SOP</option><option value="prompt_bank">Prompt bank</option><option value="style_guide">Style guide</option><option value="project_rule">Project rule</option>
                       </select>
-                      <select name="sensitivity" aria-label="Filter answer by sensitivity" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                      <select id="knowledge-answer-sensitivity" name="sensitivity" aria-label="Filter answer by sensitivity" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
                         <option value="">All sensitivity</option><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option>
                       </select>
                     </div>
