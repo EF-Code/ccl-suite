@@ -1007,8 +1007,14 @@ export default function App() {
 
               <TabsContent value="search" className="space-y-3 mt-4">
                 <Alert className="border-teal-200 bg-teal-50/60"><Search className="w-4 h-4 text-primary" /><AlertDescription className="text-xs"><strong>Semantic Search:</strong> 256-dim local embedding, cosine ranking, newest-ingestion dedup, project + approval + active-file filtering. Staff sees own project only; supervisor/admin global. <code className="bg-white px-1 rounded">POST /knowledge-search</code></AlertDescription></Alert>
-                <form onSubmit={handleSearch} className="flex gap-2">
-                  <Input name="query" placeholder="Search approved, active source passages (e.g. 'backup recovery')" required className="flex-1" />
+                <form onSubmit={handleSearch} className="grid gap-2 sm:grid-cols-[1fr_10rem_10rem_auto]">
+                  <Input name="query" placeholder="Search approved, active source passages (e.g. 'backup recovery')" required className="min-w-0" />
+                  <select name="source_type" aria-label="Filter by source type" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                    <option value="">All source types</option><option value="sop">SOP</option><option value="prompt_bank">Prompt bank</option><option value="style_guide">Style guide</option><option value="project_rule">Project rule</option>
+                  </select>
+                  <select name="sensitivity" aria-label="Filter by sensitivity" defaultValue="" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                    <option value="">All sensitivity</option><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option>
+                  </select>
                   <Button type="submit"><Search className="w-4 h-4 mr-1" />Search</Button>
                 </form>
                 {searchMeta && <div className="text-xs text-muted-foreground">{searchMeta}</div>}
