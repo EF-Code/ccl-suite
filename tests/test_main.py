@@ -2461,6 +2461,40 @@ def test_intern_knowledge_request_is_denied_and_audited_before_project_access() 
     )
 
 
+def test_denied_knowledge_routes_short_circuit_before_retrieval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    other_owner = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"short-circuit-owner-{uuid4().hex}", "role": "member"},
+    )
+    assert other_owner.status_code == 201
+    project = request(
+        "POST",
+        "/projects",
+        json={"title": "Short Circuit Project", "owner_id": other_owner.json()["id"]},
+    )
+    assert project.status_code == 201
+
+    def retrieval_must_not_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("retrieval ran before the project access check")
+
+    monkeypatch.setattr("main.retrieve_project_knowledge", retrieval_must_not_run)
+    for endpoint, payload in (
+        ("knowledge-search", {"query": "rules"}),
+        ("knowledge-answer", {"query": "rules"}),
+    ):
+        response = request(
+            "POST",
+            f"/projects/{project.json()['id']}/{endpoint}",
+            headers={"X-User-ID": TEST_OWNER_ID},
+            json=payload,
+        )
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Project was not found."}
+
+
 def test_semantic_search_request_is_bounded_and_validated() -> None:
     project = create_project("Search Validation Project")
     base_path = f"/projects/{project['id']}/knowledge-search"
