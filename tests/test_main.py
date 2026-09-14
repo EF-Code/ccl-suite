@@ -2314,7 +2314,7 @@ def test_semantic_search_blocks_non_owner_staff_and_records_denial(
         "POST",
         f"/projects/{project['id']}/knowledge-search",
         headers={"X-User-ID": TEST_OWNER_ID},
-        json={"query": "project owner rules"},
+        json={"query": "private project owner rules"},
     )
     allowed = request(
         "POST",
@@ -2334,6 +2334,15 @@ def test_semantic_search_blocks_non_owner_staff_and_records_denial(
         and event["resource_ref"] == f"/projects/{project['id']}/knowledge-search"
         for event in events
     )
+    denial = next(
+        event
+        for event in events
+        if event["event_code"] == "access.denied"
+        and event["actor_id"] == TEST_OWNER_ID
+        and event["resource_ref"] == f"/projects/{project['id']}/knowledge-search"
+    )
+    assert denial["request_ref"] is None
+    assert "private project owner rules" not in str(denial)
 
 
 def test_knowledge_routes_allow_global_operators_with_project_scoped_results() -> None:
