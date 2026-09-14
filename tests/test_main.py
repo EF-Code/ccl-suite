@@ -2336,6 +2336,99 @@ def test_semantic_search_blocks_non_owner_staff_and_records_denial(
     )
 
 
+def test_knowledge_routes_allow_global_operators_with_project_scoped_results() -> None:
+    project = create_project("Global Knowledge Access Project")
+    operators = []
+    for role in ("supervisor", "administrator"):
+        created = request(
+            "POST",
+            "/users",
+            json={"external_ref": f"global-knowledge-{role}-{uuid4().hex}", "role": role},
+        )
+        assert created.status_code == 201
+        operators.append(created.json()["id"])
+
+    for operator_id in operators:
+        search = request(
+            "POST",
+            f"/projects/{project['id']}/knowledge-search",
+            headers={"X-User-ID": operator_id},
+            json={"query": "rules"},
+        )
+        answer = request(
+            "POST",
+            f"/projects/{project['id']}/knowledge-answer",
+            headers={"X-User-ID": operator_id},
+            json={"query": "rules"},
+        )
+
+        assert search.status_code == 200
+        assert search.json()["project_id"] == project["id"]
+        assert search.json()["results"] == []
+        assert answer.status_code == 200
+        assert answer.json()["project_id"] == project["id"]
+        assert answer.json()["status"] == "refused"
+        assert answer.json()["citations"] == []
+
+
+def test_global_operator_source_filter_cannot_cross_project_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    requested_project = create_project("Requested Knowledge Project")
+    other_owner = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"source-boundary-owner-{uuid4().hex}", "role": "member"},
+    )
+    assert other_owner.status_code == 201
+    other_project_response = request(
+        "POST",
+        "/projects",
+        json={"title": "Other Knowledge Project", "owner_id": other_owner.json()["id"]},
+    )
+    assert other_project_response.status_code == 201
+    other_project = other_project_response.json()
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"source-boundary-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+    source, _file_record = _create_ingested_source(
+        other_project,
+        projects_root,
+        supervisor.json()["id"],
+        "other.md",
+        "# Other project\n\nThis evidence belongs elsewhere.",
+        title="Other Project Rules",
+        source_type="project_rule",
+        sensitivity="restricted",
+        owner_id=other_owner.json()["id"],
+    )
+
+    search = request(
+        "POST",
+        f"/projects/{requested_project['id']}/knowledge-search",
+        headers={"X-User-ID": supervisor.json()["id"]},
+        json={"query": "evidence belongs elsewhere", "source_id": source["id"]},
+    )
+    answer = request(
+        "POST",
+        f"/projects/{requested_project['id']}/knowledge-answer",
+        headers={"X-User-ID": supervisor.json()["id"]},
+        json={"query": "evidence belongs elsewhere", "source_id": source["id"]},
+    )
+
+    assert search.status_code == 200
+    assert search.json()["results"] == []
+    assert answer.status_code == 200
+    assert answer.json()["status"] == "refused"
+    assert answer.json()["citations"] == []
+
+
 def test_semantic_search_request_is_bounded_and_validated() -> None:
     project = create_project("Search Validation Project")
     base_path = f"/projects/{project['id']}/knowledge-search"
