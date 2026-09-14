@@ -109,7 +109,9 @@ Knowledge-base capability documentation covers the controlled
 [grounded answers](docs/knowledge-answer-checkpoint.md). The
 [knowledge-agent contract](docs/knowledge-agent-contract.md) defines the
 versioned instructions, response schema, extractive mode, and evidence
-boundary. The
+boundary. The [knowledge access control](docs/knowledge-access-control.md)
+document defines the server-side permission, project, source-lifecycle, and
+denial-audit boundaries. The
 [evaluation report](docs/knowledge-answer-evaluation.md) records the fixed
 20-case evidence, refusal, and conflicting-information validation suite.
 A non-sensitive [sample source](samples/knowledge/company-rules.md) is
