@@ -346,7 +346,10 @@ export default function App() {
   async function handleAnswer(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const form = e.currentTarget as HTMLFormElement
-    const query = String(new FormData(form).get("query") || "").trim()
+    const vals = Object.fromEntries(new FormData(form).entries()) as Record<string, FormDataEntryValue>
+    const query = String(vals.query || "").trim()
+    const source_type = String(vals.source_type || "") || undefined
+    const sensitivity = String(vals.sensitivity || "") || undefined
     if (!selectedId) return showMessage("Select a project before asking a question.", "error")
     setAnswerLoading(true)
     setAnswerError("")
@@ -354,7 +357,7 @@ export default function App() {
     try {
       const data = await apiRequest<KnowledgeAnswerResponse>(`/projects/${selectedId}/knowledge-answer`, {
         method: "POST",
-        body: JSON.stringify({ query, evidence_limit: 5 }),
+        body: JSON.stringify({ query, source_type, sensitivity, evidence_limit: 5 }),
       })
       setAnswerResponse(data)
       if (data.status === "answered") {
