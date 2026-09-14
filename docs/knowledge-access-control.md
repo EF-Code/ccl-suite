@@ -50,3 +50,11 @@ by the same server-side permission gate and use the same audit convention.
 Project scope does not override source sensitivity or lifecycle controls.
 Approved status, active-file status, completed ingestion, and the request's
 allow-listed sensitivity filter remain mandatory for every actor.
+
+## Dashboard filters
+
+The Knowledge workspace exposes the same server-enforced boundaries through
+two optional filters on both Search and Answer: source type and sensitivity.
+The controls are forwarded as `source_type` and `sensitivity`; leaving either
+one at its default keeps that dimension unfiltered. These controls narrow the
+already-authorized evidence set and never expand a caller's project access.
