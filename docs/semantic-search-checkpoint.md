@@ -22,9 +22,11 @@
   the ingestion migration remain searchable without exposing an indexing route.
 - Enforced the approved-source, active-file, project, and completed-ingestion
   boundaries in the retrieval query.
-- Restricted staff retrieval to the project owner; supervisor and
-  administrator roles act as the current global project operators. Denied
-  access returns `404` and records only a bounded `access.denied` event.
+- Added a reusable, fail-closed access policy that checks the server-side
+  `knowledge.read` permission and project scope before retrieval. Staff
+  retrieval is limited to the project owner; supervisor and administrator
+  roles act as the current global project operators. Denied access returns
+  `404` and records only a bounded `access.denied` event.
 
 ## Verification
 
@@ -39,7 +41,8 @@ curl -sS http://127.0.0.1:8000/health
 
 The endpoint tests cover ranked passage retrieval, metadata filters, pending
 and archived-source exclusion, project-boundary denial, bounded validation,
-and lazy indexing of pre-existing chunks.
+and lazy indexing of pre-existing chunks. The access-policy unit tests cover
+owner, global-operator, alias, intern, unknown-role, and cross-project cases.
 
 ## Boundary
 
