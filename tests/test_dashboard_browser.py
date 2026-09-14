@@ -322,3 +322,21 @@ def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
     expect(answer_result).to_contain_text("extractive")
     expect(answer_result).to_contain_text("Verify file hashes before restoring a file.")
     expect(answer_result).to_contain_text("Evidence rail")
+
+
+def test_dashboard_exposes_knowledge_scope_filters(dashboard_page: Page) -> None:
+    """Keep the searchable source and sensitivity scopes visible in the UI."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    open_workspace(page, "Knowledge")
+
+    page.get_by_role("tab", name="Search").click()
+    expect(page.locator("#knowledge-search-source-type")).to_be_visible()
+    expect(page.locator("#knowledge-search-sensitivity")).to_be_visible()
+    expect(page.locator("#knowledge-search-source-type option")).to_have_count(5)
+    expect(page.locator("#knowledge-search-sensitivity option")).to_have_count(5)
+
+    page.get_by_role("tab", name="Answer").click()
+    expect(page.locator("#knowledge-answer-source-type")).to_be_visible()
+    expect(page.locator("#knowledge-answer-sensitivity")).to_be_visible()
