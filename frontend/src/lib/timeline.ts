@@ -48,8 +48,9 @@ export const SIWES_TIMELINE: TimelineModule[] = [
       "POST /projects/{id}/knowledge-sources/{id}/review",
       "POST /projects/{id}/knowledge-sources/{id}/ingest",
       "POST /projects/{id}/knowledge-search",
+      "POST /projects/{id}/knowledge-answer",
     ],
-    uiComponents: ["Register", "Review", "Ingest", "Semantic Search"],
+    uiComponents: ["Register", "Review", "Ingest", "Semantic Search", "Grounded Answer"],
   },
   {
     id: 3,
