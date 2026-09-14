@@ -333,10 +333,13 @@ export default function App() {
     const vals = Object.fromEntries(fd.entries()) as any
     const query = vals.query as string
     const limit = 5
+    const source_type = vals.source_type || undefined
+    const sensitivity = vals.sensitivity || undefined
     try {
-      const data: any = await apiRequest(`/projects/${selectedId}/knowledge-search`, { method: "POST", body: JSON.stringify({ query, limit }) })
+      const data: any = await apiRequest(`/projects/${selectedId}/knowledge-search`, { method: "POST", body: JSON.stringify({ query, source_type, sensitivity, limit }) })
       setSearchResults(data.results || [])
-      setSearchMeta(`${data.result_count} passages · ${data.embedding_model} ${data.embedding_dimensions}d`)
+      const filterLabel = [source_type, sensitivity].filter(Boolean).join(" · ")
+      setSearchMeta(`${data.result_count} passages · ${data.embedding_model} ${data.embedding_dimensions}d${filterLabel ? ` · ${filterLabel}` : ""}`)
       showMessage(`Found ${data.result_count} passages.`)
     } catch (err: any) { setSearchMeta((err as Error).message); showMessage((err as Error).message, "error") }
   }
