@@ -92,6 +92,14 @@ class User(Base):
         back_populates="actor",
         foreign_keys=lambda: [SecurityEvent.actor_id],
     )
+    knowledge_feedback: Mapped[list[KnowledgeFeedback]] = relationship(
+        back_populates="actor",
+        foreign_keys=lambda: [KnowledgeFeedback.actor_id],
+    )
+    knowledge_error_reports: Mapped[list[KnowledgeErrorReport]] = relationship(
+        back_populates="actor",
+        foreign_keys=lambda: [KnowledgeErrorReport.actor_id],
+    )
 
 
 class Project(Base):
@@ -135,6 +143,12 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     document_chunks: Mapped[list[DocumentChunk]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    knowledge_feedback: Mapped[list[KnowledgeFeedback]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    knowledge_error_reports: Mapped[list[KnowledgeErrorReport]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
