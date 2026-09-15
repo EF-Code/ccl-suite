@@ -39,6 +39,10 @@ from api_schemas import (
     KnowledgeAnswerRequest,
     KnowledgeAnswerResponse,
     KnowledgeCitation,
+    KnowledgeErrorReportCreate,
+    KnowledgeErrorReportResponse,
+    KnowledgeFeedbackCreate,
+    KnowledgeFeedbackResponse,
     KnowledgeSourceCreate,
     KnowledgeSourceDecision,
     KnowledgeSourceResponse,
@@ -154,6 +158,8 @@ from models import (
     File,
     FileVersion,
     IngestionRun,
+    KnowledgeErrorReport,
+    KnowledgeFeedback,
     KnowledgeSource,
     Project,
     SecurityEvent,
@@ -1354,6 +1360,80 @@ async def answer_project_knowledge(
         answer_request,
         search_response,
         grounded,
+    )
+
+
+@app.post(
+    "/projects/{project_id}/knowledge-feedback",
+    response_model=KnowledgeFeedbackResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["knowledge-base"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def create_knowledge_feedback(
+    project_id: UUID,
+    feedback_request: KnowledgeFeedbackCreate,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> KnowledgeFeedbackResponse:
+    """Store a bounded answer rating after rechecking project visibility."""
+
+    project = require_project_knowledge_access(db, request, project_id, actor)
+    feedback = persist_record(
+        db,
+        KnowledgeFeedback(
+            project_id=project.id,
+            actor_id=actor.id,
+            rating=feedback_request.rating,
+            reason=feedback_request.reason,
+            answer_status=feedback_request.answer_status,
+            citation_count=feedback_request.citation_count,
+        ),
+        "Knowledge feedback",
+    )
+    return KnowledgeFeedbackResponse(
+        id=feedback.id,
+        project_id=feedback.project_id,
+        rating=feedback.rating,
+        reason=feedback.reason,
+        created_at=feedback.created_at,
+    )
+
+
+@app.post(
+    "/projects/{project_id}/knowledge-error-reports",
+    response_model=KnowledgeErrorReportResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["knowledge-base"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def create_knowledge_error_report(
+    project_id: UUID,
+    report_request: KnowledgeErrorReportCreate,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> KnowledgeErrorReportResponse:
+    """Record a structured issue category without raw question or answer text."""
+
+    project = require_project_knowledge_access(db, request, project_id, actor)
+    report = persist_record(
+        db,
+        KnowledgeErrorReport(
+            project_id=project.id,
+            actor_id=actor.id,
+            surface=report_request.surface,
+            category=report_request.category,
+        ),
+        "Knowledge error report",
+    )
+    return KnowledgeErrorReportResponse(
+        id=report.id,
+        project_id=report.project_id,
+        surface=report.surface,
+        category=report.category,
+        created_at=report.created_at,
     )
 
 
