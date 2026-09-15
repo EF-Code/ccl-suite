@@ -17,7 +17,11 @@
   information cases.
 - Added API coverage proving two conflicting approved sources remain separately
   cited rather than being silently arbitrated.
-- Documented the 20/20 result and the benchmark limitations in
+- Added four prompt-injection regression cases covering direct instruction
+  overrides, secret requests, unsafe document evidence, and access bypasses.
+- Added explicit 100% pass-rate gates for supported, refusal, conflict, and
+  injection categories.
+- Documented the 24/24 result and the benchmark limitations in
   `knowledge-answer-evaluation.md`.
 - Added and executed a 20-scenario representative media operations corpus
   through registration, approval, ingestion, retrieval, answer composition,
@@ -31,8 +35,8 @@
 ~/.venv/bin/python scripts/run_knowledge_evaluation.py
 ```
 
-The fixed suite passed all 20 cases: 12 supported, 5 refusal, and 3 conflict
-cases.
+The fixed suite passed all 24 cases: 12 supported, 5 refusal, 3 conflict, and
+4 injection-boundary cases.
 
 The representative end-to-end suite also passed all 20 scenarios: 14 supported
 operations questions, 3 missing-information refusals, 2 conflict cases, and 1
@@ -40,6 +44,7 @@ wrong-project security denial.
 
 ## Boundary
 
-This validation does not include prompt-instruction or prompt-injection work.
-It also does not claim conflict resolution; it preserves conflicting evidence
-for a human or a future policy layer to resolve.
+This validation does not claim conflict resolution; it preserves conflicting
+evidence for a human or a future policy layer to resolve. The injection checks
+are deterministic pattern-based defenses, not a guarantee against every novel
+attack on a future generative provider.
