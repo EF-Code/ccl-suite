@@ -653,6 +653,94 @@ class Approval(Base):
     )
 
 
+class KnowledgeFeedback(Base):
+    """Structured answer feedback without questions or evidence content."""
+
+    __tablename__ = "knowledge_feedback"
+    __table_args__ = (
+        Index("ix_knowledge_feedback_project_created_at", "project_id", "created_at"),
+        CheckConstraint(
+            "rating IN ('helpful', 'not_helpful')",
+            name="ck_knowledge_feedback_rating",
+        ),
+        CheckConstraint(
+            "answer_status IN ('answered', 'refused')",
+            name="ck_knowledge_feedback_answer_status",
+        ),
+        CheckConstraint(
+            "citation_count >= 0 AND citation_count <= 3",
+            name="ck_knowledge_feedback_citation_count",
+        ),
+        CheckConstraint(
+            "reason IS NULL OR reason IN "
+            "('accurate', 'clear', 'missing_evidence', 'wrong_source', 'other')",
+            name="ck_knowledge_feedback_reason",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    rating: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    answer_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    citation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    project: Mapped[Project] = relationship(back_populates="knowledge_feedback")
+    actor: Mapped[User | None] = relationship(
+        back_populates="knowledge_feedback",
+        foreign_keys=[actor_id],
+    )
+
+
+class KnowledgeErrorReport(Base):
+    """Structured knowledge UI error report without raw request payloads."""
+
+    __tablename__ = "knowledge_error_reports"
+    __table_args__ = (
+        Index(
+            "ix_knowledge_error_reports_project_created_at",
+            "project_id",
+            "created_at",
+        ),
+        CheckConstraint(
+            "surface IN ('search', 'answer')",
+            name="ck_knowledge_error_reports_surface",
+        ),
+        CheckConstraint(
+            "category IN "
+            "('wrong_answer', 'missing_evidence', 'wrong_source', 'technical_error', 'other')",
+            name="ck_knowledge_error_reports_category",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    surface: Mapped[str] = mapped_column(String(16), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    project: Mapped[Project] = relationship(back_populates="knowledge_error_reports")
+    actor: Mapped[User | None] = relationship(
+        back_populates="knowledge_error_reports",
+        foreign_keys=[actor_id],
+    )
+
+
 class SecurityEvent(Base):
     """Small, structured security audit record without raw request payloads."""
 
@@ -693,6 +781,8 @@ __all__ = [
     "FileHistory",
     "FileVersion",
     "IngestionRun",
+    "KnowledgeErrorReport",
+    "KnowledgeFeedback",
     "KnowledgeSource",
     "Project",
     "SecurityEvent",
