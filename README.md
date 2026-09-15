@@ -86,6 +86,11 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
   extractive answer from the strongest approved passages, returns numbered
   source citations, and refuses questions without sufficient evidence. It is
   deliberately dependency-free and does not call an external model.
+- `POST /projects/{project_id}/knowledge-feedback` records a structured
+  helpful/not-helpful rating without storing the question, answer, or source
+  text.
+- `POST /projects/{project_id}/knowledge-error-reports` records a structured
+  search/answer issue category without storing raw request payloads or logs.
 - `POST /projects/{project_id}/backups` creates and immediately verifies a
   project archive plus a checksummed manifest without changing the source.
 - `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
