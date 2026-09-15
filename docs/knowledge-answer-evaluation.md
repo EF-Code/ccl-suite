@@ -6,24 +6,27 @@ This is a fixed, local evaluation of the `local-extractive-v1` answer
 composer. It uses deterministic fixture passages rather than project data or
 an external model.
 
-The suite contains 20 cases:
+The suite contains 24 cases:
 
 - 12 supported questions: an answer must have the expected, source-linked
   excerpt.
 - 5 unsupported questions: the endpoint must refuse and emit no citations.
 - 3 conflicting-information questions: both contradictory excerpts must remain
   visible as separate citations.
+- 4 prompt-injection questions and document passages: the composer must refuse
+  or suppress the unsafe evidence without citations.
 
 ## Result
 
-The recorded evaluation result is **20/20 passed**:
+The recorded evaluation result is **24/24 passed**:
 
 | Category | Cases | Passed |
 | --- | ---: | ---: |
 | Supported evidence | 12 | 12 |
 | Safe refusal | 5 | 5 |
 | Conflicting evidence retained | 3 | 3 |
-| Total | 20 | 20 |
+| Prompt-injection boundary | 4 | 4 |
+| Total | 24 | 24 |
 
 ## Representative media operations acceptance suite
 
@@ -61,8 +64,8 @@ Run the evaluation directly from the repository root:
 ```
 
 The JSON runner exits non-zero when any fixed contract fails. Its output
-contains case identifiers and pass/fail metadata only; it does not print source
-fixture content.
+contains case identifiers, pass/fail metadata, and the required 100% pass-rate
+thresholds only; it does not print source fixture content.
 
 ## What this verifies
 
@@ -73,13 +76,12 @@ fixture content.
   silently choose, merge, or reinterpret contradictory rules.
 - The API integration test independently verifies that two ingested,
   contradictory project sources reach the answer endpoint as two citations.
+- Injection-shaped questions refuse without citations, and injection-shaped
+  document passages are suppressed before answer composition.
 
 ## Limits and boundary
 
 This is a deterministic regression suite, not a claim of semantic reasoning,
 conflict resolution, external-model quality, or production policy arbitration.
-Project access-control and bounded-request behavior remain covered by the
-endpoint test suite.
-
-Prompt instruction handling and prompt-injection testing are deliberately out
-of scope for this validation.
+Project access-control, bounded-request behavior, and the pattern-based
+prompt-injection boundary remain covered by the endpoint and security suites.
