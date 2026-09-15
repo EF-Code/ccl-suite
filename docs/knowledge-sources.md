@@ -113,6 +113,32 @@ and authenticated actor; they do not store the question or document text.
 The complete authorization order and role matrix are documented in the
 [knowledge access control](knowledge-access-control.md) note.
 
+Record a structured rating for a displayed answer without sending the question
+or evidence back to the server:
+
+```bash
+curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-feedback \
+  -H 'Content-Type: application/json' \
+  -H 'X-User-ID: <PROJECT_OWNER_ID>' \
+  -d '{
+    "rating":"helpful",
+    "reason":"accurate",
+    "answer_status":"answered",
+    "citation_count":1
+  }'
+```
+
+Report a search or answer issue with an enumerated category. The endpoint does
+not accept free-form details, so questions, source text, hidden instructions,
+and sensitive logs cannot be accidentally submitted:
+
+```bash
+curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-error-reports \
+  -H 'Content-Type: application/json' \
+  -H 'X-User-ID: <PROJECT_OWNER_ID>' \
+  -d '{"surface":"answer","category":"wrong_source"}'
+```
+
 ## Safety boundaries
 
 - Source registration references an existing active file; it does not accept
@@ -123,6 +149,9 @@ The complete authorization order and role matrix are documented in the
 - Archived files are excluded even if their former source record was approved.
 - Ingestion repeats the approved-source and active-file checks and refuses a
   source whose on-disk checksum differs from the latest inventory checksum.
+- Ingestion blocks explicit instruction-override, secret-exfiltration, and
+  access-boundary-bypass patterns. Flagged legacy chunks are suppressed during
+  retrieval as a second safety boundary.
 - Source text and its derived local vector are stored as data in
   `document_chunks`; the pipeline does not execute document text, apply it as
   system policy, or call a model.
@@ -137,8 +166,8 @@ The complete authorization order and role matrix are documented in the
 - The current local-hash vector is a dependency-free retrieval baseline, not a
   claim of model-level semantic understanding or production-scale ANN search.
 - The current answer engine is a dependency-free extractive composer, not a
-  generative model. Provider-backed generation and the evaluation benchmark
-  are later milestones.
+  generative model. It refuses injection-shaped questions and skips flagged
+  evidence; any future provider must preserve these boundaries.
 - Security events contain only the source identifier and authenticated actor;
   request bodies and credentials are not recorded. Chunk content and its
   derived vector are stored only in the source-linked chunk table.
