@@ -132,3 +132,18 @@ export type KnowledgeAnswerResponse = {
   citation_count: number;
   citations: AnswerCitation[];
 };
+
+export type KnowledgeFeedbackRating = "helpful" | "not_helpful";
+export type KnowledgeFeedbackReason =
+  | "accurate"
+  | "clear"
+  | "missing_evidence"
+  | "wrong_source"
+  | "other";
+
+export type KnowledgeErrorCategory =
+  | "wrong_answer"
+  | "missing_evidence"
+  | "wrong_source"
+  | "technical_error"
+  | "other";
