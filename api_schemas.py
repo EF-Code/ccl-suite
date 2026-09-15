@@ -342,6 +342,70 @@ class KnowledgeAnswerResponse(BaseModel):
         return self
 
 
+class KnowledgeFeedbackCreate(BaseModel):
+    """Structured answer feedback that omits the question and evidence."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    rating: Literal["helpful", "not_helpful"]
+    reason: Literal[
+        "accurate",
+        "clear",
+        "missing_evidence",
+        "wrong_source",
+        "other",
+    ] | None = None
+    answer_status: Literal["answered", "refused"]
+    citation_count: int = Field(ge=0, le=3)
+
+
+class KnowledgeFeedbackResponse(BaseModel):
+    """Acknowledgement for one privacy-bounded answer rating."""
+
+    id: UUID
+    project_id: UUID
+    rating: Literal["helpful", "not_helpful"]
+    reason: Literal[
+        "accurate",
+        "clear",
+        "missing_evidence",
+        "wrong_source",
+        "other",
+    ] | None
+    created_at: datetime
+
+
+class KnowledgeErrorReportCreate(BaseModel):
+    """Structured issue report without free-form request or answer text."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    surface: Literal["search", "answer"]
+    category: Literal[
+        "wrong_answer",
+        "missing_evidence",
+        "wrong_source",
+        "technical_error",
+        "other",
+    ]
+
+
+class KnowledgeErrorReportResponse(BaseModel):
+    """Acknowledgement for one privacy-bounded knowledge issue report."""
+
+    id: UUID
+    project_id: UUID
+    surface: Literal["search", "answer"]
+    category: Literal[
+        "wrong_answer",
+        "missing_evidence",
+        "wrong_source",
+        "technical_error",
+        "other",
+    ]
+    created_at: datetime
+
+
 class FileRestoreCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
