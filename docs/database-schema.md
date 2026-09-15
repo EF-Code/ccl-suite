@@ -14,6 +14,8 @@ erDiagram
     USER ||--o{ APPROVAL : decides
     USER ||--o{ SECURITY_EVENT : causes
     USER ||--o{ KNOWLEDGE_SOURCE : owns
+    USER ||--o{ KNOWLEDGE_FEEDBACK : submits
+    USER ||--o{ KNOWLEDGE_ERROR_REPORT : submits
     PROJECT ||--o{ FILE : contains
     FILE ||--o{ FILE_HISTORY : records
     FILE ||--o{ FILE_VERSION : versions
@@ -26,6 +28,8 @@ erDiagram
     PROJECT ||--o{ DOCUMENT_CHUNK : contains
     KNOWLEDGE_SOURCE ||--o{ DOCUMENT_CHUNK : supplies
     INGESTION_RUN ||--o{ DOCUMENT_CHUNK : produces
+    PROJECT ||--o{ KNOWLEDGE_FEEDBACK : receives
+    PROJECT ||--o{ KNOWLEDGE_ERROR_REPORT : receives
     WORKFLOW ||--o{ APPROVAL : requires
 
     USER {
@@ -150,6 +154,24 @@ erDiagram
         int embedding_dimensions
         datetime created_at
     }
+    KNOWLEDGE_FEEDBACK {
+        UUID id PK
+        UUID project_id FK
+        UUID actor_id FK
+        string rating
+        string reason
+        string answer_status
+        int citation_count
+        datetime created_at
+    }
+    KNOWLEDGE_ERROR_REPORT {
+        UUID id PK
+        UUID project_id FK
+        UUID actor_id FK
+        string surface
+        string category
+        datetime created_at
+    }
     WORKFLOW {
         UUID id PK
         UUID project_id FK
@@ -207,6 +229,10 @@ erDiagram
   heading, line location, counts, a content checksum, and the derived local
   retrieval vector. The content and vector are untrusted data; they are not
   system policy or executable input.
+- `knowledge_feedback` stores only an enumerated answer rating, optional
+  reason, answer state, and citation count. `knowledge_error_reports` stores
+  only an enumerated UI surface and issue category. Neither table stores the
+  question, answer text, evidence, hidden instructions, or raw logs.
 - `workflows` are versioned per project with a unique `(project_id, name,
   version)` key. `approvals` are separate records so each decision has its own
   lifecycle and actor references.
@@ -219,8 +245,8 @@ erDiagram
 - Indexes cover project ownership/status, file lookup by project/status,
   file-history lookup by file/time, workflow status, approval status, and
   backup lookup by project/status and time, ingestion lookup by project/source
-  and time, chunk lookup by project/source/index, and security-event lookups by
-  actor/code and time.
+  and time, chunk lookup by project/source/index, feedback/report lookup by
+  project and time, and security-event lookups by actor/code and time.
 
 ## Migration
 
