@@ -9,6 +9,11 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // The API serves one self-contained static HTML artifact; inline the
+    // bundled Geist fonts so it does not depend on an unserved /assets path.
+    assetsInlineLimit: 100_000,
+  },
   server: {
     port: 5173,
     proxy: {
