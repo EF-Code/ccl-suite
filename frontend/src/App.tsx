@@ -1135,6 +1135,34 @@ export default function App() {
                         ))}
                       </div>
                     )}
+                    <div id="knowledge-feedback-panel" className="grid gap-3 rounded-2xl border border-border bg-card p-4">
+                      <div>
+                        <p className="text-sm font-semibold">Was this answer useful?</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Your rating helps improve the workflow. The question, answer text, and evidence are not submitted with it.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button id="knowledge-feedback-helpful" type="button" variant={feedbackRating === "helpful" ? "default" : "outline"} size="sm" disabled={feedbackLoading} onClick={() => handleKnowledgeFeedback("helpful")}>
+                          <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Helpful
+                        </Button>
+                        <Button id="knowledge-feedback-not-helpful" type="button" variant={feedbackRating === "not_helpful" ? "default" : "outline"} size="sm" disabled={feedbackLoading} onClick={() => handleKnowledgeFeedback("not_helpful")}>
+                          <AlertCircle className="mr-1.5 h-3.5 w-3.5" />Not helpful
+                        </Button>
+                      </div>
+                      {feedbackRating && <p id="knowledge-feedback-status" className="text-xs text-emerald-700" role="status">Thanks — your {feedbackRating === "helpful" ? "helpful" : "not helpful"} rating was recorded.</p>}
+                      <form id="knowledge-error-form" onSubmit={handleKnowledgeErrorReport} className="grid gap-2 border-t border-border pt-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="knowledge-error-category" className="text-xs">Report an issue</Label>
+                          <select id="knowledge-error-category" name="category" defaultValue="technical_error" className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20">
+                            <option value="wrong_answer">Answer seems wrong</option><option value="missing_evidence">Evidence is missing</option><option value="wrong_source">Wrong source cited</option><option value="technical_error">Something failed</option><option value="other">Other issue</option>
+                          </select>
+                        </div>
+                        <Button id="knowledge-report-error" type="submit" variant="secondary" disabled={errorReportLoading}>
+                          <AlertCircle className="mr-1.5 h-3.5 w-3.5" />{errorReportLoading ? "Sending…" : "Report issue"}
+                        </Button>
+                      </form>
+                      {errorReportSent && <p id="knowledge-error-status" className="text-xs text-emerald-700" role="status">Report received. Only the issue category was stored.</p>}
+                      <p className="text-[0.68rem] text-muted-foreground">Privacy guardrail: hidden instructions, question text, source content, and sensitive logs are never included in feedback or issue reports.</p>
+                    </div>
                   </div>
                 )}
               </TabsContent>
