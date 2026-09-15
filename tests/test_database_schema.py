@@ -10,6 +10,8 @@ from models import (
     FileHistory,
     FileVersion,
     IngestionRun,
+    KnowledgeErrorReport,
+    KnowledgeFeedback,
     KnowledgeSource,
     Project,
     SecurityEvent,
@@ -31,6 +33,8 @@ REQUIRED_TABLES = {
     "knowledge_sources",
     "ingestion_runs",
     "document_chunks",
+    "knowledge_feedback",
+    "knowledge_error_reports",
 }
 
 
@@ -47,6 +51,8 @@ def test_relationship_mappers_configure() -> None:
     assert Project.knowledge_sources.property.mapper.class_ is KnowledgeSource
     assert Project.ingestion_runs.property.mapper.class_ is IngestionRun
     assert Project.document_chunks.property.mapper.class_ is DocumentChunk
+    assert Project.knowledge_feedback.property.mapper.class_ is KnowledgeFeedback
+    assert Project.knowledge_error_reports.property.mapper.class_ is KnowledgeErrorReport
     assert KnowledgeSource.ingestion_runs.property.mapper.class_ is IngestionRun
     assert KnowledgeSource.document_chunks.property.mapper.class_ is DocumentChunk
     assert IngestionRun.chunks.property.mapper.class_ is DocumentChunk
@@ -56,6 +62,8 @@ def test_relationship_mappers_configure() -> None:
     assert Project.workflows.property.mapper.class_ is Workflow
     assert Workflow.approvals.property.mapper.class_ is Approval
     assert User.security_events.property.mapper.class_ is SecurityEvent
+    assert User.knowledge_feedback.property.mapper.class_ is KnowledgeFeedback
+    assert User.knowledge_error_reports.property.mapper.class_ is KnowledgeErrorReport
 
 
 def test_schema_can_be_created_without_a_live_database() -> None:
@@ -118,6 +126,12 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     } == {
         "ix_security_events_actor_occurred_at",
         "ix_security_events_code_occurred_at",
+    }
+    assert "ix_knowledge_feedback_project_created_at" in {
+        index.name for index in KnowledgeFeedback.__table__.indexes
+    }
+    assert "ix_knowledge_error_reports_project_created_at" in {
+        index.name for index in KnowledgeErrorReport.__table__.indexes
     }
 
     project_owner_fk = next(iter(Project.__table__.c.owner_id.foreign_keys))
