@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
-import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type SearchResult } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type SearchResult } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
@@ -52,6 +52,10 @@ export default function App() {
   const [answerResponse, setAnswerResponse] = useState<KnowledgeAnswerResponse | null>(null)
   const [answerError, setAnswerError] = useState("")
   const [answerLoading, setAnswerLoading] = useState(false)
+  const [feedbackRating, setFeedbackRating] = useState<KnowledgeFeedbackRating | null>(null)
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+  const [errorReportSent, setErrorReportSent] = useState(false)
+  const [errorReportLoading, setErrorReportLoading] = useState(false)
   const [files, setFiles] = useState<FileRecord[]>([])
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
   const [uploadPolicy, setUploadPolicy] = useState<any>(null)
@@ -156,7 +160,7 @@ export default function App() {
     const body = Object.fromEntries(fd.entries())
     try {
       const proj: any = await apiRequest("/projects", { method: "POST", body: JSON.stringify(body) })
-      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError("")
+      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false)
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
@@ -354,6 +358,8 @@ export default function App() {
     setAnswerLoading(true)
     setAnswerError("")
     setAnswerResponse(null)
+    setFeedbackRating(null)
+    setErrorReportSent(false)
     try {
       const data = await apiRequest<KnowledgeAnswerResponse>(`/projects/${selectedId}/knowledge-answer`, {
         method: "POST",
@@ -371,6 +377,46 @@ export default function App() {
       showMessage(message, "error")
     } finally {
       setAnswerLoading(false)
+    }
+  }
+
+  async function handleKnowledgeFeedback(rating: KnowledgeFeedbackRating) {
+    if (!selectedId || !answerResponse || feedbackLoading) return
+    setFeedbackLoading(true)
+    try {
+      await apiRequest(`/projects/${selectedId}/knowledge-feedback`, {
+        method: "POST",
+        body: JSON.stringify({
+          rating,
+          answer_status: answerResponse.status,
+          citation_count: answerResponse.citation_count,
+        }),
+      })
+      setFeedbackRating(rating)
+      showMessage("Feedback recorded. No question or source text was stored.")
+    } catch (err: any) {
+      showMessage((err as Error).message, "error")
+    } finally {
+      setFeedbackLoading(false)
+    }
+  }
+
+  async function handleKnowledgeErrorReport(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selectedId || !answerResponse || errorReportLoading) return
+    const category = String(new FormData(e.currentTarget).get("category") || "other") as KnowledgeErrorCategory
+    setErrorReportLoading(true)
+    try {
+      await apiRequest(`/projects/${selectedId}/knowledge-error-reports`, {
+        method: "POST",
+        body: JSON.stringify({ surface: "answer", category }),
+      })
+      setErrorReportSent(true)
+      showMessage("Issue report received. Only the selected category was stored.")
+    } catch (err: any) {
+      showMessage((err as Error).message, "error")
+    } finally {
+      setErrorReportLoading(false)
     }
   }
 
