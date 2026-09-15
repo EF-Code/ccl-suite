@@ -10,13 +10,14 @@ from pathlib import Path
 # implementation importable by tests and other tooling.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from knowledge_evaluation import evaluation_counts, run_evaluation
+from knowledge_evaluation import evaluation_counts, evaluation_passed, evaluation_thresholds, run_evaluation
 
 
 def main() -> int:
     results = run_evaluation()
     payload = {
         "summary": evaluation_counts(results),
+        "thresholds": evaluation_thresholds(results),
         "cases": [
             {
                 "id": result.case.case_id,
@@ -31,7 +32,7 @@ def main() -> int:
         ],
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0 if payload["summary"]["failed"] == 0 else 1
+    return 0 if evaluation_passed(results) else 1
 
 
 if __name__ == "__main__":
