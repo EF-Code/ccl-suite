@@ -14,6 +14,8 @@ from models import (  # noqa: F401
     FileHistory,
     FileVersion,
     IngestionRun,
+    KnowledgeErrorReport,
+    KnowledgeFeedback,
     KnowledgeSource,
     Project,
     SecurityEvent,
