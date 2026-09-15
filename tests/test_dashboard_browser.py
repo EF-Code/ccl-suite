@@ -322,6 +322,13 @@ def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
     expect(answer_result).to_contain_text("extractive")
     expect(answer_result).to_contain_text("Verify file hashes before restoring a file.")
     expect(answer_result).to_contain_text("Evidence rail")
+    feedback_panel = page.locator("#knowledge-feedback-panel")
+    expect(feedback_panel).to_be_visible()
+    page.locator("#knowledge-feedback-helpful").click()
+    expect(page.locator("#knowledge-feedback-status")).to_contain_text("recorded")
+    page.locator("#knowledge-error-category").select_option("wrong_source")
+    page.locator("#knowledge-report-error").click()
+    expect(page.locator("#knowledge-error-status")).to_contain_text("Report received")
 
 
 def test_dashboard_exposes_knowledge_scope_filters(dashboard_page: Page) -> None:
