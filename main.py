@@ -141,6 +141,11 @@ from knowledge_contract import (
     ANSWER_CONTRACT_VERSION,
     ANSWER_MODE,
 )
+from knowledge_security import (
+    UnsafeKnowledgeContentError,
+    ensure_safe_untrusted_text,
+    scan_prompt_injection,
+)
 from logger import logger
 from models import (
     Approval,
@@ -972,6 +977,27 @@ async def ingest_knowledge_source(
             raise DocumentProcessingError(
                 "Source file changed since its inventory was recorded."
             )
+        ensure_safe_untrusted_text(prepared.document.text)
+    except UnsafeKnowledgeContentError as exc:
+        db.rollback()
+        record_failed_ingestion(
+            db,
+            project_id,
+            source_id,
+            expected_checksum,
+            "Document was blocked by the prompt-injection safety gate.",
+        )
+        record_knowledge_source_event(
+            db,
+            actor.id,
+            source_id,
+            "knowledge_source.injection_blocked",
+            "denied",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Document could not be ingested safely.",
+        ) from exc
     except (FileNotFoundError, NotADirectoryError) as exc:
         db.rollback()
         record_failed_ingestion(
@@ -1057,6 +1083,16 @@ def retrieve_project_knowledge(
     search_request: SemanticSearchRequest,
 ) -> SemanticSearchResponse:
     """Return ranked passages after applying the approved-source boundary."""
+
+    if scan_prompt_injection(search_request.query):
+        return SemanticSearchResponse(
+            project_id=project.id,
+            query=search_request.query,
+            embedding_model=EMBEDDING_MODEL,
+            embedding_dimensions=EMBEDDING_DIMENSIONS,
+            result_count=0,
+            results=[],
+        )
 
     try:
         query_embedding = embed_text(search_request.query)
@@ -1159,7 +1195,11 @@ def retrieve_project_knowledge(
             )
 
     ranked: list[tuple[float, DocumentChunk, KnowledgeSource, File]] = []
+    unsafe_evidence_count = 0
     for chunk, source, file_record, _ingestion_run in latest_rows.values():
+        if scan_prompt_injection(chunk.content):
+            unsafe_evidence_count += 1
+            continue
         try:
             score = cosine_similarity(query_embedding, validate_embedding(chunk.embedding))
         except EmbeddingError as exc:
@@ -1170,6 +1210,13 @@ def retrieve_project_knowledge(
             ) from exc
         if score >= MIN_SEARCH_SCORE:
             ranked.append((score, chunk, source, file_record))
+
+    if unsafe_evidence_count:
+        logger.warning(
+            "Semantic search omitted %d unsafe evidence chunk(s) for project %s.",
+            unsafe_evidence_count,
+            project.id,
+        )
 
     ranked.sort(
         key=lambda item: (
