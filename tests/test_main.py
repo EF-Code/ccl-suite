@@ -3395,3 +3395,21 @@ def test_research_scope_api_accepts_explicit_global_source_scope() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "applicable"
+
+
+def test_research_extract_rejects_unknown_scope_fields() -> None:
+    project = create_project("Research Schema Project")
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "source_title": "Schema source",
+            "source_reference": "local://schema",
+            "source_text": "The finding is recorded.",
+            "scope": {"country": "Nigeria"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert any(detail["loc"][-1] == "country" for detail in response.json()["detail"])
