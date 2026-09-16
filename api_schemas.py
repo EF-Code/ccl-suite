@@ -354,12 +354,12 @@ class ResearchScope(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    model_year: int | None = Field(default=None, ge=1886, le=2100)
-    engine: str | None = Field(default=None, min_length=1, max_length=120)
-    market: str | None = Field(default=None, min_length=1, max_length=120)
-    population: str | None = Field(default=None, min_length=1, max_length=120)
-    setting: str | None = Field(default=None, min_length=1, max_length=120)
-    evidence_type: str | None = Field(default=None, min_length=1, max_length=80)
+    model_year: int | None = Field(default=None, ge=1886, le=2100, description="Vehicle or product model year.")
+    engine: str | None = Field(default=None, min_length=1, max_length=120, description="Engine or technical configuration.")
+    market: str | None = Field(default=None, min_length=1, max_length=120, description="Geographic or commercial market.")
+    population: str | None = Field(default=None, min_length=1, max_length=120, description="Population represented by the evidence.")
+    setting: str | None = Field(default=None, min_length=1, max_length=120, description="Physical or operational setting.")
+    evidence_type: str | None = Field(default=None, min_length=1, max_length=80, description="Type of evidence, such as field study or review.")
 
 
 class ResearchClaimExtractionRequest(BaseModel):
