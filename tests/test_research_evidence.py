@@ -194,3 +194,23 @@ def test_scope_checker_treats_unknown_target_values_as_uncertain() -> None:
 
     assert result.status == "uncertain"
     assert result.fields[1].status == "uncertain"
+
+
+def test_scope_checker_accepts_field_specific_explicit_wildcards() -> None:
+    result = check_claim_applicability(
+        uuid4(),
+        "factual",
+        source_scope={
+            "model_year": "all model years",
+            "engine": "*",
+            "setting": "all settings",
+        },
+        target_scope={"model_year": 2025, "engine": "electric", "setting": "urban roads"},
+    )
+
+    assert result.status == "applicable"
+    assert [field.status for field in result.fields if field.requested] == [
+        "match",
+        "match",
+        "match",
+    ]
