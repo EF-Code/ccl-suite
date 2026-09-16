@@ -39,7 +39,7 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     title: "Company Knowledge Base",
     purpose: "Answer questions from approved SOPs and project rules",
     weeks: "Knowledge delivery · 31 Aug - 11 Sep",
-    status: "current",
+    status: "complete",
     backendReady: true,
     frontendCoverage: "full",
     endpoints: [
@@ -57,11 +57,14 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     title: "Research Evidence Agent",
     purpose: "Extract claims and flag missing or mismatched evidence",
     weeks: "Research delivery · 14-18 Sep",
-    status: "upcoming",
-    backendReady: false,
-    frontendCoverage: "placeholder",
-    endpoints: ["POST /projects/{id}/evidence/* (planned)"],
-    uiComponents: ["Claim Extractor", "Evidence Register (preview)"],
+    status: "current",
+    backendReady: true,
+    frontendCoverage: "partial",
+    endpoints: [
+      "POST /projects/{id}/research/claims/extract",
+      "POST /projects/{id}/research/claims/check-scope",
+    ],
+    uiComponents: ["Claim Extractor", "Evidence Preview", "Scope Checker"],
   },
   {
     id: 4,
@@ -93,4 +96,4 @@ export const SIWES_TIMELINE: TimelineModule[] = [
 ];
 
 export const CURRENT_WEEK = "Current capability";
-export const CURRENT_PHASE = "Knowledge Base · Grounded Answers";
+export const CURRENT_PHASE = "Research Evidence · Claims and Scope";
