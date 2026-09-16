@@ -106,7 +106,7 @@ class ApplicabilityResult:
 
 
 _HEADING_PATTERN: Final = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
-_BULLET_PATTERN: Final = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
+_BULLET_PATTERN: Final = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|>\s+)")
 _SENTENCE_BOUNDARY: Final = re.compile(r"(?<=[.!?])\s+")
 _INSTRUCTION_PATTERN: Final = re.compile(
     r"^(?:always|avoid|check|choose|do not|don't|ensure|follow|keep|never|"
