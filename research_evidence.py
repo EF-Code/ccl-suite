@@ -297,6 +297,8 @@ def _scope_status(observed: ScopeValue, requested: ScopeValue) -> tuple[Applicab
         return "not_requested", None, observed_text
     observed_comparable = _canonical_scope_text(observed_text) if observed_text else None
     requested_comparable = _canonical_scope_text(requested_text)
+    if requested_comparable in _UNKNOWN_SCOPE_VALUES:
+        return "uncertain", requested_text, observed_text
     if observed_text is None or observed_comparable in _UNKNOWN_SCOPE_VALUES:
         return "uncertain", requested_text, observed_text
     if observed_comparable in _WILDCARD_SCOPE_VALUES:
