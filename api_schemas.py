@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -14,6 +14,12 @@ from knowledge_contract import (
     ANSWER_MODE,
 )
 from models import Approval, File, KnowledgeSource, Project, SecurityEvent, User, Workflow
+from research_evidence import (
+    MAX_RESEARCH_CLAIMS,
+    MAX_RESEARCH_CLAIM_CHARACTERS,
+    MAX_RESEARCH_SOURCE_CHARACTERS,
+    RESEARCH_EVIDENCE_SCHEMA_VERSION,
+)
 
 
 class UserCreate(BaseModel):
@@ -339,6 +345,126 @@ class KnowledgeAnswerResponse(BaseModel):
                 raise ValueError("Answered responses require citations and no refusal reason.")
         elif self.refusal_reason is None or self.citations:
             raise ValueError("Refused responses require a reason and no citations.")
+        return self
+
+
+class ResearchScope(BaseModel):
+    """Allow-listed context used to compare evidence applicability."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    model_year: int | None = Field(default=None, ge=1886, le=2100)
+    engine: str | None = Field(default=None, min_length=1, max_length=120)
+    market: str | None = Field(default=None, min_length=1, max_length=120)
+    population: str | None = Field(default=None, min_length=1, max_length=120)
+    setting: str | None = Field(default=None, min_length=1, max_length=120)
+    evidence_type: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class ResearchClaimExtractionRequest(BaseModel):
+    """Bounded source input for the deterministic claim extractor."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_title: str = Field(min_length=1, max_length=200)
+    source_reference: str = Field(min_length=1, max_length=512)
+    source_date: date | None = None
+    source_text: str = Field(min_length=1, max_length=MAX_RESEARCH_SOURCE_CHARACTERS)
+    scope: ResearchScope = Field(default_factory=ResearchScope)
+
+
+class ResearchClaimResponse(BaseModel):
+    """One provenance-preserving claim in a validated evidence preview."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    claim_id: UUID
+    claim: str = Field(min_length=1, max_length=MAX_RESEARCH_CLAIM_CHARACTERS)
+    classification: Literal["factual", "heading", "instruction", "opinion", "creative"]
+    source_title: str = Field(min_length=1, max_length=200)
+    source_reference: str = Field(min_length=1, max_length=512)
+    source_date: date | None = None
+    passage: str = Field(min_length=1, max_length=MAX_RESEARCH_SOURCE_CHARACTERS)
+    scope: ResearchScope
+    review_status: Literal["needs_review"]
+
+
+class ResearchClaimExtractionResponse(BaseModel):
+    """Validated extraction output; claims are not persisted at this stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[RESEARCH_EVIDENCE_SCHEMA_VERSION]
+    project_id: UUID
+    source_title: str = Field(min_length=1, max_length=200)
+    source_reference: str = Field(min_length=1, max_length=512)
+    source_date: date | None = None
+    scope: ResearchScope
+    claim_count: int = Field(ge=0, le=MAX_RESEARCH_CLAIMS)
+    claims: list[ResearchClaimResponse] = Field(max_length=MAX_RESEARCH_CLAIMS)
+
+    @model_validator(mode="after")
+    def validate_claim_count(self) -> ResearchClaimExtractionResponse:
+        """Prevent a response envelope from disagreeing with its claim list."""
+
+        if self.claim_count != len(self.claims):
+            raise ValueError("claim_count must match the claims list.")
+        return self
+
+
+class ResearchApplicabilityCheckRequest(BaseModel):
+    """Validated claim plus target context for a conservative scope check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim: ResearchClaimResponse
+    target_scope: ResearchScope = Field(default_factory=ResearchScope)
+
+
+class ResearchApplicabilityFieldResponse(BaseModel):
+    """One field-level applicability comparison."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: Literal[
+        "model_year",
+        "engine",
+        "market",
+        "population",
+        "setting",
+        "evidence_type",
+    ]
+    status: Literal["match", "mismatch", "uncertain", "not_requested"]
+    requested: str | None = Field(default=None, max_length=120)
+    observed: str | None = Field(default=None, max_length=120)
+
+
+class ResearchApplicabilityCheckResponse(BaseModel):
+    """Validated scope-check output with uncertainty made explicit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[RESEARCH_EVIDENCE_SCHEMA_VERSION]
+    project_id: UUID
+    claim_id: UUID
+    claim_classification: Literal[
+        "factual",
+        "heading",
+        "instruction",
+        "opinion",
+        "creative",
+    ]
+    status: Literal["applicable", "mismatch", "uncertain", "not_applicable"]
+    reason: str = Field(min_length=1, max_length=200)
+    fields: list[ResearchApplicabilityFieldResponse] = Field(max_length=6)
+
+    @model_validator(mode="after")
+    def validate_unique_fields(self) -> ResearchApplicabilityCheckResponse:
+        """Keep the field report bounded and unambiguous for clients."""
+
+        names = [field.field for field in self.fields]
+        if len(names) != len(set(names)):
+            raise ValueError("Applicability fields must be unique.")
         return self
 
 
