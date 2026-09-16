@@ -32,6 +32,33 @@ Every extracted claim contains the following fields:
 The response envelope is versioned as `research-evidence-v1` and includes the
 project ID, source metadata, scope, claim count, and validated claim list.
 
+## Example validated claim
+
+```json
+{
+  "claim_id": "2c7e3b0e-0c4c-4a65-a2e3-1f4a25e4c1f5",
+  "claim": "The vehicle uses a hybrid engine.",
+  "classification": "factual",
+  "source_title": "Vehicle field study",
+  "source_reference": "local://vehicle-field-study",
+  "source_date": "2026-09-14",
+  "passage": "The vehicle uses a hybrid engine.",
+  "scope": {
+    "model_year": 2024,
+    "engine": "hybrid",
+    "market": "Nigeria",
+    "population": null,
+    "setting": null,
+    "evidence_type": "field study"
+  },
+  "review_status": "needs_review"
+}
+```
+
+The claim and passage are deliberately separate: the claim is the bounded
+classification unit, while the passage is the source context that must be
+checked before any later approval.
+
 ## Workflow
 
 ```text
