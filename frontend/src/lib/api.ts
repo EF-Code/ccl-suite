@@ -133,6 +133,62 @@ export type KnowledgeAnswerResponse = {
   citations: AnswerCitation[];
 };
 
+export type ResearchClaimClassification =
+  | "factual"
+  | "heading"
+  | "instruction"
+  | "opinion"
+  | "creative";
+
+export type ResearchScope = {
+  model_year: number | null;
+  engine: string | null;
+  market: string | null;
+  population: string | null;
+  setting: string | null;
+  evidence_type: string | null;
+};
+
+export type ResearchClaim = {
+  claim_id: string;
+  claim: string;
+  classification: ResearchClaimClassification;
+  source_title: string;
+  source_reference: string;
+  source_date: string | null;
+  passage: string;
+  scope: ResearchScope;
+  review_status: "needs_review";
+};
+
+export type ResearchClaimExtractionResponse = {
+  schema_version: "research-evidence-v1";
+  project_id: string;
+  source_title: string;
+  source_reference: string;
+  source_date: string | null;
+  scope: ResearchScope;
+  claim_count: number;
+  claims: ResearchClaim[];
+};
+
+export type ResearchApplicabilityField = {
+  field: keyof ResearchScope;
+  status: "match" | "mismatch" | "uncertain" | "not_requested";
+  requested: string | null;
+  observed: string | null;
+};
+
+export type ResearchApplicabilityResponse = {
+  schema_version: "research-evidence-v1";
+  project_id: string;
+  claim_id: string;
+  claim_classification: ResearchClaimClassification;
+  status: "applicable" | "mismatch" | "uncertain" | "not_applicable";
+  reason: string;
+  fields: ResearchApplicabilityField[];
+};
+
 export type KnowledgeFeedbackRating = "helpful" | "not_helpful";
 export type KnowledgeFeedbackReason =
   | "accurate"
