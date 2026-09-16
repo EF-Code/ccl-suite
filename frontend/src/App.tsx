@@ -1311,9 +1311,9 @@ export default function App() {
                 <div className="space-y-4">
                   <div>
                     <p className="text-sm font-semibold">Extract claims</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Add source metadata and the passage you want to classify. The source reference and date stay attached to every result.</p>
+                    <p id="research-extract-help" className="mt-1 text-xs text-muted-foreground">Add source metadata and the passage you want to classify. The source reference and date stay attached to every result.</p>
                   </div>
-                  <form id="research-extract-form" onSubmit={handleResearchExtract} className="grid gap-3">
+                  <form id="research-extract-form" onSubmit={handleResearchExtract} aria-describedby="research-extract-help" className="grid gap-3">
                     <div className="grid gap-1.5"><Label htmlFor="research-project-id" className="text-xs">Project ID</Label><Input id="research-project-id" name="project_id" value={selectedId} readOnly /></div>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="grid gap-1.5"><Label htmlFor="research-source-title" className="text-xs">Source title</Label><Input id="research-source-title" name="source_title" placeholder="e.g. 2024 vehicle field study" required maxLength={200} /></div>
@@ -1363,8 +1363,8 @@ export default function App() {
                   }
 
                   <div className="border-t border-border pt-4">
-                    <div className="mb-3"><p className="text-sm font-semibold">Check applicability</p><p className="mt-1 text-xs text-muted-foreground">Compare a factual claim with a target context. The checker uses exact matches and explicit wildcards only.</p></div>
-                    <form id="research-scope-form" onSubmit={handleResearchScopeCheck} className="grid gap-3">
+                    <div className="mb-3"><p className="text-sm font-semibold">Check applicability</p><p id="research-scope-help" className="mt-1 text-xs text-muted-foreground">Compare a factual claim with a target context. The checker uses exact matches and explicit wildcards only.</p></div>
+                    <form id="research-scope-form" onSubmit={handleResearchScopeCheck} aria-describedby="research-scope-help" className="grid gap-3">
                       <div className="grid gap-1.5"><Label htmlFor="research-claim-id" className="text-xs">Factual claim</Label><select id="research-claim-id" name="claim_id" defaultValue="" required disabled={researchClaims.filter(claim => claim.classification === "factual").length === 0} className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20"><option value="" disabled>{researchClaims.some(claim => claim.classification === "factual") ? "Select a factual claim" : "Extract a factual claim first"}</option>{researchClaims.filter(claim => claim.classification === "factual").map(claim => <option key={claim.claim_id} value={claim.claim_id}>{claim.claim.slice(0, 100)}{claim.claim.length > 100 ? "…" : ""}</option>)}</select></div>
                       <fieldset className="grid gap-2 rounded-xl border border-border bg-muted/20 p-3">
                         <legend className="px-1 text-xs font-semibold">Target scope <span className="font-normal text-muted-foreground">(leave blank to flag uncertainty)</span></legend>
