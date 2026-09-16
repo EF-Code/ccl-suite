@@ -376,7 +376,7 @@ class ResearchClaimExtractionRequest(BaseModel):
 class ResearchClaimResponse(BaseModel):
     """One provenance-preserving claim in a validated evidence preview."""
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid")
 
     claim_id: UUID
     claim: str = Field(min_length=1, max_length=MAX_RESEARCH_CLAIM_CHARACTERS)
