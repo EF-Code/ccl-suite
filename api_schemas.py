@@ -409,6 +409,16 @@ class ResearchClaimExtractionResponse(BaseModel):
 
         if self.claim_count != len(self.claims):
             raise ValueError("claim_count must match the claims list.")
+        if any(
+            (
+                claim.source_title != self.source_title
+                or claim.source_reference != self.source_reference
+                or claim.source_date != self.source_date
+                or claim.scope != self.scope
+            )
+            for claim in self.claims
+        ):
+            raise ValueError("Each claim must retain the envelope source metadata.")
         return self
 
 
