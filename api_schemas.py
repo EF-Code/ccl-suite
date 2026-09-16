@@ -19,6 +19,7 @@ from research_evidence import (
     MAX_RESEARCH_CLAIM_CHARACTERS,
     MAX_RESEARCH_SOURCE_CHARACTERS,
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
+    RESEARCH_SCOPE_FIELDS,
 )
 
 
@@ -475,6 +476,8 @@ class ResearchApplicabilityCheckResponse(BaseModel):
         names = [field.field for field in self.fields]
         if len(names) != len(set(names)):
             raise ValueError("Applicability fields must be unique.")
+        if set(names) != set(RESEARCH_SCOPE_FIELDS):
+            raise ValueError("Applicability responses must cover every scope field.")
         return self
 
 
