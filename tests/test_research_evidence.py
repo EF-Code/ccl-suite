@@ -182,3 +182,15 @@ def test_classify_claim_recognizes_additional_creative_labels() -> None:
     assert classify_claim("Prompt: Write a short opening.") == "creative"
     assert classify_claim("Storyboard - Begin with an exterior shot.") == "creative"
     assert classify_claim("Thumbnail: Use a single subject.") == "creative"
+
+
+def test_scope_checker_treats_unknown_target_values_as_uncertain() -> None:
+    result = check_claim_applicability(
+        uuid4(),
+        "factual",
+        source_scope={"engine": "hybrid"},
+        target_scope={"engine": "unknown"},
+    )
+
+    assert result.status == "uncertain"
+    assert result.fields[1].status == "uncertain"
