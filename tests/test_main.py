@@ -3257,3 +3257,21 @@ def test_research_extract_rejects_source_over_the_contract_bound() -> None:
 
     assert response.status_code == 422
     assert any(detail["loc"][-1] == "source_text" for detail in response.json()["detail"])
+
+
+def test_research_extract_rejects_oversized_scope_values() -> None:
+    project = create_project("Research Scope Size Project")
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "source_title": "Scope source",
+            "source_reference": "local://scope-size",
+            "source_text": "The finding is recorded.",
+            "scope": {"market": "m" * 121},
+        },
+    )
+
+    assert response.status_code == 422
+    assert any(detail["loc"][-1] == "market" for detail in response.json()["detail"])
