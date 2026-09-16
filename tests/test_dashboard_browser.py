@@ -402,3 +402,7 @@ def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) 
     scope_result.wait_for(state="visible")
     expect(scope_result).to_contain_text("applicable")
     expect(scope_result).to_contain_text("All requested scope fields match")
+
+    page.locator("#research-clear-preview").click()
+    expect(page.locator("#research-claims-result")).to_contain_text("No claims yet")
+    expect(page.locator("#research-scope-result")).to_be_hidden()
