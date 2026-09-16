@@ -190,6 +190,12 @@ def classify_claim(text: str, *, is_heading: bool = False) -> ClaimClassificatio
     return "factual"
 
 
+def research_scope_fields() -> tuple[ApplicabilityFieldName, ...]:
+    """Return the stable order used by every scope report."""
+
+    return RESEARCH_SCOPE_FIELDS
+
+
 def _claim_units(line: str) -> list[str]:
     """Split a source line into sentence-sized claim candidates."""
 
@@ -352,4 +358,5 @@ __all__ = [
     "check_claim_applicability",
     "classify_claim",
     "extract_claims",
+    "research_scope_fields",
 ]
