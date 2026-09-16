@@ -3337,3 +3337,32 @@ def test_research_scope_api_skips_non_factual_claims() -> None:
     payload = response.json()
     assert payload["status"] == "not_applicable"
     assert all(field["status"] == "not_requested" for field in payload["fields"])
+
+
+def test_research_scope_api_flags_missing_source_context() -> None:
+    project = create_project("Research Unknown Scope Project")
+    extracted = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "source_title": "Incomplete study",
+            "source_reference": "local://incomplete",
+            "source_text": "The finding is recorded.",
+            "scope": {"model_year": 2024},
+        },
+    )
+    assert extracted.status_code == 200
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/check-scope",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "claim": extracted.json()["claims"][0],
+            "target_scope": {"model_year": 2024, "engine": "electric"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "uncertain"
