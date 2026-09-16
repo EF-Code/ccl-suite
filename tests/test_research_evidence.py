@@ -2,6 +2,7 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
+from api_schemas import ResearchClaimExtractionResponse, ResearchClaimResponse, ResearchScope
 
 from knowledge_security import UnsafeKnowledgeContentError
 from research_evidence import (
@@ -238,3 +239,30 @@ def test_extract_claims_retains_internal_source_line_whitespace() -> None:
 
     assert claims[0].claim == "The source keeps this indentation."
     assert claims[0].passage == "  The source keeps this indentation.  "
+
+
+def test_extraction_response_rejects_claim_metadata_drift() -> None:
+    scope = ResearchScope(model_year=2024)
+    claim = ResearchClaimResponse(
+        claim_id=uuid4(),
+        claim="The source claim is recorded.",
+        classification="factual",
+        source_title="Different source",
+        source_reference="local://source",
+        source_date=None,
+        passage="The source claim is recorded.",
+        scope=scope,
+        review_status="needs_review",
+    )
+
+    with pytest.raises(ValueError, match="source metadata"):
+        ResearchClaimExtractionResponse(
+            schema_version="research-evidence-v1",
+            project_id=uuid4(),
+            source_title="Envelope source",
+            source_reference="local://source",
+            source_date=None,
+            scope=scope,
+            claim_count=1,
+            claims=[claim],
+        )
