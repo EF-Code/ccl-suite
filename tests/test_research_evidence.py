@@ -2,7 +2,13 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
-from api_schemas import ResearchClaimExtractionResponse, ResearchClaimResponse, ResearchScope
+from api_schemas import (
+    ResearchApplicabilityCheckResponse,
+    ResearchApplicabilityFieldResponse,
+    ResearchClaimExtractionResponse,
+    ResearchClaimResponse,
+    ResearchScope,
+)
 
 from knowledge_security import UnsafeKnowledgeContentError
 from research_evidence import (
@@ -265,4 +271,24 @@ def test_extraction_response_rejects_claim_metadata_drift() -> None:
             scope=scope,
             claim_count=1,
             claims=[claim],
+        )
+
+
+def test_applicability_response_rejects_incomplete_field_reports() -> None:
+    with pytest.raises(ValueError, match="every scope field"):
+        ResearchApplicabilityCheckResponse(
+            schema_version="research-evidence-v1",
+            project_id=uuid4(),
+            claim_id=uuid4(),
+            claim_classification="factual",
+            status="uncertain",
+            reason="The source is incomplete.",
+            fields=[
+                ResearchApplicabilityFieldResponse(
+                    field="market",
+                    status="uncertain",
+                    requested="Nigeria",
+                    observed=None,
+                )
+            ],
         )
