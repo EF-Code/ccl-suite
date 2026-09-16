@@ -165,3 +165,17 @@ This slice does not implement reviewer approval, evidence corrections,
 verification status, or CSV/JSON/Markdown export. Those actions require a
 separate review and publication contract so that a preview cannot be mistaken
 for approved company evidence.
+
+## Verification checklist
+
+The implementation is exercised at three layers:
+
+```bash
+~/.venv/bin/python -m pytest -q tests/test_research_evidence.py
+~/.venv/bin/python -m pytest -q tests/test_main.py -k research
+RUN_BROWSER_TESTS=1 ~/.venv/bin/python -m pytest -q tests/test_dashboard_browser.py
+```
+
+The browser check covers project selection, source metadata entry, claim
+preview, factual-claim selection, and an applicable scope result. It does not
+approve, correct, verify, or export the preview.
