@@ -6,9 +6,11 @@ import pytest
 from knowledge_security import UnsafeKnowledgeContentError
 from research_evidence import (
     ResearchEvidenceError,
+    RESEARCH_SCOPE_FIELDS,
     check_claim_applicability,
     classify_claim,
     extract_claims,
+    research_scope_fields,
 )
 
 
@@ -150,3 +152,15 @@ def test_scope_checker_accepts_explicit_wildcard_without_guessing() -> None:
 
     assert result.status == "applicable"
     assert result.fields[2].status == "match"
+
+
+def test_scope_fields_have_one_stable_order() -> None:
+    assert research_scope_fields() == RESEARCH_SCOPE_FIELDS
+    assert RESEARCH_SCOPE_FIELDS == (
+        "model_year",
+        "engine",
+        "market",
+        "population",
+        "setting",
+        "evidence_type",
+    )
