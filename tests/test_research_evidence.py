@@ -176,3 +176,9 @@ def test_extract_claims_strips_quote_decoration_but_keeps_passage() -> None:
     assert len(claims) == 1
     assert claims[0].claim == "The quoted finding is recorded."
     assert claims[0].passage == "> The quoted finding is recorded."
+
+
+def test_classify_claim_recognizes_additional_creative_labels() -> None:
+    assert classify_claim("Prompt: Write a short opening.") == "creative"
+    assert classify_claim("Storyboard - Begin with an exterior shot.") == "creative"
+    assert classify_claim("Thumbnail: Use a single subject.") == "creative"
