@@ -282,6 +282,12 @@ def _scope_value(value: ScopeValue) -> str | None:
     return normalized or None
 
 
+def _canonical_scope_text(value: str) -> str:
+    """Compare text scopes without making semantic assumptions."""
+
+    return " ".join(value.split()).casefold()
+
+
 def _scope_status(observed: ScopeValue, requested: ScopeValue) -> tuple[ApplicabilityFieldStatus, str | None, str | None]:
     """Compare one field using exact matching and explicit wildcards only."""
 
@@ -289,11 +295,13 @@ def _scope_status(observed: ScopeValue, requested: ScopeValue) -> tuple[Applicab
     observed_text = _scope_value(observed)
     if requested_text is None:
         return "not_requested", None, observed_text
-    if observed_text is None or observed_text.casefold() in _UNKNOWN_SCOPE_VALUES:
+    observed_comparable = _canonical_scope_text(observed_text) if observed_text else None
+    requested_comparable = _canonical_scope_text(requested_text)
+    if observed_text is None or observed_comparable in _UNKNOWN_SCOPE_VALUES:
         return "uncertain", requested_text, observed_text
-    if observed_text.casefold() in _WILDCARD_SCOPE_VALUES:
+    if observed_comparable in _WILDCARD_SCOPE_VALUES:
         return "match", requested_text, observed_text
-    if observed_text.casefold() == requested_text.casefold():
+    if observed_comparable == requested_comparable:
         return "match", requested_text, observed_text
     return "mismatch", requested_text, observed_text
 
