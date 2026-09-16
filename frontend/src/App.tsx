@@ -12,18 +12,46 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
-import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type SearchResult } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchScope, type SearchResult } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
   Database, FileText, ArrowLeftRight, Library,
-  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp
+  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch
 } from "lucide-react"
 
 // Helpers
 function escapeForTest(v: string) { return v }
 function compactId(v?: string) { return v ? `${v.slice(0, 13)}…` : "—" }
-type WorkspaceView = "operations" | "files" | "knowledge" | "recovery" | "setup"
+type WorkspaceView = "operations" | "files" | "knowledge" | "research" | "recovery" | "setup"
+
+function researchScopeFromForm(formData: FormData, prefix: "source" | "target"): ResearchScope {
+  const readText = (field: string) => {
+    const value = String(formData.get(`${prefix}_${field}`) || "").trim()
+    return value || null
+  }
+  const yearText = readText("model_year")
+  const year = yearText ? Number(yearText) : null
+  return {
+    model_year: year !== null && Number.isInteger(year) ? year : null,
+    engine: readText("engine"),
+    market: readText("market"),
+    population: readText("population"),
+    setting: readText("setting"),
+    evidence_type: readText("evidence_type"),
+  }
+}
+
+function researchScopeLabel(scope: ResearchScope): string {
+  return [
+    scope.model_year ? `Model ${scope.model_year}` : null,
+    scope.engine,
+    scope.market,
+    scope.population,
+    scope.setting,
+    scope.evidence_type,
+  ].filter(Boolean).join(" · ") || "No scope recorded"
+}
 
 export default function App() {
   // Global
@@ -56,6 +84,12 @@ export default function App() {
   const [feedbackLoading, setFeedbackLoading] = useState(false)
   const [errorReportSent, setErrorReportSent] = useState(false)
   const [errorReportLoading, setErrorReportLoading] = useState(false)
+  const [researchClaims, setResearchClaims] = useState<ResearchClaim[]>([])
+  const [researchResult, setResearchResult] = useState("")
+  const [researchError, setResearchError] = useState("")
+  const [researchScopeResponse, setResearchScopeResponse] = useState<ResearchApplicabilityResponse | null>(null)
+  const [researchLoading, setResearchLoading] = useState(false)
+  const [researchScopeLoading, setResearchScopeLoading] = useState(false)
   const [files, setFiles] = useState<FileRecord[]>([])
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
   const [uploadPolicy, setUploadPolicy] = useState<any>(null)
@@ -160,7 +194,7 @@ export default function App() {
     const body = Object.fromEntries(fd.entries())
     try {
       const proj: any = await apiRequest("/projects", { method: "POST", body: JSON.stringify(body) })
-      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false)
+      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null)
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
@@ -170,6 +204,7 @@ export default function App() {
       setVal("#project-folder-name", proj.storage_slug)
       setVal("#knowledge-project-id", proj.id)
       setVal("#knowledge-owner-id", proj.owner_id || "")
+      setVal("#research-project-id", proj.id)
       await refreshProjects()
       showMessage(`Project “${proj.title}” registered. Generate its “${proj.storage_slug}” folder before scanning files.`)
       form.reset()
@@ -380,6 +415,66 @@ export default function App() {
     }
   }
 
+  async function handleResearchExtract(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selectedId) return showMessage("Select a project before extracting claims.", "error")
+    const formData = new FormData(e.currentTarget)
+    const sourceText = String(formData.get("source_text") || "")
+    if (!sourceText.trim()) return showMessage("Add source text before extracting claims.", "error")
+    setResearchLoading(true)
+    setResearchError("")
+    setResearchScopeResponse(null)
+    try {
+      const data = await apiRequest<ResearchClaimExtractionResponse>(`/projects/${selectedId}/research/claims/extract`, {
+        method: "POST",
+        body: JSON.stringify({
+          source_title: String(formData.get("source_title") || "").trim(),
+          source_reference: String(formData.get("source_reference") || "").trim(),
+          source_date: String(formData.get("source_date") || "").trim() || null,
+          source_text: sourceText,
+          scope: researchScopeFromForm(formData, "source"),
+        }),
+      })
+      setResearchClaims(data.claims)
+      setResearchResult(`${data.claim_count} claim${data.claim_count === 1 ? "" : "s"} extracted · each marked needs_review\n${data.schema_version}`)
+      showMessage(`Extracted ${data.claim_count} claim${data.claim_count === 1 ? "" : "s"}. Review the source passages before relying on them.`)
+    } catch (err: any) {
+      const message = (err as Error).message
+      setResearchClaims([])
+      setResearchResult("")
+      setResearchError(message)
+      showMessage(message, "error")
+    } finally {
+      setResearchLoading(false)
+    }
+  }
+
+  async function handleResearchScopeCheck(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selectedId) return showMessage("Select a project before checking scope.", "error")
+    const formData = new FormData(e.currentTarget)
+    const claimId = String(formData.get("claim_id") || "").trim()
+    const claim = researchClaims.find(item => item.claim_id === claimId)
+    if (!claim) return showMessage("Extract a factual claim, then choose it for a scope check.", "error")
+    setResearchScopeLoading(true)
+    setResearchError("")
+    try {
+      const data = await apiRequest<ResearchApplicabilityResponse>(`/projects/${selectedId}/research/claims/check-scope`, {
+        method: "POST",
+        body: JSON.stringify({ claim, target_scope: researchScopeFromForm(formData, "target") }),
+      })
+      setResearchScopeResponse(data)
+      const label = data.status === "applicable" ? "Scope matches" : data.status === "uncertain" ? "Scope needs clarification" : data.status === "mismatch" ? "Scope mismatch" : "Scope check not applicable"
+      showMessage(label, data.status === "mismatch" ? "error" : "success")
+    } catch (err: any) {
+      const message = (err as Error).message
+      setResearchError(message)
+      showMessage(message, "error")
+    } finally {
+      setResearchScopeLoading(false)
+    }
+  }
+
   async function handleKnowledgeFeedback(rating: KnowledgeFeedbackRating) {
     if (!selectedId || !answerResponse || feedbackLoading) return
     setFeedbackLoading(true)
@@ -471,6 +566,10 @@ export default function App() {
     setSelectedProject(project)
     setAnswerResponse(null)
     setAnswerError("")
+    setResearchClaims([])
+    setResearchResult("")
+    setResearchError("")
+    setResearchScopeResponse(null)
     const setVal = (selector: string, value: string) => {
       const element = document.querySelector<HTMLInputElement>(selector)
       if (element) element.value = value
@@ -483,12 +582,14 @@ export default function App() {
     setVal("#project-folder-name", project.storage_slug)
     setVal("#knowledge-project-id", project.id)
     setVal("#knowledge-owner-id", project.owner_id || "")
+    setVal("#research-project-id", project.id)
   }
 
   const navigation: Array<{ view: WorkspaceView; label: string; icon: typeof Gauge }> = [
     { view: "operations", label: "Operations", icon: Gauge },
     { view: "files", label: "Files", icon: Files },
     { view: "knowledge", label: "Knowledge", icon: Library },
+    { view: "research", label: "Research", icon: FileSearch },
     { view: "recovery", label: "Recovery", icon: ArchiveRestore },
     { view: "setup", label: "Setup", icon: FolderCog },
   ]
@@ -497,6 +598,7 @@ export default function App() {
     operations: { title: "Operations", description: "Preview and run controlled work inside the active project." },
     files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
     knowledge: { title: "Knowledge", description: "Register, review, ingest, search, and answer from approved sources." },
+    research: { title: "Research evidence", description: "Extract reviewable claims and check whether evidence applies to a target scope." },
     recovery: { title: "Recovery", description: "Create, verify, and restore checksummed project backups." },
     setup: { title: "Workspace setup", description: "Provision an owner, register a project, and prepare local storage." },
   }
@@ -1167,6 +1269,101 @@ export default function App() {
                 )}
               </TabsContent>
             </Tabs>
+          </CardContent>
+        </Card>
+
+        {/* Research evidence - bounded extraction and scope preview */}
+        <Card id="research-evidence" className={`${activeView === "research" ? "block" : "hidden"} workspace-card major-panel`}>
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
+            <div>
+              <p className="panel-label">Evidence workspace</p>
+              <CardTitle className="flex items-center gap-1.5"><FileSearch className="w-4 h-4 text-primary" />Research evidence</CardTitle>
+              <CardDescription className="text-xs">Turn source text into reviewable claims, retain the exact passage, and compare its stated scope with a target context.</CardDescription>
+            </div>
+            <Badge className="bg-teal-100 text-teal-800">Validated preview</Badge>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <Alert id="research-guardrail" className="border-teal-200 bg-teal-50/70">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              <AlertDescription className="text-xs"><strong>Safety boundary:</strong> extraction is local and deterministic. Every claim is validated before it is shown, marked <code className="rounded bg-white px-1">needs_review</code>, and never saved as approved evidence. Missing scope is reported as uncertainty.</AlertDescription>
+            </Alert>
+            {!selectedId ? <Alert><AlertCircle className="w-4 h-4" /><AlertDescription className="text-xs">Select a project before using the research evidence tools.</AlertDescription></Alert> : (
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm font-semibold">Extract claims</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Add source metadata and the passage you want to classify. The source reference and date stay attached to every result.</p>
+                  </div>
+                  <form id="research-extract-form" onSubmit={handleResearchExtract} className="grid gap-3">
+                    <div className="grid gap-1.5"><Label htmlFor="research-project-id" className="text-xs">Project ID</Label><Input id="research-project-id" name="project_id" value={selectedId} readOnly /></div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="grid gap-1.5"><Label htmlFor="research-source-title" className="text-xs">Source title</Label><Input id="research-source-title" name="source_title" placeholder="e.g. 2024 vehicle field study" required maxLength={200} /></div>
+                      <div className="grid gap-1.5"><Label htmlFor="research-source-date" className="text-xs">Source date</Label><Input id="research-source-date" name="source_date" type="date" /></div>
+                    </div>
+                    <div className="grid gap-1.5"><Label htmlFor="research-source-reference" className="text-xs">Source reference</Label><Input id="research-source-reference" name="source_reference" placeholder="URL, DOI, file path, or internal reference" required maxLength={512} /></div>
+                    <fieldset className="grid gap-2 rounded-xl border border-border bg-muted/20 p-3">
+                      <legend className="px-1 text-xs font-semibold">Source scope <span className="font-normal text-muted-foreground">(optional)</span></legend>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="grid gap-1.5"><Label htmlFor="research-source-model-year" className="text-[0.68rem]">Model year</Label><Input id="research-source-model-year" name="source_model_year" type="number" min="1886" max="2100" placeholder="e.g. 2024" /></div>
+                        <div className="grid gap-1.5"><Label htmlFor="research-source-engine" className="text-[0.68rem]">Engine</Label><Input id="research-source-engine" name="source_engine" placeholder="e.g. hybrid" maxLength={120} /></div>
+                        <div className="grid gap-1.5"><Label htmlFor="research-source-market" className="text-[0.68rem]">Market</Label><Input id="research-source-market" name="source_market" placeholder="e.g. Nigeria" maxLength={120} /></div>
+                        <div className="grid gap-1.5"><Label htmlFor="research-source-population" className="text-[0.68rem]">Population</Label><Input id="research-source-population" name="source_population" placeholder="e.g. adult drivers" maxLength={120} /></div>
+                        <div className="grid gap-1.5"><Label htmlFor="research-source-setting" className="text-[0.68rem]">Setting</Label><Input id="research-source-setting" name="source_setting" placeholder="e.g. urban roads" maxLength={120} /></div>
+                        <div className="grid gap-1.5"><Label htmlFor="research-source-evidence-type" className="text-[0.68rem]">Evidence type</Label><Input id="research-source-evidence-type" name="source_evidence_type" placeholder="e.g. field study" maxLength={80} /></div>
+                      </div>
+                    </fieldset>
+                    <div className="grid gap-1.5"><Label htmlFor="research-source-text" className="text-xs">Source text</Label><Textarea id="research-source-text" name="source_text" rows={9} placeholder={'Paste source text here…\n\nHeadings, factual statements, instructions, opinions, and creative text are classified separately.'} required maxLength={20000} /></div>
+                    <Button id="research-extract-submit" type="submit" disabled={researchLoading}>{researchLoading ? "Extracting…" : "Extract reviewable claims"}</Button>
+                  </form>
+                  {researchError && <div id="research-error" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">{researchError}</div>}
+                  {researchResult && <div id="research-result" className="quiet-result whitespace-pre-wrap text-xs" role="status" aria-live="polite">{researchResult}</div>}
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-end justify-between gap-3">
+                    <div><p className="text-sm font-semibold">Claim register preview</p><p className="mt-1 text-xs text-muted-foreground">Source passages remain visible so a reviewer can compare the claim with its origin.</p></div>
+                    <Badge variant="outline">{researchClaims.length} claim{researchClaims.length === 1 ? "" : "s"}</Badge>
+                  </div>
+                  {researchClaims.length === 0 ? <div id="research-claims-result" className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">No claims yet. Run the extractor to populate this preview.</div> :
+                    <div id="research-claims-result" className="grid gap-3" aria-live="polite">
+                      {researchClaims.map(claim => (
+                        <Card key={claim.claim_id} className="border-border bg-card/70">
+                          <CardHeader className="gap-2 pb-2">
+                            <div className="flex flex-wrap items-center gap-1.5"><Badge variant="outline" className="capitalize">{claim.classification}</Badge><Badge className="bg-amber-100 text-amber-800">{claim.review_status.replaceAll("_", " ")}</Badge></div>
+                            <CardTitle className="text-sm leading-relaxed">{claim.claim}</CardTitle>
+                            <CardDescription className="text-xs">{claim.source_title} · {claim.source_date || "Date not supplied"} · {researchScopeLabel(claim.scope)}</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-2 pt-0">
+                            <div className="rounded-lg border border-border bg-muted/40 p-2.5"><p className="mb-1 text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">Exact source passage</p><p className="whitespace-pre-wrap text-xs leading-relaxed">{claim.passage}</p></div>
+                            <p className="truncate font-mono text-[0.65rem] text-muted-foreground" title={claim.source_reference}>{claim.source_reference}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  }
+
+                  <div className="border-t border-border pt-4">
+                    <div className="mb-3"><p className="text-sm font-semibold">Check applicability</p><p className="mt-1 text-xs text-muted-foreground">Compare a factual claim with a target context. The checker uses exact matches and explicit wildcards only.</p></div>
+                    <form id="research-scope-form" onSubmit={handleResearchScopeCheck} className="grid gap-3">
+                      <div className="grid gap-1.5"><Label htmlFor="research-claim-id" className="text-xs">Factual claim</Label><select id="research-claim-id" name="claim_id" defaultValue="" required disabled={researchClaims.filter(claim => claim.classification === "factual").length === 0} className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm shadow-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/20"><option value="" disabled>{researchClaims.some(claim => claim.classification === "factual") ? "Select a factual claim" : "Extract a factual claim first"}</option>{researchClaims.filter(claim => claim.classification === "factual").map(claim => <option key={claim.claim_id} value={claim.claim_id}>{claim.claim.slice(0, 100)}{claim.claim.length > 100 ? "…" : ""}</option>)}</select></div>
+                      <fieldset className="grid gap-2 rounded-xl border border-border bg-muted/20 p-3">
+                        <legend className="px-1 text-xs font-semibold">Target scope <span className="font-normal text-muted-foreground">(leave blank to flag uncertainty)</span></legend>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="grid gap-1.5"><Label htmlFor="research-target-model-year" className="text-[0.68rem]">Model year</Label><Input id="research-target-model-year" name="target_model_year" type="number" min="1886" max="2100" placeholder="e.g. 2024" /></div>
+                          <div className="grid gap-1.5"><Label htmlFor="research-target-engine" className="text-[0.68rem]">Engine</Label><Input id="research-target-engine" name="target_engine" placeholder="e.g. hybrid" maxLength={120} /></div>
+                          <div className="grid gap-1.5"><Label htmlFor="research-target-market" className="text-[0.68rem]">Market</Label><Input id="research-target-market" name="target_market" placeholder="e.g. Nigeria" maxLength={120} /></div>
+                          <div className="grid gap-1.5"><Label htmlFor="research-target-population" className="text-[0.68rem]">Population</Label><Input id="research-target-population" name="target_population" placeholder="e.g. adult drivers" maxLength={120} /></div>
+                          <div className="grid gap-1.5"><Label htmlFor="research-target-setting" className="text-[0.68rem]">Setting</Label><Input id="research-target-setting" name="target_setting" placeholder="e.g. urban roads" maxLength={120} /></div>
+                          <div className="grid gap-1.5"><Label htmlFor="research-target-evidence-type" className="text-[0.68rem]">Evidence type</Label><Input id="research-target-evidence-type" name="target_evidence_type" placeholder="e.g. field study" maxLength={80} /></div>
+                        </div>
+                      </fieldset>
+                      <Button id="research-scope-submit" type="submit" variant="secondary" disabled={researchScopeLoading || researchClaims.filter(claim => claim.classification === "factual").length === 0}>{researchScopeLoading ? "Checking…" : "Check target scope"}</Button>
+                    </form>
+                    {researchScopeResponse && <div id="research-scope-result" className={`mt-3 rounded-xl border p-3 ${researchScopeResponse.status === "applicable" ? "border-emerald-200 bg-emerald-50" : researchScopeResponse.status === "mismatch" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`} role="status" aria-live="polite"><div className="flex flex-wrap items-center gap-2"><Badge className={researchScopeResponse.status === "applicable" ? "bg-emerald-700 text-white" : researchScopeResponse.status === "mismatch" ? "bg-red-700 text-white" : "bg-amber-500 text-amber-950"}>{researchScopeResponse.status.replaceAll("_", " ")}</Badge><span className="text-[0.68rem] text-muted-foreground">{researchScopeResponse.claim_classification} · {researchScopeResponse.schema_version}</span></div><p className="mt-2 text-xs leading-relaxed">{researchScopeResponse.reason}</p><div className="mt-3 grid gap-1">{researchScopeResponse.fields.map(field => <div key={field.field} className="flex items-center justify-between gap-2 border-t border-black/5 py-1.5 text-[0.68rem]"><span className="font-medium capitalize">{field.field.replaceAll("_", " ")}</span><span className={field.status === "match" ? "text-emerald-700" : field.status === "mismatch" ? "text-red-700" : field.status === "uncertain" ? "text-amber-700" : "text-muted-foreground"}>{field.status.replaceAll("_", " ")}{field.requested ? ` · requested ${field.requested}` : ""}{field.observed ? ` · source ${field.observed}` : ""}</span></div>)}</div></div>}
+                  </div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
