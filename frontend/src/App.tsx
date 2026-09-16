@@ -17,7 +17,7 @@ import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
   Database, FileText, ArrowLeftRight, Library,
-  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch
+  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy
 } from "lucide-react"
 
 // Helpers
@@ -420,6 +420,15 @@ export default function App() {
     setResearchResult("")
     setResearchError("")
     setResearchScopeResponse(null)
+  }
+
+  async function handleCopyResearchPassage(passage: string) {
+    try {
+      await navigator.clipboard.writeText(passage)
+      showMessage("Exact source passage copied.")
+    } catch {
+      showMessage("Clipboard is unavailable; select the passage manually.", "error")
+    }
   }
 
   async function handleResearchExtract(e: React.FormEvent<HTMLFormElement>) {
@@ -1345,7 +1354,7 @@ export default function App() {
                             <CardDescription className="text-xs">{claim.source_title} · {claim.source_date || "Date not supplied"} · {researchScopeLabel(claim.scope)}</CardDescription>
                           </CardHeader>
                           <CardContent className="space-y-2 pt-0">
-                            <div className="rounded-lg border border-border bg-muted/40 p-2.5"><p className="mb-1 text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">Exact source passage</p><p className="whitespace-pre-wrap text-xs leading-relaxed">{claim.passage}</p></div>
+                            <div className="rounded-lg border border-border bg-muted/40 p-2.5"><div className="mb-1 flex items-center justify-between gap-2"><p className="text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">Exact source passage</p><Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0" aria-label={`Copy passage for ${claim.claim}`} title="Copy exact passage" onClick={() => handleCopyResearchPassage(claim.passage)}><Copy className="h-3.5 w-3.5" /></Button></div><p className="whitespace-pre-wrap text-xs leading-relaxed">{claim.passage}</p></div>
                             <p className="truncate font-mono text-[0.65rem] text-muted-foreground" title={claim.source_reference}>{claim.source_reference}</p>
                           </CardContent>
                         </Card>
