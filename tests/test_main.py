@@ -3308,3 +3308,32 @@ def test_research_access_denial_is_audited_without_request_content() -> None:
             )
         )
         assert event is not None
+
+
+def test_research_scope_api_skips_non_factual_claims() -> None:
+    project = create_project("Research Classification Project")
+    extracted = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "source_title": "Creative brief",
+            "source_reference": "local://creative-brief",
+            "source_text": "Script: Open with a close-up shot.",
+        },
+    )
+    assert extracted.status_code == 200
+    claim = extracted.json()["claims"][0]
+    assert claim["classification"] == "creative"
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/check-scope",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"claim": claim, "target_scope": {"market": "Nigeria"}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_applicable"
+    assert all(field["status"] == "not_requested" for field in payload["fields"])
