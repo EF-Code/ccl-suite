@@ -415,6 +415,13 @@ export default function App() {
     }
   }
 
+  function clearResearchPreview() {
+    setResearchClaims([])
+    setResearchResult("")
+    setResearchError("")
+    setResearchScopeResponse(null)
+  }
+
   async function handleResearchExtract(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!selectedId) return showMessage("Select a project before extracting claims.", "error")
@@ -1280,7 +1287,10 @@ export default function App() {
               <CardTitle className="flex items-center gap-1.5"><FileSearch className="w-4 h-4 text-primary" />Research evidence</CardTitle>
               <CardDescription className="text-xs">Turn source text into reviewable claims, retain the exact passage, and compare its stated scope with a target context.</CardDescription>
             </div>
-            <Badge className="bg-teal-100 text-teal-800">Validated preview</Badge>
+            <div className="flex items-center gap-2">
+              {researchClaims.length > 0 && <Button id="research-clear-preview" type="button" variant="outline" size="sm" onClick={clearResearchPreview}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Clear preview</Button>}
+              <Badge className="bg-teal-100 text-teal-800">Validated preview</Badge>
+            </div>
           </CardHeader>
           <CardContent className="space-y-5">
             <Alert id="research-guardrail" className="border-teal-200 bg-teal-50/70">
