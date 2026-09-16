@@ -136,10 +136,23 @@ _UNKNOWN_SCOPE_VALUES: Final = frozenset(
         "n/a",
         "na",
         "none",
+        "not applicable",
     }
 )
 _WILDCARD_SCOPE_VALUES: Final = frozenset(
-    {"all", "any", "global", "worldwide", "all markets", "all populations"}
+    {
+        "*",
+        "all",
+        "any",
+        "global",
+        "worldwide",
+        "all engines",
+        "all markets",
+        "all model years",
+        "all populations",
+        "all settings",
+        "all evidence types",
+    }
 )
 def _bounded_source_text(value: str) -> str:
     """Normalize source line endings while preserving all source characters."""
