@@ -227,3 +227,14 @@ def test_scope_checker_normalizes_case_and_repeated_whitespace_only() -> None:
     assert result.status == "applicable"
     assert result.fields[2].requested == "west africa"
     assert result.fields[2].observed == "  West   Africa "
+
+
+def test_extract_claims_retains_internal_source_line_whitespace() -> None:
+    claims = extract_claims(
+        "  The source keeps this indentation.  ",
+        source_title="Whitespace source",
+        source_reference="local://whitespace",
+    )
+
+    assert claims[0].claim == "The source keeps this indentation."
+    assert claims[0].passage == "  The source keeps this indentation.  "
