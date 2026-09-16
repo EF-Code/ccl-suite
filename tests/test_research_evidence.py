@@ -214,3 +214,16 @@ def test_scope_checker_accepts_field_specific_explicit_wildcards() -> None:
         "match",
         "match",
     ]
+
+
+def test_scope_checker_normalizes_case_and_repeated_whitespace_only() -> None:
+    result = check_claim_applicability(
+        uuid4(),
+        "factual",
+        source_scope={"market": "  West   Africa "},
+        target_scope={"market": "west africa"},
+    )
+
+    assert result.status == "applicable"
+    assert result.fields[2].requested == "west africa"
+    assert result.fields[2].observed == "  West   Africa "
