@@ -55,6 +55,15 @@ ApplicabilityStatus = Literal[
 ]
 ScopeValue = str | int | None
 
+RESEARCH_SCOPE_FIELDS: Final[tuple[ApplicabilityFieldName, ...]] = (
+    "model_year",
+    "engine",
+    "market",
+    "population",
+    "setting",
+    "evidence_type",
+)
+
 
 class ResearchEvidenceError(ValueError):
     """Raised when bounded evidence processing cannot safely continue."""
@@ -131,16 +140,6 @@ _UNKNOWN_SCOPE_VALUES: Final = frozenset(
 _WILDCARD_SCOPE_VALUES: Final = frozenset(
     {"all", "any", "global", "worldwide", "all markets", "all populations"}
 )
-_SCOPE_FIELDS: Final = (
-    "model_year",
-    "engine",
-    "market",
-    "population",
-    "setting",
-    "evidence_type",
-)
-
-
 def _bounded_source_text(value: str) -> str:
     """Normalize source line endings while preserving all source characters."""
 
@@ -153,7 +152,7 @@ def _safe_scope(scope: Mapping[str, ScopeValue]) -> dict[str, ScopeValue]:
     """Keep only supported scope fields and reject unsafe/oversized strings."""
 
     safe_scope: dict[str, ScopeValue] = {}
-    for field in _SCOPE_FIELDS:
+    for field in RESEARCH_SCOPE_FIELDS:
         value = scope.get(field)
         if isinstance(value, str):
             if len(value) > MAX_RESEARCH_SCOPE_VALUE_CHARACTERS:
@@ -298,7 +297,7 @@ def check_claim_applicability(
             reason="Only factual claims are eligible for applicability checking.",
             fields=tuple(
                 ApplicabilityFieldResult(field=field, status="not_requested", requested=None, observed=_scope_value(safe_source_scope.get(field)))
-                for field in _SCOPE_FIELDS
+                for field in RESEARCH_SCOPE_FIELDS
             ),
         )
 
@@ -309,7 +308,7 @@ def check_claim_applicability(
             requested=requested,
             observed=observed,
         )
-        for field in _SCOPE_FIELDS
+        for field in RESEARCH_SCOPE_FIELDS
         for status_value, requested, observed in (
             _scope_status(safe_source_scope.get(field), safe_target_scope.get(field)),
         )
@@ -348,6 +347,7 @@ __all__ = [
     "MAX_RESEARCH_CLAIM_CHARACTERS",
     "MAX_RESEARCH_SOURCE_CHARACTERS",
     "RESEARCH_EVIDENCE_SCHEMA_VERSION",
+    "RESEARCH_SCOPE_FIELDS",
     "ResearchEvidenceError",
     "check_claim_applicability",
     "classify_claim",
