@@ -30,6 +30,7 @@ from models import (
     KnowledgeFeedback,
     KnowledgeSource,
     Project,
+    SecurityEvent,
     User,
 )
 
@@ -3275,3 +3276,35 @@ def test_research_extract_rejects_oversized_scope_values() -> None:
 
     assert response.status_code == 422
     assert any(detail["loc"][-1] == "market" for detail in response.json()["detail"])
+
+
+def test_research_access_denial_is_audited_without_request_content() -> None:
+    project = create_project("Research Audit Project")
+    other_user = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"research-audit-other-{uuid4().hex}", "role": "member"},
+    )
+    assert other_user.status_code == 201
+
+    denied = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        headers={"X-User-ID": other_user.json()["id"]},
+        json={
+            "source_title": "Private source",
+            "source_reference": "local://private",
+            "source_text": "The finding is recorded.",
+        },
+    )
+    assert denied.status_code == 404
+
+    with TestingSessionLocal() as session:
+        event = session.scalar(
+            select(SecurityEvent).where(
+                SecurityEvent.event_code == "access.denied",
+                SecurityEvent.actor_id == UUID(other_user.json()["id"]),
+                SecurityEvent.resource_ref == f"/projects/{project['id']}/research/claims/extract",
+            )
+        )
+        assert event is not None
