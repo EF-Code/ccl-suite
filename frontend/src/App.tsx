@@ -1334,6 +1334,7 @@ export default function App() {
                     <div><p className="text-sm font-semibold">Claim register preview</p><p className="mt-1 text-xs text-muted-foreground">Source passages remain visible so a reviewer can compare the claim with its origin.</p></div>
                     <Badge variant="outline">{researchClaims.length} claim{researchClaims.length === 1 ? "" : "s"}</Badge>
                   </div>
+                  {researchClaims.length > 0 && <p id="research-claims-summary" className="text-[0.68rem] text-muted-foreground">{researchClaims.filter(claim => claim.classification === "factual").length} factual · {researchClaims.filter(claim => claim.classification === "heading").length} heading · {researchClaims.filter(claim => claim.classification === "instruction").length} instruction · {researchClaims.filter(claim => claim.classification === "opinion").length} opinion · {researchClaims.filter(claim => claim.classification === "creative").length} creative</p>}
                   {researchClaims.length === 0 ? <div id="research-claims-result" className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">No claims yet. Run the extractor to populate this preview.</div> :
                     <div id="research-claims-result" className="grid gap-3" aria-live="polite">
                       {researchClaims.map(claim => (
