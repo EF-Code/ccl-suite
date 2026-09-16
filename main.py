@@ -55,6 +55,12 @@ from api_schemas import (
     PermissionMatrixResponse,
     ProjectCreate,
     ProjectResponse,
+    ResearchApplicabilityCheckRequest,
+    ResearchApplicabilityCheckResponse,
+    ResearchApplicabilityFieldResponse,
+    ResearchClaimExtractionRequest,
+    ResearchClaimExtractionResponse,
+    ResearchClaimResponse,
     SemanticSearchRequest,
     SemanticSearchResponse,
     SemanticSearchResult,
@@ -149,6 +155,14 @@ from knowledge_security import (
     UnsafeKnowledgeContentError,
     ensure_safe_untrusted_text,
     scan_prompt_injection,
+)
+from research_evidence import (
+    ApplicabilityResult,
+    RESEARCH_EVIDENCE_SCHEMA_VERSION,
+    ExtractedClaim,
+    ResearchEvidenceError,
+    check_claim_applicability,
+    extract_claims,
 )
 from logger import logger
 from models import (
@@ -786,6 +800,7 @@ def require_project_knowledge_access(
     request: Request,
     project_id: UUID,
     actor: User,
+    denial_action: str = "knowledge.search",
 ) -> Project:
     """Apply the project boundary before any knowledge retrieval occurs."""
 
@@ -796,7 +811,7 @@ def require_project_knowledge_access(
         project_owner_id=project.owner_id,
     )
     if not decision.allowed:
-        _record_access_denial(db, request, actor, "knowledge.search")
+        _record_access_denial(db, request, actor, denial_action)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project was not found.",
@@ -1302,6 +1317,158 @@ def grounded_answer_response(
         citation_count=len(citations),
         citations=citations,
     )
+
+
+def research_claim_response(claim: ExtractedClaim) -> ResearchClaimResponse:
+    """Validate one extractor result before it crosses the API boundary."""
+
+    return ResearchClaimResponse.model_validate(
+        {
+            "claim_id": claim.claim_id,
+            "claim": claim.claim,
+            "classification": claim.classification,
+            "source_title": claim.source_title,
+            "source_reference": claim.source_reference,
+            "source_date": claim.source_date,
+            "passage": claim.passage,
+            "scope": claim.scope,
+            "review_status": claim.review_status,
+        }
+    )
+
+
+def research_scope_check_response(
+    project_id: UUID,
+    result: ApplicabilityResult,
+) -> ResearchApplicabilityCheckResponse:
+    """Validate the complete field-level scope report before returning it."""
+
+    return ResearchApplicabilityCheckResponse.model_validate(
+        {
+            "schema_version": RESEARCH_EVIDENCE_SCHEMA_VERSION,
+            "project_id": project_id,
+            "claim_id": result.claim_id,
+            "claim_classification": result.claim_classification,
+            "status": result.status,
+            "reason": result.reason,
+            "fields": [
+                ResearchApplicabilityFieldResponse.model_validate(
+                    {
+                        "field": field.field,
+                        "status": field.status,
+                        "requested": field.requested,
+                        "observed": field.observed,
+                    }
+                )
+                for field in result.fields
+            ],
+        }
+    )
+
+
+@app.post(
+    "/projects/{project_id}/research/claims/extract",
+    response_model=ResearchClaimExtractionResponse,
+    tags=["research-evidence"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def extract_project_research_claims(
+    project_id: UUID,
+    extraction_request: ResearchClaimExtractionRequest,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> ResearchClaimExtractionResponse:
+    """Return a validated, non-persisted evidence preview for one project."""
+
+    project = require_project_knowledge_access(
+        db,
+        request,
+        project_id,
+        actor,
+        denial_action="research.claims.extract",
+    )
+    try:
+        claims = extract_claims(
+            extraction_request.source_text,
+            source_title=extraction_request.source_title,
+            source_reference=extraction_request.source_reference,
+            source_date=extraction_request.source_date,
+            scope=extraction_request.scope.model_dump(),
+        )
+        response = ResearchClaimExtractionResponse.model_validate(
+            {
+                "schema_version": RESEARCH_EVIDENCE_SCHEMA_VERSION,
+                "project_id": project.id,
+                "source_title": extraction_request.source_title,
+                "source_reference": extraction_request.source_reference,
+                "source_date": extraction_request.source_date,
+                "scope": extraction_request.scope,
+                "claim_count": len(claims),
+                "claims": [research_claim_response(claim) for claim in claims],
+            }
+        )
+    except UnsafeKnowledgeContentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Research input could not be processed safely.",
+        ) from exc
+    except ResearchEvidenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Research input exceeded the evidence processing limits.",
+        ) from exc
+    return response
+
+
+@app.post(
+    "/projects/{project_id}/research/claims/check-scope",
+    response_model=ResearchApplicabilityCheckResponse,
+    tags=["research-evidence"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def check_project_research_scope(
+    project_id: UUID,
+    check_request: ResearchApplicabilityCheckRequest,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> ResearchApplicabilityCheckResponse:
+    """Compare requested context and report mismatch or uncertainty explicitly."""
+
+    project = require_project_knowledge_access(
+        db,
+        request,
+        project_id,
+        actor,
+        denial_action="research.claims.check_scope",
+    )
+    try:
+        for value in (
+            check_request.claim.claim,
+            check_request.claim.source_title,
+            check_request.claim.source_reference,
+            check_request.claim.passage,
+        ):
+            ensure_safe_untrusted_text(value)
+        result = check_claim_applicability(
+            check_request.claim.claim_id,
+            check_request.claim.classification,
+            source_scope=check_request.claim.scope.model_dump(),
+            target_scope=check_request.target_scope.model_dump(),
+        )
+        response = research_scope_check_response(project.id, result)
+    except UnsafeKnowledgeContentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Research input could not be processed safely.",
+        ) from exc
+    except ResearchEvidenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Research scope could not be checked safely.",
+        ) from exc
+    return response
 
 
 @app.post(
