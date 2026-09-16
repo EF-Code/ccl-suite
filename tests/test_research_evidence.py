@@ -233,7 +233,7 @@ def test_scope_checker_normalizes_case_and_repeated_whitespace_only() -> None:
 
     assert result.status == "applicable"
     assert result.fields[2].requested == "west africa"
-    assert result.fields[2].observed == "  West   Africa "
+    assert result.fields[2].observed == "West   Africa"
 
 
 def test_extract_claims_retains_internal_source_line_whitespace() -> None:
