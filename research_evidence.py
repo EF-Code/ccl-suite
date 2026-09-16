@@ -122,7 +122,8 @@ _OPINION_PATTERN: Final = re.compile(
 )
 _CREATIVE_PATTERN: Final = re.compile(
     r"^(?:script|scene|caption|hook|voiceover|voice-over|title|dialogue|"
-    r"shot|b-roll|on-screen text)\s*[:\-]\s*",
+    r"shot|b-roll|on-screen text|prompt|storyboard|thumbnail|visual direction)"
+    r"\s*[:\-]\s*",
     re.IGNORECASE,
 )
 _UNKNOWN_SCOPE_VALUES: Final = frozenset(
