@@ -91,6 +91,13 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
   text.
 - `POST /projects/{project_id}/knowledge-error-reports` records a structured
   search/answer issue category without storing raw request payloads or logs.
+- `POST /projects/{project_id}/research/claims/extract` returns a bounded,
+  validated claim preview with source metadata, exact passages, scope, and a
+  `needs_review` status. It uses a local deterministic extractor and does not
+  persist the preview.
+- `POST /projects/{project_id}/research/claims/check-scope` compares a claim's
+  model year, engine, market, population, setting, and evidence type with a
+  target scope. Missing context is reported as `uncertain` rather than guessed.
 - `POST /projects/{project_id}/backups` creates and immediately verifies a
   project archive plus a checksummed manifest without changing the source.
 - `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
@@ -119,6 +126,9 @@ document defines the server-side permission, project, source-lifecycle, and
 denial-audit boundaries. The
 [evaluation report](docs/knowledge-answer-evaluation.md) records the fixed
 20-case evidence, refusal, and conflicting-information validation suite.
+The [research evidence agent](docs/research-evidence-agent.md) defines the
+validated claim schema, preserved source passage, scope checker, and the
+explicit preview-only boundary.
 A non-sensitive [sample source](samples/knowledge/company-rules.md) is
 available for the normal ingestion workflow.
 The [representative media operations corpus](samples/knowledge/representative-media-company/README.md)
