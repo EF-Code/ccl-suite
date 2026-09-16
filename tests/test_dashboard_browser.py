@@ -347,3 +347,58 @@ def test_dashboard_exposes_knowledge_scope_filters(dashboard_page: Page) -> None
     page.get_by_role("tab", name="Answer").click()
     expect(page.locator("#knowledge-answer-source-type")).to_be_visible()
     expect(page.locator("#knowledge-answer-sensitivity")).to_be_visible()
+
+
+def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) -> None:
+    """Exercise the bounded research preview without approving or exporting it."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    open_workspace(page, "Setup")
+
+    suffix = uuid4().hex[:10]
+    owner_ref = f"research-browser-owner-{suffix}"
+    project_title = f"Research Browser {suffix}"
+
+    user_form = page.locator("#user-form")
+    user_form.locator("input[name='external_ref']").fill(owner_ref)
+    user_form.get_by_role("button", name="Create development owner").click()
+    page.locator("#user-result").wait_for(state="visible")
+    owner_id = page.locator("#owner-id").input_value()
+    assert owner_id
+
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_row.wait_for(state="visible")
+    project_row.get_by_role("button", name="Use project").click()
+    expect(page.locator("#active-project-title")).to_have_text(project_title)
+
+    open_workspace(page, "Research")
+    page.locator("#research-source-title").fill("Vehicle field study")
+    page.locator("#research-source-reference").fill("local://vehicle-field-study")
+    page.locator("#research-source-date").fill("2026-09-16")
+    page.locator("#research-source-model-year").fill("2024")
+    page.locator("#research-source-engine").fill("hybrid")
+    page.locator("#research-source-market").fill("Nigeria")
+    page.locator("#research-source-text").fill(
+        "# Vehicle facts\nThe vehicle uses a hybrid engine in the 2024 model year.\n"
+        "Verify the source date before citing it."
+    )
+    page.locator("#research-extract-submit").click()
+    claims_result = page.locator("#research-claims-result")
+    claims_result.wait_for(state="visible")
+    expect(claims_result).to_contain_text("factual")
+    expect(claims_result).to_contain_text("needs review")
+    expect(claims_result).to_contain_text("The vehicle uses a hybrid engine")
+
+    page.locator("#research-claim-id").select_option(index=1)
+    page.locator("#research-target-model-year").fill("2024")
+    page.locator("#research-target-engine").fill("hybrid")
+    page.locator("#research-target-market").fill("Nigeria")
+    page.locator("#research-scope-submit").click()
+    scope_result = page.locator("#research-scope-result")
+    scope_result.wait_for(state="visible")
+    expect(scope_result).to_contain_text("applicable")
+    expect(scope_result).to_contain_text("All requested scope fields match")
