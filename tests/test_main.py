@@ -3366,3 +3366,32 @@ def test_research_scope_api_flags_missing_source_context() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "uncertain"
+
+
+def test_research_scope_api_accepts_explicit_global_source_scope() -> None:
+    project = create_project("Research Global Scope Project")
+    extracted = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "source_title": "Global study",
+            "source_reference": "local://global-study",
+            "source_text": "The finding is recorded.",
+            "scope": {"market": "worldwide"},
+        },
+    )
+    assert extracted.status_code == 200
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/check-scope",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "claim": extracted.json()["claims"][0],
+            "target_scope": {"market": "Nigeria"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "applicable"
