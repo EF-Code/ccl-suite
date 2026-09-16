@@ -147,6 +147,18 @@ Unsafe instruction-shaped input receives a bounded `422` response. Raw source
 text is not placed in audit records, and no extraction output is saved at this
 stage.
 
+## Safety behavior
+
+- Source text, source metadata, claim text, passages, and scope strings are
+  treated as untrusted input and pass through the existing prompt-injection
+  gate.
+- Request and response models reject unknown fields and enforce bounded sizes.
+- The extractor returns no generated source facts: it only classifies text
+  already supplied by the caller.
+- Scope comparison uses exact values, case-insensitive text comparison, and
+  explicit wildcard values. It does not infer a market, population, setting,
+  or evidence type from the claim wording.
+
 ## Deliberate boundary
 
 This slice does not implement reviewer approval, evidence corrections,
