@@ -242,14 +242,14 @@ def extract_claims(
 
     claims: list[ExtractedClaim] = []
     for raw_line in normalized_source.split("\n"):
-        passage = raw_line.strip()
-        if not passage:
+        if not raw_line.strip():
             continue
-        heading = _heading_text(passage)
+        parsing_line = raw_line.strip()
+        heading = _heading_text(parsing_line)
         if heading is not None:
             units = [(heading, True)]
         else:
-            units = [(unit, False) for unit in _claim_units(passage)]
+            units = [(unit, False) for unit in _claim_units(parsing_line)]
 
         for unit, is_heading in units:
             claim = unit.strip()
@@ -265,7 +265,7 @@ def extract_claims(
                     source_title=source_title,
                     source_reference=source_reference,
                     source_date=source_date,
-                    passage=passage,
+                    passage=raw_line,
                     scope=safe_scope,
                 )
             )
