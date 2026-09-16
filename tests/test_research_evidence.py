@@ -164,3 +164,15 @@ def test_scope_fields_have_one_stable_order() -> None:
         "setting",
         "evidence_type",
     )
+
+
+def test_extract_claims_strips_quote_decoration_but_keeps_passage() -> None:
+    claims = extract_claims(
+        "> The quoted finding is recorded.",
+        source_title="Quoted source",
+        source_reference="local://quoted",
+    )
+
+    assert len(claims) == 1
+    assert claims[0].claim == "The quoted finding is recorded."
+    assert claims[0].passage == "> The quoted finding is recorded."
