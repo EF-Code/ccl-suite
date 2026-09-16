@@ -3240,3 +3240,20 @@ def test_research_routes_block_unsafe_input_and_cross_project_access() -> None:
     )
     assert denied.status_code == 404
     assert denied.json() == {"detail": "Project was not found."}
+
+
+def test_research_extract_rejects_source_over_the_contract_bound() -> None:
+    project = create_project("Research Size Project")
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "source_title": "Large source",
+            "source_reference": "local://large",
+            "source_text": "x" * 20_001,
+        },
+    )
+
+    assert response.status_code == 422
+    assert any(detail["loc"][-1] == "source_text" for detail in response.json()["detail"])
