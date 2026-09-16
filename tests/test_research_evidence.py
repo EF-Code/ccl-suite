@@ -292,3 +292,13 @@ def test_applicability_response_rejects_incomplete_field_reports() -> None:
                 )
             ],
         )
+
+
+def test_extract_claims_returns_empty_preview_for_blank_core_input() -> None:
+    claims = extract_claims(
+        " \n\n",
+        source_title="Empty source",
+        source_reference="local://empty",
+    )
+
+    assert claims == ()
