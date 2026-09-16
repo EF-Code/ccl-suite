@@ -59,6 +59,26 @@ The claim and passage are deliberately separate: the claim is the bounded
 classification unit, while the passage is the source context that must be
 checked before any later approval.
 
+## Example scope result
+
+```json
+{
+  "schema_version": "research-evidence-v1",
+  "project_id": "8e7c3b0e-0c4c-4a65-a2e3-1f4a25e4c1f5",
+  "claim_id": "2c7e3b0e-0c4c-4a65-a2e3-1f4a25e4c1f5",
+  "claim_classification": "factual",
+  "status": "uncertain",
+  "reason": "A requested scope field is missing or unclear in the source.",
+  "fields": [
+    {"field": "model_year", "status": "match", "requested": "2024", "observed": "2024"},
+    {"field": "engine", "status": "uncertain", "requested": "electric", "observed": null}
+  ]
+}
+```
+
+The live API includes all six field rows; the abbreviated example highlights
+the important distinction between a known match and an unresolved field.
+
 ## Workflow
 
 ```text
