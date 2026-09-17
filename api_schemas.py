@@ -15,6 +15,9 @@ from knowledge_contract import (
 )
 from models import Approval, File, KnowledgeSource, Project, SecurityEvent, User, Workflow
 from research_evidence import (
+    EVIDENCE_WARNING_CODES,
+    MAX_RESEARCH_WARNING_COUNT,
+    EvidenceWarningCode,
     MAX_RESEARCH_CLAIMS,
     MAX_RESEARCH_CLAIM_CHARACTERS,
     MAX_RESEARCH_SOURCE_CHARACTERS,
@@ -478,6 +481,107 @@ class ResearchApplicabilityCheckResponse(BaseModel):
             raise ValueError("Applicability fields must be unique.")
         if set(names) != set(RESEARCH_SCOPE_FIELDS):
             raise ValueError("Applicability responses must cover every scope field.")
+        return self
+
+
+class ResearchEvidenceRegisterRequest(BaseModel):
+    """Bounded claim preview input for automated evidence warnings."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    claims: list[ResearchClaimResponse] = Field(
+        min_length=1,
+        max_length=MAX_RESEARCH_CLAIMS,
+    )
+    expected_source_title: str | None = Field(default=None, min_length=1, max_length=200)
+    expected_source_reference: str | None = Field(default=None, min_length=1, max_length=512)
+    target_scope: ResearchScope = Field(default_factory=ResearchScope)
+
+
+class ResearchEvidenceWarningResponse(BaseModel):
+    """One warning emitted by the non-persisted evidence register."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: EvidenceWarningCode
+    severity: Literal["error", "warning"]
+    claim_id: UUID
+    message: str = Field(min_length=1, max_length=240)
+    related_claim_ids: list[UUID] = Field(default_factory=list, max_length=MAX_RESEARCH_CLAIMS)
+
+    @model_validator(mode="after")
+    def validate_related_claims(self) -> ResearchEvidenceWarningResponse:
+        """Keep conflict and duplicate references unique and bounded."""
+
+        if len(self.related_claim_ids) != len(set(self.related_claim_ids)):
+            raise ValueError("Related claim IDs must be unique.")
+        return self
+
+
+class ResearchEvidenceAssessmentResponse(BaseModel):
+    """One claim-level support state; supported is not human approval."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: UUID
+    status: Literal["supported", "needs_review", "not_applicable"]
+    warning_codes: list[EvidenceWarningCode] = Field(
+        default_factory=list,
+        max_length=len(EVIDENCE_WARNING_CODES),
+    )
+
+    @model_validator(mode="after")
+    def validate_warning_codes(self) -> ResearchEvidenceAssessmentResponse:
+        """Prevent duplicate labels in a claim assessment."""
+
+        if len(self.warning_codes) != len(set(self.warning_codes)):
+            raise ValueError("Warning codes must be unique.")
+        return self
+
+
+class ResearchEvidenceRegisterResponse(BaseModel):
+    """Validated warning register; it never grants approval or persists claims."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[RESEARCH_EVIDENCE_SCHEMA_VERSION]
+    project_id: UUID
+    status: Literal["clear", "warnings"]
+    claim_count: int = Field(ge=1, le=MAX_RESEARCH_CLAIMS)
+    warning_count: int = Field(ge=0, le=MAX_RESEARCH_WARNING_COUNT)
+    supported_count: int = Field(ge=0, le=MAX_RESEARCH_CLAIMS)
+    needs_review_count: int = Field(ge=0, le=MAX_RESEARCH_CLAIMS)
+    not_applicable_count: int = Field(ge=0, le=MAX_RESEARCH_CLAIMS)
+    assessments: list[ResearchEvidenceAssessmentResponse] = Field(
+        min_length=1,
+        max_length=MAX_RESEARCH_CLAIMS,
+    )
+    warnings: list[ResearchEvidenceWarningResponse] = Field(
+        max_length=MAX_RESEARCH_WARNING_COUNT,
+    )
+
+    @model_validator(mode="after")
+    def validate_register_integrity(self) -> ResearchEvidenceRegisterResponse:
+        """Keep counts, status, and claim references mutually consistent."""
+
+        if self.claim_count != len(self.assessments):
+            raise ValueError("claim_count must match the assessments list.")
+        if self.warning_count != len(self.warnings):
+            raise ValueError("warning_count must match the warnings list.")
+        if self.supported_count + self.needs_review_count + self.not_applicable_count != self.claim_count:
+            raise ValueError("Assessment counts must add up to claim_count.")
+        expected_status = "warnings" if self.warning_count else "clear"
+        if self.status != expected_status:
+            raise ValueError("Register status must match warning_count.")
+        claim_ids = [assessment.claim_id for assessment in self.assessments]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("Assessment claim IDs must be unique.")
+        claim_id_set = set(claim_ids)
+        for warning in self.warnings:
+            if warning.claim_id not in claim_id_set:
+                raise ValueError("Warnings must reference a registered claim.")
+            if any(related_id not in claim_id_set for related_id in warning.related_claim_ids):
+                raise ValueError("Warning references must point to registered claims.")
         return self
 
 
