@@ -98,6 +98,10 @@ Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
 - `POST /projects/{project_id}/research/claims/check-scope` compares a claim's
   model year, engine, market, population, setting, and evidence type with a
   target scope. Missing context is reported as `uncertain` rather than guessed.
+- `POST /projects/{project_id}/research/evidence-register` checks a bounded
+  claim preview for missing evidence, source mismatches, duplicates, explicit
+  conflicts, and unsupported claim wording. It returns warnings without
+  persisting or approving evidence.
 - `POST /projects/{project_id}/backups` creates and immediately verifies a
   project archive plus a checksummed manifest without changing the source.
 - `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
@@ -127,8 +131,8 @@ denial-audit boundaries. The
 [evaluation report](docs/knowledge-answer-evaluation.md) records the fixed
 20-case evidence, refusal, and conflicting-information validation suite.
 The [research evidence agent](docs/research-evidence-agent.md) defines the
-validated claim schema, preserved source passage, scope checker, and the
-explicit preview-only boundary.
+validated claim schema, preserved source passage, scope checker, evidence
+register warnings, and the explicit preview-only boundary.
 A non-sensitive [sample source](samples/knowledge/company-rules.md) is
 available for the normal ingestion workflow.
 The [representative media operations corpus](samples/knowledge/representative-media-company/README.md)
