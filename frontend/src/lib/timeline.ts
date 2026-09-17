@@ -63,8 +63,9 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     endpoints: [
       "POST /projects/{id}/research/claims/extract",
       "POST /projects/{id}/research/claims/check-scope",
+      "POST /projects/{id}/research/evidence-register",
     ],
-    uiComponents: ["Claim Extractor", "Evidence Preview", "Scope Checker"],
+    uiComponents: ["Claim Extractor", "Evidence Preview", "Scope Checker", "Evidence Register"],
   },
   {
     id: 4,
