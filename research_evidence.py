@@ -9,7 +9,7 @@ deliberately conservative: an absent or unclear scope value becomes
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 import re
@@ -54,6 +54,16 @@ ApplicabilityStatus = Literal[
     "not_applicable",
 ]
 ScopeValue = str | int | None
+EvidenceWarningCode = Literal[
+    "missing_evidence",
+    "source_mismatch",
+    "duplicate_claim",
+    "conflict",
+    "unsupported_claim",
+]
+EvidenceWarningSeverity = Literal["error", "warning"]
+EvidenceAssessmentStatus = Literal["supported", "needs_review", "not_applicable"]
+EvidenceRegisterStatus = Literal["clear", "warnings"]
 
 RESEARCH_SCOPE_FIELDS: Final[tuple[ApplicabilityFieldName, ...]] = (
     "model_year",
@@ -63,6 +73,14 @@ RESEARCH_SCOPE_FIELDS: Final[tuple[ApplicabilityFieldName, ...]] = (
     "setting",
     "evidence_type",
 )
+EVIDENCE_WARNING_CODES: Final[tuple[EvidenceWarningCode, ...]] = (
+    "missing_evidence",
+    "source_mismatch",
+    "duplicate_claim",
+    "conflict",
+    "unsupported_claim",
+)
+MAX_RESEARCH_WARNING_COUNT: Final = 500
 
 
 class ResearchEvidenceError(ValueError):
@@ -103,6 +121,40 @@ class ApplicabilityResult:
     status: ApplicabilityStatus
     reason: str
     fields: tuple[ApplicabilityFieldResult, ...]
+
+
+@dataclass(frozen=True)
+class EvidenceWarning:
+    """One bounded, explainable issue found in an evidence register preview."""
+
+    code: EvidenceWarningCode
+    severity: EvidenceWarningSeverity
+    claim_id: UUID
+    message: str
+    related_claim_ids: tuple[UUID, ...] = ()
+
+
+@dataclass(frozen=True)
+class EvidenceAssessment:
+    """Automated support state for one claim without granting approval."""
+
+    claim_id: UUID
+    status: EvidenceAssessmentStatus
+    warning_codes: tuple[EvidenceWarningCode, ...]
+
+
+@dataclass(frozen=True)
+class EvidenceRegisterResult:
+    """Non-persisted register summary and warning list."""
+
+    status: EvidenceRegisterStatus
+    claim_count: int
+    warning_count: int
+    supported_count: int
+    needs_review_count: int
+    not_applicable_count: int
+    assessments: tuple[EvidenceAssessment, ...]
+    warnings: tuple[EvidenceWarning, ...]
 
 
 _HEADING_PATTERN: Final = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
@@ -154,6 +206,22 @@ _WILDCARD_SCOPE_VALUES: Final = frozenset(
         "all evidence types",
     }
 )
+_MISSING_EVIDENCE_VALUES: Final = frozenset(
+    {
+        "",
+        "unknown",
+        "unspecified",
+        "not specified",
+        "not provided",
+        "not available",
+        "n/a",
+        "na",
+        "none",
+    }
+)
+_NEGATION_WORDS: Final = frozenset({"not", "never", "no"})
+
+
 def _bounded_source_text(value: str) -> str:
     """Normalize source line endings while preserving all source characters."""
 
@@ -366,7 +434,289 @@ def check_claim_applicability(
     )
 
 
+def _canonical_evidence_text(value: str) -> str:
+    """Normalize whitespace and case without making semantic assumptions."""
+
+    return " ".join(value.split()).casefold()
+
+
+def _canonical_claim_text(value: str) -> str:
+    """Normalize claim punctuation for exact, deterministic comparisons."""
+
+    return " ".join(re.sub(r"[^\w\s']", " ", value.casefold()).split())
+
+
+def _missing_evidence_value(value: str) -> bool:
+    return _canonical_evidence_text(value) in _MISSING_EVIDENCE_VALUES
+
+
+def _claim_is_in_passage(claim: ExtractedClaim) -> bool:
+    claim_text = _canonical_claim_text(claim.claim)
+    passage_text = _canonical_claim_text(claim.passage)
+    return bool(claim_text) and claim_text in passage_text
+
+
+def _simple_verb_stem(token: str) -> str:
+    """Align only common third-person endings for conservative conflict checks."""
+
+    if len(token) > 4 and token.endswith("ies"):
+        return f"{token[:-3]}y"
+    if len(token) > 4 and token.endswith("es"):
+        return token[:-2] + "e"
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _claim_polarity_signature(value: str) -> tuple[str, bool] | None:
+    """Return a narrow polarity signature for explicit positive/negative pairs."""
+
+    normalized = value.casefold().replace("doesn't", "does not").replace("isn't", "is not")
+    normalized = normalized.replace("aren't", "are not").replace("can't", "can not")
+    tokens = re.findall(r"[a-z0-9']+", normalized)
+    if not tokens:
+        return None
+
+    negative = False
+    base_tokens: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {"does", "do", "did"} and index + 1 < len(tokens) and tokens[index + 1] == "not":
+            negative = True
+            index += 2
+            continue
+        if token in _NEGATION_WORDS:
+            negative = True
+            index += 1
+            continue
+        if token == "cannot":
+            negative = True
+            index += 1
+            continue
+        base_tokens.append(_simple_verb_stem(token))
+        index += 1
+
+    signature = " ".join(base_tokens)
+    return (signature, negative) if signature else None
+
+
+def _append_warning(
+    warnings: list[EvidenceWarning],
+    warning: EvidenceWarning,
+) -> None:
+    """Keep the register bounded before it reaches an API response."""
+
+    warnings.append(warning)
+    if len(warnings) > MAX_RESEARCH_WARNING_COUNT:
+        raise ResearchEvidenceError("Evidence register produced too many warnings.")
+
+
+def build_evidence_register(
+    claims: Sequence[ExtractedClaim],
+    *,
+    expected_source_title: str | None = None,
+    expected_source_reference: str | None = None,
+    target_scope: Mapping[str, ScopeValue] | None = None,
+) -> EvidenceRegisterResult:
+    """Run bounded completeness and consistency checks over claim previews.
+
+    This function deliberately reports warnings instead of approving evidence.
+    It compares supplied metadata and explicit text only; semantic support is
+    never inferred from a claim's wording.
+    """
+
+    if not claims:
+        raise ResearchEvidenceError("At least one claim is required for a register.")
+    if len(claims) > MAX_RESEARCH_CLAIMS:
+        raise ResearchEvidenceError("Evidence register contains too many claims.")
+
+    claim_ids = [claim.claim_id for claim in claims]
+    if len(claim_ids) != len(set(claim_ids)):
+        raise ResearchEvidenceError("Evidence register claim IDs must be unique.")
+
+    if expected_source_title is not None:
+        ensure_safe_untrusted_text(expected_source_title)
+    if expected_source_reference is not None:
+        ensure_safe_untrusted_text(expected_source_reference)
+    safe_target_scope = _safe_scope(target_scope or {})
+    target_requested = any(value is not None for value in safe_target_scope.values())
+
+    warnings: list[EvidenceWarning] = []
+    warning_codes_by_claim: dict[UUID, list[EvidenceWarningCode]] = {
+        claim.claim_id: [] for claim in claims
+    }
+
+    def add_claim_warning(
+        claim: ExtractedClaim,
+        *,
+        code: EvidenceWarningCode,
+        severity: EvidenceWarningSeverity,
+        message: str,
+        related_claim_ids: tuple[UUID, ...] = (),
+    ) -> None:
+        if code not in warning_codes_by_claim[claim.claim_id]:
+            warning_codes_by_claim[claim.claim_id].append(code)
+        _append_warning(
+            warnings,
+            EvidenceWarning(
+                code=code,
+                severity=severity,
+                claim_id=claim.claim_id,
+                message=message,
+                related_claim_ids=related_claim_ids,
+            ),
+        )
+
+    duplicate_groups: dict[str, list[ExtractedClaim]] = {}
+    polarity_groups: dict[str, dict[bool, list[ExtractedClaim]]] = {}
+
+    for claim in claims:
+        ensure_safe_untrusted_text(claim.claim)
+        ensure_safe_untrusted_text(claim.source_title)
+        ensure_safe_untrusted_text(claim.source_reference)
+        ensure_safe_untrusted_text(claim.passage)
+        _safe_scope(claim.scope)
+        if claim.classification != "factual":
+            continue
+
+        duplicate_groups.setdefault(_canonical_claim_text(claim.claim), []).append(claim)
+        polarity = _claim_polarity_signature(claim.claim)
+        if polarity is not None:
+            signature, negative = polarity
+            polarity_groups.setdefault(signature, {True: [], False: []})[negative].append(claim)
+
+        missing_fields = [
+            field
+            for field, value in (
+                ("source title", claim.source_title),
+                ("source reference", claim.source_reference),
+                ("source passage", claim.passage),
+            )
+            if _missing_evidence_value(value)
+        ]
+        if missing_fields:
+            add_claim_warning(
+                claim,
+                code="missing_evidence",
+                severity="error",
+                message=f"Missing usable {', '.join(missing_fields)}.",
+            )
+        elif not _claim_is_in_passage(claim):
+            add_claim_warning(
+                claim,
+                code="unsupported_claim",
+                severity="error",
+                message="The factual claim is not present in its exact source passage.",
+            )
+
+        if expected_source_title is not None and _canonical_evidence_text(claim.source_title) != _canonical_evidence_text(expected_source_title):
+            add_claim_warning(
+                claim,
+                code="source_mismatch",
+                severity="warning",
+                message="Claim source title does not match the register source.",
+            )
+        if expected_source_reference is not None and _canonical_evidence_text(claim.source_reference) != _canonical_evidence_text(expected_source_reference):
+            add_claim_warning(
+                claim,
+                code="source_mismatch",
+                severity="warning",
+                message="Claim source reference does not match the register source.",
+            )
+
+        if target_requested:
+            applicability = check_claim_applicability(
+                claim.claim_id,
+                claim.classification,
+                source_scope=claim.scope,
+                target_scope=safe_target_scope,
+            )
+            if applicability.status == "mismatch":
+                add_claim_warning(
+                    claim,
+                    code="source_mismatch",
+                    severity="warning",
+                    message="Source scope does not match the requested target context.",
+                )
+            elif applicability.status == "uncertain":
+                add_claim_warning(
+                    claim,
+                    code="missing_evidence",
+                    severity="error",
+                    message="Source scope is incomplete for the requested target context.",
+                )
+
+    for group in duplicate_groups.values():
+        if len(group) < 2:
+            continue
+        related_ids = tuple(claim.claim_id for claim in group)
+        for claim in group:
+            add_claim_warning(
+                claim,
+                code="duplicate_claim",
+                severity="warning",
+                message="This factual claim is duplicated in the register.",
+                related_claim_ids=related_ids,
+            )
+
+    for polarity_group in polarity_groups.values():
+        if not polarity_group[True] or not polarity_group[False]:
+            continue
+        conflicting_claims = polarity_group[True] + polarity_group[False]
+        for claim in conflicting_claims:
+            related_ids = tuple(
+                other.claim_id for other in conflicting_claims if other.claim_id != claim.claim_id
+            )
+            add_claim_warning(
+                claim,
+                code="conflict",
+                severity="error",
+                message="This factual claim conflicts with another claim in the register.",
+                related_claim_ids=related_ids,
+            )
+
+    assessments: list[EvidenceAssessment] = []
+    for claim in claims:
+        claim_warning_codes = tuple(warning_codes_by_claim[claim.claim_id])
+        if claim.classification != "factual":
+            assessment_status: EvidenceAssessmentStatus = "not_applicable"
+        elif claim_warning_codes:
+            assessment_status = "needs_review"
+        else:
+            assessment_status = "supported"
+        assessments.append(
+            EvidenceAssessment(
+                claim_id=claim.claim_id,
+                status=assessment_status,
+                warning_codes=claim_warning_codes,
+            )
+        )
+
+    supported_count = sum(assessment.status == "supported" for assessment in assessments)
+    needs_review_count = sum(assessment.status == "needs_review" for assessment in assessments)
+    not_applicable_count = sum(assessment.status == "not_applicable" for assessment in assessments)
+    return EvidenceRegisterResult(
+        status="warnings" if warnings else "clear",
+        claim_count=len(claims),
+        warning_count=len(warnings),
+        supported_count=supported_count,
+        needs_review_count=needs_review_count,
+        not_applicable_count=not_applicable_count,
+        assessments=tuple(assessments),
+        warnings=tuple(warnings),
+    )
+
+
 __all__ = [
+    "EVIDENCE_WARNING_CODES",
+    "EvidenceAssessment",
+    "EvidenceAssessmentStatus",
+    "EvidenceRegisterResult",
+    "EvidenceRegisterStatus",
+    "EvidenceWarning",
+    "EvidenceWarningCode",
+    "EvidenceWarningSeverity",
     "ApplicabilityFieldName",
     "ApplicabilityFieldResult",
     "ApplicabilityResult",
@@ -376,10 +726,12 @@ __all__ = [
     "MAX_RESEARCH_CLAIMS",
     "MAX_RESEARCH_CLAIM_CHARACTERS",
     "MAX_RESEARCH_SOURCE_CHARACTERS",
+    "MAX_RESEARCH_WARNING_COUNT",
     "RESEARCH_EVIDENCE_SCHEMA_VERSION",
     "RESEARCH_SCOPE_FIELDS",
     "ResearchEvidenceError",
     "check_claim_applicability",
+    "build_evidence_register",
     "classify_claim",
     "extract_claims",
     "research_scope_fields",
