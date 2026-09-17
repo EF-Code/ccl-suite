@@ -189,6 +189,40 @@ export type ResearchApplicabilityResponse = {
   fields: ResearchApplicabilityField[];
 };
 
+export type ResearchEvidenceWarningCode =
+  | "missing_evidence"
+  | "source_mismatch"
+  | "duplicate_claim"
+  | "conflict"
+  | "unsupported_claim";
+
+export type ResearchEvidenceWarning = {
+  code: ResearchEvidenceWarningCode;
+  severity: "error" | "warning";
+  claim_id: string;
+  message: string;
+  related_claim_ids: string[];
+};
+
+export type ResearchEvidenceAssessment = {
+  claim_id: string;
+  status: "supported" | "needs_review" | "not_applicable";
+  warning_codes: ResearchEvidenceWarningCode[];
+};
+
+export type ResearchEvidenceRegisterResponse = {
+  schema_version: "research-evidence-v1";
+  project_id: string;
+  status: "clear" | "warnings";
+  claim_count: number;
+  warning_count: number;
+  supported_count: number;
+  needs_review_count: number;
+  not_applicable_count: number;
+  assessments: ResearchEvidenceAssessment[];
+  warnings: ResearchEvidenceWarning[];
+};
+
 export type KnowledgeFeedbackRating = "helpful" | "not_helpful";
 export type KnowledgeFeedbackReason =
   | "accurate"
