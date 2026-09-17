@@ -3438,3 +3438,83 @@ def test_research_scope_api_rechecks_untrusted_claim_passages() -> None:
 
     assert response.status_code == 422
     assert response.json() == {"detail": "Research input could not be processed safely."}
+
+
+def test_research_evidence_register_returns_bounded_warning_categories() -> None:
+    project = create_project("Research Register Project")
+    extracted = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "source_title": "Vehicle study",
+            "source_reference": "local://vehicle-study",
+            "source_text": (
+                "The vehicle is safe.\n"
+                "The vehicle is safe.\n"
+                "The vehicle is not safe."
+            ),
+        },
+    )
+    assert extracted.status_code == 200
+
+    response = request(
+        "POST",
+        f"/projects/{project['id']}/research/evidence-register",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "claims": extracted.json()["claims"],
+            "expected_source_title": "Different study",
+            "expected_source_reference": "local://different-study",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "research-evidence-v1"
+    assert payload["status"] == "warnings"
+    assert payload["claim_count"] == 3
+    assert payload["warning_count"] == len(payload["warnings"])
+    assert {warning["code"] for warning in payload["warnings"]} == {
+        "source_mismatch",
+        "duplicate_claim",
+        "conflict",
+    }
+    assert all(
+        assessment["status"] == "needs_review"
+        for assessment in payload["assessments"]
+    )
+
+
+def test_research_evidence_register_preserves_project_access_boundary() -> None:
+    project = create_project("Private Research Register Project")
+    other_user = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"research-register-other-{uuid4().hex}", "role": "member"},
+    )
+    assert other_user.status_code == 201
+    claim_id = str(uuid4())
+    denied = request(
+        "POST",
+        f"/projects/{project['id']}/research/evidence-register",
+        headers={"X-User-ID": other_user.json()["id"]},
+        json={
+            "claims": [
+                {
+                    "claim_id": claim_id,
+                    "claim": "The private finding is recorded.",
+                    "classification": "factual",
+                    "source_title": "Private source",
+                    "source_reference": "local://private",
+                    "source_date": None,
+                    "passage": "The private finding is recorded.",
+                    "scope": {},
+                    "review_status": "needs_review",
+                }
+            ]
+        },
+    )
+
+    assert denied.status_code == 404
+    assert denied.json() == {"detail": "Project was not found."}
