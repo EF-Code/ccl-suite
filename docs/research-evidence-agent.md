@@ -1,10 +1,10 @@
 # Research Evidence Agent
 
-This document describes the research-evidence capability delivered for the
-14–16 September 2026 slice of the project plan. It covers evidence-field
-design, claim extraction, and configurable applicability checks. Human review,
-verification, correction comments, and export are intentionally outside this
-slice.
+This document describes the research-evidence capability delivered through
+17 September 2026. It covers evidence-field design, claim extraction,
+configurable applicability checks, and a non-persisted warning register.
+Human approval, correction comments, and export remain separate publication
+steps.
 
 ## Purpose
 
@@ -106,6 +106,9 @@ Source text + title/reference/date/scope
                  v
       applicable / mismatch / uncertain /
               not_applicable
+                 |
+                 v
+      completeness and consistency warnings
 ```
 
 The extraction response is validated before it is returned. Nothing from this
@@ -133,6 +136,30 @@ target fields is also `uncertain`, because applicability has not been
 established. Headings, instructions, opinions, and creative text return
 `not_applicable` rather than being treated as facts.
 
+## Evidence register
+
+`POST /projects/{project_id}/research/evidence-register` accepts the current
+validated claim preview and returns deterministic warning categories without
+persisting or approving the claims. Optional expected source metadata and a
+target scope make source alignment checks explicit rather than inferred.
+
+The register can report:
+
+- `missing_evidence` when a factual claim has no usable source title,
+  reference, passage, or requested scope context.
+- `source_mismatch` when claim source metadata or requested scope differs from
+  the register context.
+- `duplicate_claim` when the same factual claim appears more than once.
+- `conflict` when explicit positive and negative factual statements share a
+  deterministic polarity signature.
+- `unsupported_claim` when the factual claim is not present in its retained
+  exact source passage.
+
+Each claim receives `supported`, `needs_review`, or `not_applicable`. The
+`supported` label means only that these bounded checks found no warnings; it
+is not human verification or approval. Every source claim remains tied to its
+exact passage and `needs_review` lifecycle state.
+
 ## API surface
 
 - `POST /projects/{project_id}/research/claims/extract` accepts bounded source
@@ -140,8 +167,11 @@ established. Headings, instructions, opinions, and creative text return
   preview.
 - `POST /projects/{project_id}/research/claims/check-scope` accepts one
   validated claim and a target scope, then returns field-level comparisons.
+- `POST /projects/{project_id}/research/evidence-register` checks a bounded
+  claim list for missing evidence, source mismatches, duplicates, conflicts,
+  and unsupported wording, then returns claim assessments and warning details.
 
-Both routes require the existing `knowledge.read` permission and apply the
+All three routes require the existing `knowledge.read` permission and apply the
 same project-owner or supervisor/administrator boundary as the knowledge base.
 Unsafe instruction-shaped input receives a bounded `422` response. Raw source
 text is not placed in audit records, and no extraction output is saved at this
@@ -161,10 +191,10 @@ stage.
 
 ## Deliberate boundary
 
-This slice does not implement reviewer approval, evidence corrections,
-verification status, or CSV/JSON/Markdown export. Those actions require a
-separate review and publication contract so that a preview cannot be mistaken
-for approved company evidence.
+This slice does not implement reviewer approval, evidence corrections, a
+human-verified lifecycle state, or CSV/JSON/Markdown export. Those actions
+require a separate review and publication contract so that a preview cannot
+be mistaken for approved company evidence.
 
 ## Verification checklist
 
@@ -177,5 +207,5 @@ RUN_BROWSER_TESTS=1 ~/.venv/bin/python -m pytest -q tests/test_dashboard_browser
 ```
 
 The browser check covers project selection, source metadata entry, claim
-preview, factual-claim selection, and an applicable scope result. It does not
-approve, correct, verify, or export the preview.
+preview, factual-claim selection, an applicable scope result, and a conflict
+warning register. It does not approve, correct, or export the preview.
