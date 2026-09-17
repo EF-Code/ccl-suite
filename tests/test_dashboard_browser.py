@@ -384,6 +384,7 @@ def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) 
     page.locator("#research-source-market").fill("Nigeria")
     page.locator("#research-source-text").fill(
         "# Vehicle facts\nThe vehicle uses a hybrid engine in the 2024 model year.\n"
+        "The vehicle is safe.\nThe vehicle is not safe.\n"
         "Verify the source date before citing it."
     )
     page.locator("#research-extract-submit").click()
@@ -403,6 +404,14 @@ def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) 
     expect(scope_result).to_contain_text("applicable")
     expect(scope_result).to_contain_text("All requested scope fields match")
 
+    page.locator("#research-register-submit").click()
+    register_result = page.locator("#research-register-result")
+    register_result.wait_for(state="visible")
+    expect(register_result).to_contain_text("warning")
+    expect(page.locator("#research-register-warnings [data-warning-code='conflict']")).to_have_count(2)
+    expect(register_result).to_contain_text("need review")
+
     page.locator("#research-clear-preview").click()
     expect(page.locator("#research-claims-result")).to_contain_text("No claims yet")
     expect(page.locator("#research-scope-result")).to_be_hidden()
+    expect(page.locator("#research-register-result")).to_be_hidden()
