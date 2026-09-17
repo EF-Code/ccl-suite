@@ -61,6 +61,10 @@ from api_schemas import (
     ResearchClaimExtractionRequest,
     ResearchClaimExtractionResponse,
     ResearchClaimResponse,
+    ResearchEvidenceAssessmentResponse,
+    ResearchEvidenceRegisterRequest,
+    ResearchEvidenceRegisterResponse,
+    ResearchEvidenceWarningResponse,
     SemanticSearchRequest,
     SemanticSearchResponse,
     SemanticSearchResult,
@@ -158,9 +162,11 @@ from knowledge_security import (
 )
 from research_evidence import (
     ApplicabilityResult,
+    EvidenceRegisterResult,
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     ExtractedClaim,
     ResearchEvidenceError,
+    build_evidence_register,
     check_claim_applicability,
     extract_claims,
 )
@@ -1366,6 +1372,48 @@ def research_scope_check_response(
     )
 
 
+def research_evidence_register_response(
+    project_id: UUID,
+    result: EvidenceRegisterResult,
+) -> ResearchEvidenceRegisterResponse:
+    """Validate the complete automated warning register before returning it."""
+
+    return ResearchEvidenceRegisterResponse.model_validate(
+        {
+            "schema_version": RESEARCH_EVIDENCE_SCHEMA_VERSION,
+            "project_id": project_id,
+            "status": result.status,
+            "claim_count": result.claim_count,
+            "warning_count": result.warning_count,
+            "supported_count": result.supported_count,
+            "needs_review_count": result.needs_review_count,
+            "not_applicable_count": result.not_applicable_count,
+            "assessments": [
+                ResearchEvidenceAssessmentResponse.model_validate(
+                    {
+                        "claim_id": assessment.claim_id,
+                        "status": assessment.status,
+                        "warning_codes": list(assessment.warning_codes),
+                    }
+                )
+                for assessment in result.assessments
+            ],
+            "warnings": [
+                ResearchEvidenceWarningResponse.model_validate(
+                    {
+                        "code": warning.code,
+                        "severity": warning.severity,
+                        "claim_id": warning.claim_id,
+                        "message": warning.message,
+                        "related_claim_ids": list(warning.related_claim_ids),
+                    }
+                )
+                for warning in result.warnings
+            ],
+        }
+    )
+
+
 @app.post(
     "/projects/{project_id}/research/claims/extract",
     response_model=ResearchClaimExtractionResponse,
@@ -1467,6 +1515,63 @@ async def check_project_research_scope(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Research scope could not be checked safely.",
+        ) from exc
+    return response
+
+
+@app.post(
+    "/projects/{project_id}/research/evidence-register",
+    response_model=ResearchEvidenceRegisterResponse,
+    tags=["research-evidence"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def build_project_research_evidence_register(
+    project_id: UUID,
+    register_request: ResearchEvidenceRegisterRequest,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> ResearchEvidenceRegisterResponse:
+    """Return bounded completeness and consistency warnings without approval."""
+
+    project = require_project_knowledge_access(
+        db,
+        request,
+        project_id,
+        actor,
+        denial_action="research.evidence_register",
+    )
+    try:
+        claims = tuple(
+            ExtractedClaim(
+                claim_id=claim.claim_id,
+                claim=claim.claim,
+                classification=claim.classification,
+                source_title=claim.source_title,
+                source_reference=claim.source_reference,
+                source_date=claim.source_date,
+                passage=claim.passage,
+                scope=claim.scope.model_dump(),
+                review_status=claim.review_status,
+            )
+            for claim in register_request.claims
+        )
+        result = build_evidence_register(
+            claims,
+            expected_source_title=register_request.expected_source_title,
+            expected_source_reference=register_request.expected_source_reference,
+            target_scope=register_request.target_scope.model_dump(),
+        )
+        response = research_evidence_register_response(project.id, result)
+    except UnsafeKnowledgeContentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Research input could not be processed safely.",
+        ) from exc
+    except ResearchEvidenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Research evidence register could not be generated safely.",
         ) from exc
     return response
 
