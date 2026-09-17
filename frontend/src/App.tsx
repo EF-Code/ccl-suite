@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
-import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchScope, type SearchResult } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchScope, type SearchResult } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
@@ -88,8 +88,10 @@ export default function App() {
   const [researchResult, setResearchResult] = useState("")
   const [researchError, setResearchError] = useState("")
   const [researchScopeResponse, setResearchScopeResponse] = useState<ResearchApplicabilityResponse | null>(null)
+  const [researchRegister, setResearchRegister] = useState<ResearchEvidenceRegisterResponse | null>(null)
   const [researchLoading, setResearchLoading] = useState(false)
   const [researchScopeLoading, setResearchScopeLoading] = useState(false)
+  const [researchRegisterLoading, setResearchRegisterLoading] = useState(false)
   const [files, setFiles] = useState<FileRecord[]>([])
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
   const [uploadPolicy, setUploadPolicy] = useState<any>(null)
@@ -194,7 +196,7 @@ export default function App() {
     const body = Object.fromEntries(fd.entries())
     try {
       const proj: any = await apiRequest("/projects", { method: "POST", body: JSON.stringify(body) })
-      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null)
+      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null); setResearchRegister(null)
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
@@ -420,6 +422,7 @@ export default function App() {
     setResearchResult("")
     setResearchError("")
     setResearchScopeResponse(null)
+    setResearchRegister(null)
   }
 
   async function handleCopyResearchPassage(passage: string) {
@@ -440,6 +443,7 @@ export default function App() {
     setResearchLoading(true)
     setResearchError("")
     setResearchScopeResponse(null)
+    setResearchRegister(null)
     try {
       const data = await apiRequest<ResearchClaimExtractionResponse>(`/projects/${selectedId}/research/claims/extract`, {
         method: "POST",
@@ -488,6 +492,42 @@ export default function App() {
       showMessage(message, "error")
     } finally {
       setResearchScopeLoading(false)
+    }
+  }
+
+  async function handleResearchRegister() {
+    if (!selectedId) return showMessage("Select a project before generating the register.", "error")
+    if (researchClaims.length === 0) return showMessage("Extract claims before generating the register.", "error")
+    setResearchRegisterLoading(true)
+    setResearchError("")
+    const source = researchClaims[0]
+    const scopeForm = document.querySelector<HTMLFormElement>("#research-scope-form")
+    const targetScope = scopeForm
+      ? researchScopeFromForm(new FormData(scopeForm), "target")
+      : { model_year: null, engine: null, market: null, population: null, setting: null, evidence_type: null }
+    try {
+      const data = await apiRequest<ResearchEvidenceRegisterResponse>(`/projects/${selectedId}/research/evidence-register`, {
+        method: "POST",
+        body: JSON.stringify({
+          claims: researchClaims,
+          expected_source_title: source?.source_title || null,
+          expected_source_reference: source?.source_reference || null,
+          target_scope: targetScope,
+        }),
+      })
+      setResearchRegister(data)
+      if (data.warning_count > 0) {
+        showMessage(`${data.warning_count} evidence warning${data.warning_count === 1 ? "" : "s"} need review.`, "error")
+      } else {
+        showMessage("Evidence register generated with no automated warnings.")
+      }
+    } catch (err: any) {
+      const message = (err as Error).message
+      setResearchRegister(null)
+      setResearchError(message)
+      showMessage(message, "error")
+    } finally {
+      setResearchRegisterLoading(false)
     }
   }
 
@@ -586,6 +626,7 @@ export default function App() {
     setResearchResult("")
     setResearchError("")
     setResearchScopeResponse(null)
+    setResearchRegister(null)
     const setVal = (selector: string, value: string) => {
       const element = document.querySelector<HTMLInputElement>(selector)
       if (element) element.value = value
@@ -614,7 +655,7 @@ export default function App() {
     operations: { title: "Operations", description: "Preview and run controlled work inside the active project." },
     files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
     knowledge: { title: "Knowledge", description: "Register, review, ingest, search, and answer from approved sources." },
-    research: { title: "Research evidence", description: "Extract reviewable claims and check whether evidence applies to a target scope." },
+    research: { title: "Research evidence", description: "Extract claims, check scope, and surface evidence warnings before review." },
     recovery: { title: "Recovery", description: "Create, verify, and restore checksummed project backups." },
     setup: { title: "Workspace setup", description: "Provision an owner, register a project, and prepare local storage." },
   }
@@ -1304,7 +1345,7 @@ export default function App() {
           <CardContent className="space-y-5">
             <Alert id="research-guardrail" className="border-teal-200 bg-teal-50/70">
               <ShieldCheck className="h-4 w-4 text-primary" />
-              <AlertDescription className="text-xs"><strong>Safety boundary:</strong> extraction is local and deterministic. Every claim is validated before it is shown, marked <code className="rounded bg-white px-1">needs_review</code>, and never saved as approved evidence. Missing scope is reported as uncertainty.</AlertDescription>
+              <AlertDescription className="text-xs"><strong>Safety boundary:</strong> extraction and register checks are local and deterministic. Claims remain <code className="rounded bg-white px-1">needs_review</code>; a warning-free assessment is only support for a later human review, never approval or export.</AlertDescription>
             </Alert>
             {!selectedId ? <Alert><AlertCircle className="w-4 h-4" /><AlertDescription className="text-xs">Select a project before using the research evidence tools.</AlertDescription></Alert> : (
               <div className="grid gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
@@ -1380,6 +1421,17 @@ export default function App() {
                       <Button id="research-scope-submit" type="submit" variant="secondary" disabled={researchScopeLoading || researchClaims.filter(claim => claim.classification === "factual").length === 0}>{researchScopeLoading ? "Checking…" : "Check target scope"}</Button>
                     </form>
                     {researchScopeResponse && <div id="research-scope-result" className={`mt-3 rounded-xl border p-3 ${researchScopeResponse.status === "applicable" ? "border-emerald-200 bg-emerald-50" : researchScopeResponse.status === "mismatch" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`} role="status" aria-live="polite"><div className="flex flex-wrap items-center gap-2"><Badge className={researchScopeResponse.status === "applicable" ? "bg-emerald-700 text-white" : researchScopeResponse.status === "mismatch" ? "bg-red-700 text-white" : "bg-amber-500 text-amber-950"}>{researchScopeResponse.status.replaceAll("_", " ")}</Badge><span className="text-[0.68rem] text-muted-foreground">{researchScopeResponse.claim_classification} · {researchScopeResponse.schema_version}</span></div><p className="mt-2 text-xs leading-relaxed">{researchScopeResponse.reason}</p><div className="mt-3 grid gap-1">{researchScopeResponse.fields.map(field => <div key={field.field} className="flex items-center justify-between gap-2 border-t border-black/5 py-1.5 text-[0.68rem]"><span className="font-medium capitalize">{field.field.replaceAll("_", " ")}</span><span className={field.status === "match" ? "text-emerald-700" : field.status === "mismatch" ? "text-red-700" : field.status === "uncertain" ? "text-amber-700" : "text-muted-foreground"}>{field.status.replaceAll("_", " ")}{field.requested ? ` · requested ${field.requested}` : ""}{field.observed ? ` · source ${field.observed}` : ""}</span></div>)}</div></div>}
+
+                    <div className="border-t border-border pt-4">
+                      <div className="mb-3"><p className="text-sm font-semibold">Generate evidence register</p><p id="research-register-help" className="mt-1 text-xs text-muted-foreground">Check citation completeness, source alignment, duplicates, unsupported wording, and conflicts across the current preview.</p></div>
+                      <Button id="research-register-submit" type="button" variant="secondary" onClick={handleResearchRegister} disabled={researchRegisterLoading || researchClaims.length === 0}>{researchRegisterLoading ? "Checking evidence…" : "Generate warning register"}</Button>
+                      {researchRegister && <div id="research-register-result" className={`mt-3 rounded-xl border p-3 ${researchRegister.status === "clear" ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`} role="status" aria-live="polite">
+                        <div className="flex flex-wrap items-center gap-2"><Badge className={researchRegister.status === "clear" ? "bg-emerald-700 text-white" : "bg-amber-500 text-amber-950"}>{researchRegister.status === "clear" ? "No automated warnings" : `${researchRegister.warning_count} warning${researchRegister.warning_count === 1 ? "" : "s"}`}</Badge><span className="text-[0.68rem] text-muted-foreground">{researchRegister.schema_version}</span></div>
+                        <p className="mt-2 text-xs leading-relaxed">{researchRegister.supported_count} supported for review · {researchRegister.needs_review_count} need review · {researchRegister.not_applicable_count} not applicable. These checks do not approve evidence.</p>
+                        {researchRegister.warnings.length === 0 ? <p id="research-register-warnings" className="mt-3 text-xs text-emerald-800">No automated completeness or consistency warnings were found.</p> :
+                          <div id="research-register-warnings" className="mt-3 grid gap-2">{researchRegister.warnings.map((warning, index) => <div key={`${warning.code}-${warning.claim_id}-${index}`} data-warning-code={warning.code} className="rounded-lg border border-amber-200 bg-white/70 p-2.5"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className="capitalize">{warning.code.replaceAll("_", " ")}</Badge><span className="text-[0.68rem] font-semibold uppercase tracking-wide text-amber-800">{warning.severity}</span></div><p className="mt-1 text-xs leading-relaxed text-foreground">{warning.message}</p></div>)}</div>}
+                      </div>}
+                    </div>
                   </div>
                 </div>
               </div>
