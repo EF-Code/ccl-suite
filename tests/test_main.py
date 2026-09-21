@@ -2019,6 +2019,38 @@ def test_approval_can_be_decided_once() -> None:
     assert repeated.status_code == 409
 
 
+def test_workflow_allows_only_one_pending_approval() -> None:
+    project = create_project("Single pending approval")
+    workflow = create_workflow(str(project["id"]))
+
+    first = request(
+        "POST",
+        f"/workflows/{workflow['id']}/approvals",
+        json={},
+    )
+    duplicate = request(
+        "POST",
+        f"/workflows/{workflow['id']}/approvals",
+        json={},
+    )
+    decided = request(
+        "POST",
+        f"/approvals/{first.json()['id']}/decision",
+        json={"status": "approved", "approved_by_id": TEST_OWNER_ID},
+    )
+    after_decision = request(
+        "POST",
+        f"/workflows/{workflow['id']}/approvals",
+        json={},
+    )
+
+    assert first.status_code == 201
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "An approval request is already pending for this workflow."
+    assert decided.status_code == 200
+    assert after_decision.status_code == 201
+
+
 def test_workflow_and_approval_endpoints_bind_optional_actor_ids() -> None:
     project = create_project()
     workflow = request(
