@@ -24,7 +24,7 @@ if os.getenv("RUN_BROWSER_TESTS") != "1":
     )
 
 playwright = pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
 
 BASE_URL = os.getenv("DASHBOARD_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
@@ -410,6 +410,30 @@ def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) 
     expect(register_result).to_contain_text("warning")
     expect(page.locator("#research-register-warnings [data-warning-code='conflict']")).to_have_count(2)
     expect(register_result).to_contain_text("need review")
+
+    page.locator("#research-submit-review").click()
+    review_panel = page.locator("#research-human-review")
+    expect(review_panel).to_contain_text("needs review")
+    verify_buttons = review_panel.get_by_role("button", name="Mark verified")
+    while True:
+        page.wait_for_timeout(100)
+        if verify_buttons.count() == 0:
+            break
+        button = verify_buttons.first
+        try:
+            expect(button).to_be_enabled()
+            button.click()
+        except PlaywrightTimeoutError:
+            if verify_buttons.count() == 0:
+                break
+            raise
+    expect(review_panel).to_contain_text("5/5 claims verified")
+    page.locator("#research-approve-review").click()
+    page.locator("#confirm-accept").click()
+    expect(review_panel).to_contain_text("approved")
+    expect(review_panel.get_by_role("button", name="CSV")).to_be_visible()
+    expect(review_panel.get_by_role("button", name="JSON")).to_be_visible()
+    expect(review_panel.get_by_role("button", name="Markdown")).to_be_visible()
 
     page.locator("#research-clear-preview").click()
     expect(page.locator("#research-claims-result")).to_contain_text("No claims yet")
