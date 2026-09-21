@@ -14,6 +14,9 @@ from models import (
     KnowledgeFeedback,
     KnowledgeSource,
     Project,
+    ResearchReview,
+    ResearchReviewClaim,
+    ResearchReviewEvent,
     SecurityEvent,
     User,
     Workflow,
@@ -35,6 +38,9 @@ REQUIRED_TABLES = {
     "document_chunks",
     "knowledge_feedback",
     "knowledge_error_reports",
+    "research_reviews",
+    "research_review_claims",
+    "research_review_events",
 }
 
 
@@ -53,6 +59,7 @@ def test_relationship_mappers_configure() -> None:
     assert Project.document_chunks.property.mapper.class_ is DocumentChunk
     assert Project.knowledge_feedback.property.mapper.class_ is KnowledgeFeedback
     assert Project.knowledge_error_reports.property.mapper.class_ is KnowledgeErrorReport
+    assert Project.research_reviews.property.mapper.class_ is ResearchReview
     assert KnowledgeSource.ingestion_runs.property.mapper.class_ is IngestionRun
     assert KnowledgeSource.document_chunks.property.mapper.class_ is DocumentChunk
     assert IngestionRun.chunks.property.mapper.class_ is DocumentChunk
@@ -61,9 +68,15 @@ def test_relationship_mappers_configure() -> None:
     assert File.knowledge_sources.property.mapper.class_ is KnowledgeSource
     assert Project.workflows.property.mapper.class_ is Workflow
     assert Workflow.approvals.property.mapper.class_ is Approval
+    assert ResearchReview.claims.property.mapper.class_ is ResearchReviewClaim
+    assert ResearchReview.events.property.mapper.class_ is ResearchReviewEvent
     assert User.security_events.property.mapper.class_ is SecurityEvent
     assert User.knowledge_feedback.property.mapper.class_ is KnowledgeFeedback
     assert User.knowledge_error_reports.property.mapper.class_ is KnowledgeErrorReport
+    assert User.created_research_reviews.property.mapper.class_ is ResearchReview
+    assert User.approved_research_reviews.property.mapper.class_ is ResearchReview
+    assert User.verified_research_claims.property.mapper.class_ is ResearchReviewClaim
+    assert User.research_review_events.property.mapper.class_ is ResearchReviewEvent
 
 
 def test_schema_can_be_created_without_a_live_database() -> None:
@@ -133,6 +146,15 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     assert "ix_knowledge_error_reports_project_created_at" in {
         index.name for index in KnowledgeErrorReport.__table__.indexes
     }
+    assert "ix_research_reviews_project_status" in {
+        index.name for index in ResearchReview.__table__.indexes
+    }
+    assert "ix_research_review_claims_review_status" in {
+        index.name for index in ResearchReviewClaim.__table__.indexes
+    }
+    assert "ix_research_review_events_review_created_at" in {
+        index.name for index in ResearchReviewEvent.__table__.indexes
+    }
 
     project_owner_fk = next(iter(Project.__table__.c.owner_id.foreign_keys))
     file_project_fk = next(iter(File.__table__.c.project_id.foreign_keys))
@@ -146,6 +168,10 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     assert version_file_fk.ondelete == "CASCADE"
     assert backup_project_fk.ondelete == "CASCADE"
     assert backup_creator_fk.ondelete == "SET NULL"
+    review_project_fk = next(iter(ResearchReview.__table__.c.project_id.foreign_keys))
+    review_claim_fk = next(iter(ResearchReviewClaim.__table__.c.review_id.foreign_keys))
+    assert review_project_fk.ondelete == "CASCADE"
+    assert review_claim_fk.ondelete == "CASCADE"
 
 
 def test_sensitive_payload_columns_are_not_stored() -> None:
