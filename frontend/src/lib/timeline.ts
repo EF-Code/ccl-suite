@@ -57,15 +57,21 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     title: "Research Evidence Agent",
     purpose: "Extract claims and flag missing or mismatched evidence",
     weeks: "Research delivery · 14-18 Sep",
-    status: "current",
+    status: "complete",
     backendReady: true,
-    frontendCoverage: "partial",
+    frontendCoverage: "full",
     endpoints: [
       "POST /projects/{id}/research/claims/extract",
       "POST /projects/{id}/research/claims/check-scope",
       "POST /projects/{id}/research/evidence-register",
+      "POST /projects/{id}/research/reviews",
+      "GET /projects/{id}/research/reviews",
+      "POST /research/reviews/{id}/claims/{claim_id}/correction",
+      "POST /research/reviews/{id}/claims/{claim_id}/verify",
+      "POST /research/reviews/{id}/approve",
+      "GET /research/reviews/{id}/export?format=csv|json|markdown",
     ],
-    uiComponents: ["Claim Extractor", "Evidence Preview", "Scope Checker", "Evidence Register"],
+    uiComponents: ["Claim Extractor", "Evidence Preview", "Scope Checker", "Evidence Register", "Human Review", "Corrections", "Verification", "Exports"],
   },
   {
     id: 4,
@@ -97,4 +103,4 @@ export const SIWES_TIMELINE: TimelineModule[] = [
 ];
 
 export const CURRENT_WEEK = "Current capability";
-export const CURRENT_PHASE = "Research Evidence · Claims and Scope";
+export const CURRENT_PHASE = "Research Evidence · Review and Publication";
