@@ -2041,6 +2041,52 @@ def test_workflow_and_approval_endpoints_bind_optional_actor_ids() -> None:
     assert len(listed.json()) == 1
 
 
+def test_workflow_and_approval_routes_enforce_project_boundary() -> None:
+    project = create_project("Scoped workflow project")
+    workflow = create_workflow(str(project["id"]))
+    approval = request(
+        "POST",
+        f"/workflows/{workflow['id']}/approvals",
+        json={},
+    )
+    outsider = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"workflow-outsider-{uuid4().hex}", "role": "member"},
+    )
+    assert approval.status_code == 201
+    assert outsider.status_code == 201
+    headers = {"X-User-ID": outsider.json()["id"]}
+
+    listed_workflows = request(
+        "GET",
+        f"/projects/{project['id']}/workflows",
+        headers=headers,
+    )
+    listed_approvals = request(
+        "GET",
+        f"/workflows/{workflow['id']}/approvals",
+        headers=headers,
+    )
+    requested = request(
+        "POST",
+        f"/workflows/{workflow['id']}/approvals",
+        headers=headers,
+        json={},
+    )
+    decided = request(
+        "POST",
+        f"/approvals/{approval.json()['id']}/decision",
+        headers=headers,
+        json={"status": "approved", "approved_by_id": outsider.json()["id"]},
+    )
+
+    assert listed_workflows.status_code == 404
+    assert listed_approvals.status_code == 404
+    assert requested.status_code == 404
+    assert decided.status_code == 404
+
+
 def test_security_events_are_structured_and_limited() -> None:
     created = request(
         "POST",
