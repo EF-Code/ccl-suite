@@ -3382,13 +3382,19 @@ async def create_workflow(
     actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
 ) -> WorkflowResponse:
-    require_record(db, Project, project_id, "Project was not found.")
     created_by_id = authenticated_actor_id(
         db,
         request,
         actor,
         workflow.created_by_id,
         "created_by_id",
+    )
+    require_project_knowledge_access(
+        db,
+        request,
+        project_id,
+        actor,
+        denial_action="workflow.create",
     )
 
     created_workflow = persist_record(
@@ -3408,12 +3414,20 @@ async def create_workflow(
     "/projects/{project_id}/workflows",
     response_model=list[WorkflowResponse],
     tags=["workflows"],
-    dependencies=[Depends(require_permission("workflow.manage"))],
 )
 async def list_workflows(
-    project_id: UUID, db: Session = Depends(get_db)
+    project_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
 ) -> list[WorkflowResponse]:
-    require_record(db, Project, project_id, "Project was not found.")
+    project = require_project_knowledge_access(
+        db,
+        request,
+        project_id,
+        actor,
+        denial_action="workflow.list",
+    )
     workflows = list_records(
         db,
         select(Workflow)
