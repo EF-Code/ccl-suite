@@ -3518,3 +3518,140 @@ def test_research_evidence_register_preserves_project_access_boundary() -> None:
 
     assert denied.status_code == 404
     assert denied.json() == {"detail": "Project was not found."}
+
+
+def test_research_review_requires_human_verification_before_approval_and_export() -> None:
+    project = create_project("Human Research Review Project")
+    project_id = str(project["id"])
+    extracted = request(
+        "POST",
+        f"/projects/{project_id}/research/claims/extract",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "source_title": "Vehicle study",
+            "source_reference": "local://vehicle-study",
+            "source_date": "2026-09-18",
+            "scope": {"market": "Nigeria"},
+            "source_text": (
+                "The vehicle uses a hybrid engine.\n"
+                "The vehicle is suitable for urban roads."
+            ),
+        },
+    )
+    assert extracted.status_code == 200
+    claims = extracted.json()["claims"]
+
+    submitted = request(
+        "POST",
+        f"/projects/{project_id}/research/reviews",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"claims": claims, "target_scope": {"market": "Nigeria"}},
+    )
+    assert submitted.status_code == 201
+    review = submitted.json()
+    review_id = review["id"]
+    assert review["status"] == "needs_review"
+    assert review["claim_count"] == 2
+    assert review["events"][0]["action"] == "submitted"
+
+    early_approval = request(
+        "POST",
+        f"/research/reviews/{review_id}/approve",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={},
+    )
+    assert early_approval.status_code == 409
+    assert "human-verified" in early_approval.json()["detail"]
+
+    first_claim_id = claims[0]["claim_id"]
+    correction = request(
+        "POST",
+        f"/research/reviews/{review_id}/claims/{first_claim_id}/correction",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={
+            "comment": "Clarify the configuration wording before publication.",
+            "corrected_claim": "The vehicle uses a hybrid powertrain.",
+        },
+    )
+    assert correction.status_code == 200
+    assert correction.json()["status"] == "changes_requested"
+    assert correction.json()["claims"][0]["claim"] == "The vehicle uses a hybrid powertrain."
+
+    first_verified = request(
+        "POST",
+        f"/research/reviews/{review_id}/claims/{first_claim_id}/verify",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"note": "Source passage checked and correction accepted."},
+    )
+    assert first_verified.status_code == 200
+    assert first_verified.json()["status"] == "needs_review"
+    assert first_verified.json()["verified_count"] == 1
+
+    second_claim_id = claims[1]["claim_id"]
+    second_verified = request(
+        "POST",
+        f"/research/reviews/{review_id}/claims/{second_claim_id}/verify",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={},
+    )
+    assert second_verified.status_code == 200
+    assert second_verified.json()["status"] == "verified"
+    assert second_verified.json()["verified_count"] == 2
+
+    approved = request(
+        "POST",
+        f"/research/reviews/{review_id}/approve",
+        headers={"X-User-ID": TEST_OWNER_ID},
+        json={"note": "All claims reviewed against their source passages."},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+    assert approved.json()["approved_by_id"] == TEST_OWNER_ID
+
+    for export_format, media_type, marker in (
+        ("json", "application/json", '"schema_version": "research-review-v1"'),
+        ("csv", "text/csv", "claim_id,claim_status"),
+        ("markdown", "text/markdown", "# Research evidence review"),
+    ):
+        exported = request(
+            "GET",
+            f"/research/reviews/{review_id}/export?format={export_format}",
+            headers={"X-User-ID": TEST_OWNER_ID},
+        )
+        assert exported.status_code == 200
+        assert exported.headers["content-type"].startswith(media_type)
+        assert f"research-review-{review_id}.{export_format}" in exported.headers["content-disposition"]
+        assert marker in exported.text
+
+    final = request(
+        "GET",
+        f"/research/reviews/{review_id}",
+        headers={"X-User-ID": TEST_OWNER_ID},
+    )
+    assert final.status_code == 200
+    assert [event["action"] for event in final.json()["events"]] == [
+        "submitted",
+        "correction_requested",
+        "verified",
+        "verified",
+        "approved",
+        "exported",
+        "exported",
+        "exported",
+    ]
+
+
+def test_research_review_rejects_cross_project_reads_and_intern_mutations() -> None:
+    project = create_project("Private Human Review")
+    other_user = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"review-intern-{uuid4().hex}", "role": "intern"},
+    )
+    assert other_user.status_code == 201
+    denied = request(
+        "GET",
+        f"/projects/{project['id']}/research/reviews",
+        headers={"X-User-ID": other_user.json()["id"]},
+    )
+    assert denied.status_code == 403
