@@ -3451,7 +3451,6 @@ async def create_approval(
     actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
 ) -> ApprovalResponse:
-    require_record(db, Workflow, workflow_id, "Workflow was not found.")
     requested_by_id = authenticated_actor_id(
         db,
         request,
@@ -3459,11 +3458,18 @@ async def create_approval(
         approval.requested_by_id,
         "requested_by_id",
     )
+    _, workflow_record = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="approval.create",
+    )
 
     created_approval = persist_record(
         db,
         Approval(
-            workflow_id=workflow_id,
+            workflow_id=workflow_record.id,
             requested_by_id=requested_by_id,
         ),
         "Approval",
