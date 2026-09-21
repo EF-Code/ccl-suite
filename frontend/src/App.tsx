@@ -544,6 +544,118 @@ export default function App() {
     }
   }
 
+  async function handleResearchSubmitReview() {
+    if (!selectedId) return showMessage("Select a project before submitting a review.", "error")
+    if (researchClaims.length === 0) return showMessage("Extract claims before submitting a review.", "error")
+    if (!researchRegister) return showMessage("Generate the evidence register before submitting for review.", "error")
+    setResearchReviewLoading(true)
+    setResearchError("")
+    const scopeForm = document.querySelector<HTMLFormElement>("#research-scope-form")
+    const targetScope = scopeForm
+      ? researchScopeFromForm(new FormData(scopeForm), "target")
+      : { model_year: null, engine: null, market: null, population: null, setting: null, evidence_type: null }
+    try {
+      const data = await apiRequest<ResearchReviewResponse>(`/projects/${selectedId}/research/reviews`, {
+        method: "POST",
+        body: JSON.stringify({ claims: researchClaims, target_scope: targetScope }),
+      })
+      setResearchReview(data)
+      showMessage(`Review package submitted with ${data.claim_count} claim${data.claim_count === 1 ? "" : "s"}.`)
+    } catch (err: any) {
+      const message = (err as Error).message
+      setResearchError(message)
+      showMessage(message, "error")
+    } finally {
+      setResearchReviewLoading(false)
+    }
+  }
+
+  async function handleResearchCorrection(claimId: string) {
+    if (!selectedId || !researchReview) return
+    const comment = window.prompt("Describe the correction needed before publication:")?.trim()
+    if (!comment) return
+    const correctedClaim = window.prompt("Optional corrected claim text (leave blank to keep the current wording):")?.trim()
+    setResearchReviewLoading(true)
+    try {
+      const data = await apiRequest<ResearchReviewResponse>(`/research/reviews/${researchReview.id}/claims/${claimId}/correction`, {
+        method: "POST",
+        body: JSON.stringify({ comment, corrected_claim: correctedClaim || undefined }),
+      })
+      setResearchReview(data)
+      showMessage("Correction request recorded. The claim is back in review.")
+    } catch (err: any) {
+      showMessage((err as Error).message, "error")
+    } finally {
+      setResearchReviewLoading(false)
+    }
+  }
+
+  async function handleResearchVerify(claimId: string) {
+    if (!researchReview) return
+    setResearchReviewLoading(true)
+    try {
+      const data = await apiRequest<ResearchReviewResponse>(`/research/reviews/${researchReview.id}/claims/${claimId}/verify`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      })
+      setResearchReview(data)
+      showMessage(data.status === "verified" ? "All claims are verified. The package is ready for approval." : "Claim marked as human-verified.")
+    } catch (err: any) {
+      showMessage((err as Error).message, "error")
+    } finally {
+      setResearchReviewLoading(false)
+    }
+  }
+
+  async function handleResearchApprove() {
+    if (!researchReview) return
+    const confirmed = await confirmAction(
+      "Approve evidence package?",
+      "Approval confirms that every claim has been checked against its source passage. Approved packages can be exported.",
+      "Approve package",
+    )
+    if (!confirmed) return
+    setResearchReviewLoading(true)
+    try {
+      const data = await apiRequest<ResearchReviewResponse>(`/research/reviews/${researchReview.id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      })
+      setResearchReview(data)
+      showMessage("Evidence package approved for export.")
+    } catch (err: any) {
+      showMessage((err as Error).message, "error")
+    } finally {
+      setResearchReviewLoading(false)
+    }
+  }
+
+  async function handleResearchExport(format: "csv" | "json" | "markdown") {
+    if (!researchReview) return
+    try {
+      const headers: Record<string, string> = {}
+      const ownerId = getOwnerId()
+      if (ownerId) headers["X-User-ID"] = ownerId
+      const response = await fetch(`/research/reviews/${researchReview.id}/export?format=${format}`, { headers })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail || `Export failed (${response.status})`)
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `research-review-${researchReview.id}.${format}`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      showMessage(`${format.toUpperCase()} export downloaded.`)
+    } catch (err: any) {
+      showMessage((err as Error).message, "error")
+    }
+  }
+
   async function handleKnowledgeFeedback(rating: KnowledgeFeedbackRating) {
     if (!selectedId || !answerResponse || feedbackLoading) return
     setFeedbackLoading(true)
