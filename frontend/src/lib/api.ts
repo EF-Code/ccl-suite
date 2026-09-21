@@ -223,6 +223,62 @@ export type ResearchEvidenceRegisterResponse = {
   warnings: ResearchEvidenceWarning[];
 };
 
+export type ResearchReviewStatus =
+  | "needs_review"
+  | "changes_requested"
+  | "verified"
+  | "approved";
+
+export type ResearchReviewClaimStatus = "needs_review" | "changes_requested" | "verified";
+
+export type ResearchReviewClaim = {
+  claim_id: string;
+  review_status: ResearchReviewClaimStatus;
+  classification: ResearchClaimClassification;
+  claim: string;
+  original_claim: string;
+  corrected_claim: string | null;
+  source_title: string;
+  source_reference: string;
+  source_date: string | null;
+  passage: string;
+  scope: ResearchScope;
+  original_scope: ResearchScope;
+  corrected_scope: ResearchScope | null;
+  correction_note: string | null;
+  verified_by_id: string | null;
+  verified_at: string | null;
+};
+
+export type ResearchReviewEvent = {
+  id: string;
+  claim_id: string | null;
+  actor_id: string | null;
+  action: "submitted" | "correction_requested" | "verified" | "approved" | "exported";
+  note: string | null;
+  created_at: string;
+};
+
+export type ResearchReviewResponse = {
+  schema_version: "research-review-v1";
+  id: string;
+  project_id: string;
+  status: ResearchReviewStatus;
+  source_title: string;
+  source_reference: string;
+  source_date: string | null;
+  target_scope: ResearchScope;
+  created_by_id: string | null;
+  approved_by_id: string | null;
+  approved_at: string | null;
+  claim_count: number;
+  verified_count: number;
+  warning_count: number;
+  claims: ResearchReviewClaim[];
+  warnings: ResearchEvidenceWarning[];
+  events: ResearchReviewEvent[];
+};
+
 export type KnowledgeFeedbackRating = "helpful" | "not_helpful";
 export type KnowledgeFeedbackReason =
   | "accurate"
