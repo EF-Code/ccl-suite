@@ -439,3 +439,50 @@ def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) 
     expect(page.locator("#research-claims-result")).to_contain_text("No claims yet")
     expect(page.locator("#research-scope-result")).to_be_hidden()
     expect(page.locator("#research-register-result")).to_be_hidden()
+
+
+def test_dashboard_runs_workflow_definition_and_approval(dashboard_page: Page) -> None:
+    """Exercise the project-scoped workflow and approval control plane."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    open_workspace(page, "Setup")
+
+    suffix = uuid4().hex[:10]
+    owner_ref = f"workflow-browser-owner-{suffix}"
+    project_title = f"Workflow Browser {suffix}"
+
+    user_form = page.locator("#user-form")
+    user_form.locator("input[name='external_ref']").fill(owner_ref)
+    user_form.get_by_role("button", name="Create development owner").click()
+    page.locator("#user-result").wait_for(state="visible")
+
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_row.wait_for(state="visible")
+    project_row.get_by_role("button", name="Use project").click()
+    expect(page.locator("#active-project-title")).to_have_text(project_title)
+
+    open_workspace(page, "Workflows")
+    workflow_panel = page.locator("#workflow-orchestrator")
+    expect(workflow_panel).to_be_visible()
+    page.locator("#workflow-name").fill("Publish campaign package")
+    page.locator("#workflow-version").fill("1")
+    page.locator("#workflow-submit").click()
+
+    workflow_card = page.locator("#workflow-list [data-workflow-id]").first
+    workflow_card.wait_for(state="visible")
+    expect(workflow_card).to_contain_text("Publish campaign package")
+    expect(workflow_card.locator("[data-workflow-status='draft']")).to_be_visible()
+
+    workflow_card.get_by_role("button", name="Request approval").click()
+    approval = workflow_card.locator("[data-approval-id]").first
+    approval.wait_for(state="visible")
+    expect(approval.locator("[data-approval-status='pending']")).to_be_visible()
+    approval.locator("input").fill("reviewed")
+    approval.get_by_role("button", name="Approve").click()
+    confirm_protected_action(page)
+    expect(approval.locator("[data-approval-status='approved']")).to_be_visible()
+    expect(workflow_panel.locator("[data-workflow-stage='decide']")).to_contain_text("Outcome recorded")
