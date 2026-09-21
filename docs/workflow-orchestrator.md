@@ -35,6 +35,8 @@ to the authenticated `X-User-ID`; a caller cannot submit another user's ID.
 
 - New workflow definitions start as `draft`.
 - Approval requests start as `pending`.
+- A workflow accepts only one pending approval request at a time; a duplicate
+  request returns a conflict until the existing request is decided.
 - A pending approval can be decided once as `approved`, `rejected`, or
   `cancelled`.
 - Repeated decisions return a conflict response and leave the original record
