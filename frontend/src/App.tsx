@@ -488,6 +488,10 @@ export default function App() {
     setResearchScopeResponse(null)
     setResearchRegister(null)
     setResearchReview(null)
+    setWorkflows([])
+    setWorkflowApprovals({})
+    setWorkflowError("")
+    setApprovalDecisionCodes({})
     try {
       const data = await apiRequest<ResearchClaimExtractionResponse>(`/projects/${selectedId}/research/claims/extract`, {
         method: "POST",
