@@ -89,9 +89,11 @@ export default function App() {
   const [researchError, setResearchError] = useState("")
   const [researchScopeResponse, setResearchScopeResponse] = useState<ResearchApplicabilityResponse | null>(null)
   const [researchRegister, setResearchRegister] = useState<ResearchEvidenceRegisterResponse | null>(null)
+  const [researchReview, setResearchReview] = useState<ResearchReviewResponse | null>(null)
   const [researchLoading, setResearchLoading] = useState(false)
   const [researchScopeLoading, setResearchScopeLoading] = useState(false)
   const [researchRegisterLoading, setResearchRegisterLoading] = useState(false)
+  const [researchReviewLoading, setResearchReviewLoading] = useState(false)
   const [files, setFiles] = useState<FileRecord[]>([])
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
   const [uploadPolicy, setUploadPolicy] = useState<any>(null)
@@ -151,6 +153,15 @@ export default function App() {
     if (!projectId) return
     try { const data = await apiRequest<FileRecord[]>(`/projects/${projectId}/files`); setFiles(data.filter(f=>f.status==="active")) } catch { setFiles([]) }
   }, [])
+  const refreshResearchReviews = useCallback(async (projectId: string) => {
+    if (!projectId) return
+    try {
+      const data = await apiRequest<ResearchReviewResponse[]>(`/projects/${projectId}/research/reviews`)
+      setResearchReview(data[0] || null)
+    } catch {
+      setResearchReview(null)
+    }
+  }, [])
 
   useEffect(()=>{ refreshHealth(); apiRequest<any>("/permissions").then(d=>setPermissions(d.roles)).catch(()=>{}); apiRequest<any>("/upload-policy").then(setUploadPolicy).catch(()=>{}); }, [refreshHealth])
   useEffect(()=>{
@@ -162,8 +173,9 @@ export default function App() {
     if (selectedId) {
       refreshFiles(selectedId)
       refreshKnowledgeSources(selectedId)
+      refreshResearchReviews(selectedId)
     }
-  }, [selectedId, refreshFiles, refreshKnowledgeSources])
+  }, [selectedId, refreshFiles, refreshKnowledgeSources, refreshResearchReviews])
 
   // Actions
   async function handleCreateOwner(e: React.FormEvent<HTMLFormElement>) {
@@ -196,7 +208,7 @@ export default function App() {
     const body = Object.fromEntries(fd.entries())
     try {
       const proj: any = await apiRequest("/projects", { method: "POST", body: JSON.stringify(body) })
-      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null); setResearchRegister(null)
+      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null); setResearchRegister(null); setResearchReview(null)
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
@@ -444,6 +456,7 @@ export default function App() {
     setResearchError("")
     setResearchScopeResponse(null)
     setResearchRegister(null)
+    setResearchReview(null)
     try {
       const data = await apiRequest<ResearchClaimExtractionResponse>(`/projects/${selectedId}/research/claims/extract`, {
         method: "POST",
@@ -627,6 +640,7 @@ export default function App() {
     setResearchError("")
     setResearchScopeResponse(null)
     setResearchRegister(null)
+    setResearchReview(null)
     const setVal = (selector: string, value: string) => {
       const element = document.querySelector<HTMLInputElement>(selector)
       if (element) element.value = value
