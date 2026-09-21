@@ -1430,6 +1430,535 @@ def research_evidence_register_response(
     )
 
 
+def research_review_claim_extracted(claim: ResearchReviewClaim) -> ExtractedClaim:
+    """Translate a persisted claim back into the deterministic register input."""
+
+    return ExtractedClaim(
+        claim_id=claim.claim_id,
+        claim=effective_claim(claim),
+        classification=claim.classification,
+        source_title=claim.source_title,
+        source_reference=claim.source_reference,
+        source_date=claim.source_date,
+        passage=claim.passage,
+        scope=effective_scope(claim),
+    )
+
+
+def research_review_register(review: ResearchReview) -> ResearchEvidenceRegisterResponse:
+    """Recompute warnings from persisted current claim values."""
+
+    result = build_evidence_register(
+        tuple(research_review_claim_extracted(claim) for claim in review.claims),
+        expected_source_title=review.source_title,
+        expected_source_reference=review.source_reference,
+        target_scope=review.target_scope,
+    )
+    return research_evidence_register_response(review.project_id, result)
+
+
+def research_review_response(review: ResearchReview) -> ResearchReviewResponse:
+    """Build a complete review response from durable state and fresh warnings."""
+
+    register = research_review_register(review)
+    claims = [
+        ResearchReviewClaimResponse.model_validate(
+            {
+                "claim_id": claim.claim_id,
+                "review_status": claim.status,
+                "classification": claim.classification,
+                "claim": effective_claim(claim),
+                "original_claim": claim.claim,
+                "corrected_claim": claim.corrected_claim,
+                "source_title": claim.source_title,
+                "source_reference": claim.source_reference,
+                "source_date": claim.source_date,
+                "passage": claim.passage,
+                "scope": effective_scope(claim),
+                "original_scope": claim.scope,
+                "corrected_scope": claim.corrected_scope,
+                "correction_note": claim.correction_note,
+                "verified_by_id": claim.verified_by_id,
+                "verified_at": claim.verified_at,
+            }
+        )
+        for claim in sorted(
+            review.claims,
+            key=lambda item: (item.created_at.isoformat(), str(item.id)),
+        )
+    ]
+    events = [
+        ResearchReviewEventResponse.model_validate(event)
+        for event in sorted(
+            review.events,
+            key=lambda item: (item.created_at.isoformat(), str(item.id)),
+        )
+    ]
+    return ResearchReviewResponse.model_validate(
+        {
+            "schema_version": "research-review-v1",
+            "id": review.id,
+            "project_id": review.project_id,
+            "status": review.status,
+            "source_title": review.source_title,
+            "source_reference": review.source_reference,
+            "source_date": review.source_date,
+            "target_scope": review.target_scope,
+            "created_by_id": review.created_by_id,
+            "approved_by_id": review.approved_by_id,
+            "approved_at": review.approved_at,
+            "claim_count": len(claims),
+            "verified_count": sum(claim.review_status == "verified" for claim in claims),
+            "warning_count": register.warning_count,
+            "claims": claims,
+            "warnings": register.warnings,
+            "events": events,
+        }
+    )
+
+
+def require_project_research_review(
+    db: Session,
+    request: Request,
+    project_id: UUID,
+    review_id: UUID,
+    actor: User,
+    denial_action: str,
+) -> tuple[Project, ResearchReview]:
+    """Apply project access before loading a review package."""
+
+    project = require_project_knowledge_access(
+        db,
+        request,
+        project_id,
+        actor,
+        denial_action=denial_action,
+    )
+    review = require_record(db, ResearchReview, review_id, "Research review was not found.")
+    if review.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Research review was not found.",
+        )
+    return project, review
+
+
+def persist_research_review_mutation(
+    db: Session,
+    review: ResearchReview,
+    event: ResearchReviewEvent,
+) -> ResearchReview:
+    """Commit a review change and its history event atomically."""
+
+    try:
+        db.add(review)
+        db.add(event)
+        db.commit()
+        db.refresh(review)
+    except IntegrityError:
+        db.rollback()
+        logger.error("Research review write failed because of a database constraint.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Research review could not be saved.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Research review write failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    return review
+
+
+def validate_research_review_note(note: str | None) -> None:
+    """Reject instruction-shaped review notes before storing them."""
+
+    if note is not None:
+        ensure_safe_untrusted_text(note)
+
+
+@app.post(
+    "/projects/{project_id}/research/reviews",
+    response_model=ResearchReviewResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["research-evidence"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def create_project_research_review(
+    project_id: UUID,
+    review_request: ResearchReviewCreate,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> ResearchReviewResponse:
+    """Persist one deterministic evidence preview for human review."""
+
+    project = require_project_knowledge_access(
+        db,
+        request,
+        project_id,
+        actor,
+        denial_action="research.review.submit",
+    )
+    claims = tuple(
+        ExtractedClaim(
+            claim_id=claim.claim_id,
+            claim=claim.claim,
+            classification=claim.classification,
+            source_title=claim.source_title,
+            source_reference=claim.source_reference,
+            source_date=claim.source_date,
+            passage=claim.passage,
+            scope=claim.scope.model_dump(mode="json"),
+            review_status=claim.review_status,
+        )
+        for claim in review_request.claims
+    )
+    try:
+        build_evidence_register(
+            claims,
+            expected_source_title=claims[0].source_title,
+            expected_source_reference=claims[0].source_reference,
+            target_scope=review_request.target_scope.model_dump(mode="json"),
+        )
+    except (ResearchEvidenceError, UnsafeKnowledgeContentError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Research review could not be submitted safely.",
+        ) from exc
+
+    review = ResearchReview(
+        project_id=project.id,
+        created_by_id=actor.id,
+        source_title=claims[0].source_title,
+        source_reference=claims[0].source_reference,
+        source_date=claims[0].source_date,
+        target_scope=review_request.target_scope.model_dump(mode="json"),
+        status="needs_review",
+    )
+    review.claims = [
+        ResearchReviewClaim(
+            claim_id=claim.claim_id,
+            claim=claim.claim,
+            classification=claim.classification,
+            source_title=claim.source_title,
+            source_reference=claim.source_reference,
+            source_date=claim.source_date,
+            passage=claim.passage,
+            scope=dict(claim.scope),
+            status="needs_review",
+        )
+        for claim in claims
+    ]
+    review.events = [
+        ResearchReviewEvent(
+            actor_id=actor.id,
+            action="submitted",
+            note="Review package submitted for human review.",
+        )
+    ]
+    try:
+        db.add(review)
+        db.commit()
+        db.refresh(review)
+    except IntegrityError:
+        db.rollback()
+        logger.error("Research review creation failed because of a database constraint.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Research review could not be saved.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Research review creation failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    return research_review_response(review)
+
+
+@app.get(
+    "/projects/{project_id}/research/reviews",
+    response_model=list[ResearchReviewResponse],
+    tags=["research-evidence"],
+)
+async def list_project_research_reviews(
+    project_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> list[ResearchReviewResponse]:
+    """List durable review packages within the authenticated project boundary."""
+
+    project = require_project_knowledge_access(
+        db,
+        request,
+        project_id,
+        actor,
+        denial_action="research.review.list",
+    )
+    reviews = list_records(
+        db,
+        select(ResearchReview)
+        .where(ResearchReview.project_id == project.id)
+        .order_by(ResearchReview.created_at.desc(), ResearchReview.id.desc()),
+    )
+    return [research_review_response(review) for review in reviews]
+
+
+@app.get(
+    "/research/reviews/{review_id}",
+    response_model=ResearchReviewResponse,
+    tags=["research-evidence"],
+)
+async def get_research_review(
+    review_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("knowledge.read")),
+    db: Session = Depends(get_db),
+) -> ResearchReviewResponse:
+    """Return one durable review package after checking its project boundary."""
+
+    review = require_record(db, ResearchReview, review_id, "Research review was not found.")
+    require_project_research_review(
+        db,
+        request,
+        review.project_id,
+        review_id,
+        actor,
+        denial_action="research.review.read",
+    )
+    return research_review_response(review)
+
+
+@app.post(
+    "/research/reviews/{review_id}/claims/{claim_id}/correction",
+    response_model=ResearchReviewResponse,
+    tags=["research-evidence"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def request_research_claim_correction(
+    review_id: UUID,
+    claim_id: UUID,
+    correction: ResearchCorrectionRequest,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
+) -> ResearchReviewResponse:
+    """Request a bounded correction and reopen the package for review."""
+
+    _, review = require_project_research_review(
+        db,
+        request,
+        (require_record(db, ResearchReview, review_id, "Research review was not found.")).project_id,
+        review_id,
+        actor,
+        denial_action="research.review.correction",
+    )
+    claim = db.scalar(
+        select(ResearchReviewClaim).where(
+            ResearchReviewClaim.review_id == review.id,
+            ResearchReviewClaim.claim_id == claim_id,
+        )
+    )
+    if claim is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research claim was not found.")
+    try:
+        validate_research_review_note(correction.comment)
+        validate_research_review_note(correction.corrected_claim)
+        if correction.corrected_scope is not None:
+            for value in correction.corrected_scope.model_dump().values():
+                if isinstance(value, str):
+                    validate_research_review_note(value)
+    except UnsafeKnowledgeContentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Correction could not be stored safely.",
+        ) from exc
+    claim.status = "changes_requested"
+    claim.correction_note = correction.comment
+    if correction.corrected_claim is not None:
+        claim.corrected_claim = correction.corrected_claim
+    if correction.corrected_scope is not None:
+        claim.corrected_scope = correction.corrected_scope.model_dump(mode="json")
+    claim.verified_by_id = None
+    claim.verified_at = None
+    review.status = "changes_requested"
+    review.approved_by_id = None
+    review.approved_at = None
+    event = ResearchReviewEvent(
+        review_id=review.id,
+        claim_id=claim.claim_id,
+        actor_id=actor.id,
+        action="correction_requested",
+        note=correction.comment,
+    )
+    persist_research_review_mutation(db, review, event)
+    return research_review_response(review)
+
+
+@app.post(
+    "/research/reviews/{review_id}/claims/{claim_id}/verify",
+    response_model=ResearchReviewResponse,
+    tags=["research-evidence"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def verify_research_claim(
+    review_id: UUID,
+    claim_id: UUID,
+    verification: ResearchVerificationRequest,
+    request: Request,
+    actor: User = Depends(require_permission("approval.decide")),
+    db: Session = Depends(get_db),
+) -> ResearchReviewResponse:
+    """Record human verification for one claim without skipping review gates."""
+
+    review = require_record(db, ResearchReview, review_id, "Research review was not found.")
+    _, review = require_project_research_review(
+        db,
+        request,
+        review.project_id,
+        review_id,
+        actor,
+        denial_action="research.review.verify",
+    )
+    claim = db.scalar(
+        select(ResearchReviewClaim).where(
+            ResearchReviewClaim.review_id == review.id,
+            ResearchReviewClaim.claim_id == claim_id,
+        )
+    )
+    if claim is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research claim was not found.")
+    if review.status == "approved":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approved reviews cannot be changed.")
+    if claim.status == "verified":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Research claim has already been verified.")
+    try:
+        validate_research_review_note(verification.note)
+    except UnsafeKnowledgeContentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Verification note could not be stored safely.",
+        ) from exc
+    claim.status = "verified"
+    claim.verified_by_id = actor.id
+    claim.verified_at = utc_now()
+    review.status = review_status_after_claim_change(review.claims)
+    event = ResearchReviewEvent(
+        review_id=review.id,
+        claim_id=claim.claim_id,
+        actor_id=actor.id,
+        action="verified",
+        note=verification.note,
+    )
+    persist_research_review_mutation(db, review, event)
+    return research_review_response(review)
+
+
+@app.post(
+    "/research/reviews/{review_id}/approve",
+    response_model=ResearchReviewResponse,
+    tags=["research-evidence"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def approve_research_review(
+    review_id: UUID,
+    approval: ResearchApprovalRequest,
+    request: Request,
+    actor: User = Depends(require_permission("approval.decide")),
+    db: Session = Depends(get_db),
+) -> ResearchReviewResponse:
+    """Approve a review only after every claim has human verification."""
+
+    review = require_record(db, ResearchReview, review_id, "Research review was not found.")
+    _, review = require_project_research_review(
+        db,
+        request,
+        review.project_id,
+        review_id,
+        actor,
+        denial_action="research.review.approve",
+    )
+    if review.status == "approved":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Research review has already been approved.")
+    if any(claim.status != "verified" for claim in review.claims):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Every research claim must be human-verified before approval.",
+        )
+    try:
+        validate_research_review_note(approval.note)
+    except UnsafeKnowledgeContentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Approval note could not be stored safely.",
+        ) from exc
+    review.status = "approved"
+    review.approved_by_id = actor.id
+    review.approved_at = utc_now()
+    event = ResearchReviewEvent(
+        review_id=review.id,
+        actor_id=actor.id,
+        action="approved",
+        note=approval.note,
+    )
+    persist_research_review_mutation(db, review, event)
+    return research_review_response(review)
+
+
+@app.get(
+    "/research/reviews/{review_id}/export",
+    tags=["research-evidence"],
+)
+async def export_research_review(
+    review_id: UUID,
+    request: Request,
+    export_format: Literal["csv", "json", "markdown"] = Query("json", alias="format"),
+    actor: User = Depends(require_permission("approval.decide")),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download an approved review in a bounded, provenance-preserving format."""
+
+    review = require_record(db, ResearchReview, review_id, "Research review was not found.")
+    _, review = require_project_research_review(
+        db,
+        request,
+        review.project_id,
+        review_id,
+        actor,
+        denial_action="research.review.export",
+    )
+    if review.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only approved research reviews can be exported.",
+        )
+    content, media_type = render_export(review, export_format)
+    persist_record(
+        db,
+        ResearchReviewEvent(
+            review_id=review.id,
+            actor_id=actor.id,
+            action="exported",
+            note=f"format:{export_format}",
+        ),
+        "Research review export",
+    )
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="research-review-{review.id}.{export_format}"'
+            )
+        },
+    )
+
+
 @app.post(
     "/projects/{project_id}/research/claims/extract",
     response_model=ResearchClaimExtractionResponse,
