@@ -585,6 +585,143 @@ class ResearchEvidenceRegisterResponse(BaseModel):
         return self
 
 
+class ResearchReviewCreate(BaseModel):
+    """Submit one extracted claim set to the durable human-review queue."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    claims: list[ResearchClaimResponse] = Field(
+        min_length=1,
+        max_length=MAX_RESEARCH_CLAIMS,
+    )
+    target_scope: ResearchScope = Field(default_factory=ResearchScope)
+
+    @model_validator(mode="after")
+    def validate_claim_set(self) -> ResearchReviewCreate:
+        claim_ids = [claim.claim_id for claim in self.claims]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("Review claim IDs must be unique.")
+        first = self.claims[0]
+        if any(
+            (
+                claim.source_title != first.source_title
+                or claim.source_reference != first.source_reference
+                or claim.source_date != first.source_date
+                or claim.scope != first.scope
+            )
+            for claim in self.claims[1:]
+        ):
+            raise ValueError("Review claims must retain one source envelope.")
+        return self
+
+
+class ResearchCorrectionRequest(BaseModel):
+    """Record a bounded reviewer correction request for one claim."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    comment: str = Field(min_length=1, max_length=500)
+    corrected_claim: str | None = Field(default=None, min_length=1, max_length=500)
+    corrected_scope: ResearchScope | None = None
+
+
+class ResearchVerificationRequest(BaseModel):
+    """Optional human note attached to a verification action."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class ResearchApprovalRequest(BaseModel):
+    """Optional human note attached to final approval."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class ResearchReviewClaimResponse(BaseModel):
+    """Current and proposed values for one persisted evidence claim."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: UUID
+    review_status: Literal["needs_review", "changes_requested", "verified"]
+    classification: Literal["factual", "heading", "instruction", "opinion", "creative"]
+    claim: str = Field(min_length=1, max_length=MAX_RESEARCH_CLAIM_CHARACTERS)
+    original_claim: str = Field(min_length=1, max_length=MAX_RESEARCH_CLAIM_CHARACTERS)
+    corrected_claim: str | None = Field(default=None, max_length=MAX_RESEARCH_CLAIM_CHARACTERS)
+    source_title: str = Field(min_length=1, max_length=200)
+    source_reference: str = Field(min_length=1, max_length=512)
+    source_date: date | None
+    passage: str = Field(min_length=1, max_length=MAX_RESEARCH_SOURCE_CHARACTERS)
+    scope: ResearchScope
+    original_scope: ResearchScope
+    corrected_scope: ResearchScope | None
+    correction_note: str | None = Field(default=None, max_length=500)
+    verified_by_id: UUID | None
+    verified_at: datetime | None
+
+
+class ResearchReviewEventResponse(BaseModel):
+    """One append-only event in a review history."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    claim_id: UUID | None
+    actor_id: UUID | None
+    action: Literal[
+        "submitted",
+        "correction_requested",
+        "verified",
+        "approved",
+        "exported",
+    ]
+    note: str | None
+    created_at: datetime
+
+
+class ResearchReviewResponse(BaseModel):
+    """Review package state, warning summary, claims, and human history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["research-review-v1"]
+    id: UUID
+    project_id: UUID
+    status: Literal["needs_review", "changes_requested", "verified", "approved"]
+    source_title: str = Field(min_length=1, max_length=200)
+    source_reference: str = Field(min_length=1, max_length=512)
+    source_date: date | None
+    target_scope: ResearchScope
+    created_by_id: UUID | None
+    approved_by_id: UUID | None
+    approved_at: datetime | None
+    claim_count: int = Field(ge=1, le=MAX_RESEARCH_CLAIMS)
+    verified_count: int = Field(ge=0, le=MAX_RESEARCH_CLAIMS)
+    warning_count: int = Field(ge=0, le=MAX_RESEARCH_WARNING_COUNT)
+    claims: list[ResearchReviewClaimResponse] = Field(
+        min_length=1,
+        max_length=MAX_RESEARCH_CLAIMS,
+    )
+    warnings: list[ResearchEvidenceWarningResponse] = Field(
+        max_length=MAX_RESEARCH_WARNING_COUNT,
+    )
+    events: list[ResearchReviewEventResponse] = Field(max_length=500)
+
+    @model_validator(mode="after")
+    def validate_review_integrity(self) -> ResearchReviewResponse:
+        if self.claim_count != len(self.claims):
+            raise ValueError("claim_count must match the claims list.")
+        if self.verified_count != sum(claim.review_status == "verified" for claim in self.claims):
+            raise ValueError("verified_count must match claim statuses.")
+        if self.warning_count != len(self.warnings):
+            raise ValueError("warning_count must match the warnings list.")
+        return self
+
+
 class KnowledgeFeedbackCreate(BaseModel):
     """Structured answer feedback that omits the question and evidence."""
 
@@ -935,6 +1072,13 @@ __all__ = [
     "KnowledgeSourceCreate",
     "KnowledgeSourceDecision",
     "KnowledgeSourceResponse",
+    "ResearchApprovalRequest",
+    "ResearchCorrectionRequest",
+    "ResearchReviewClaimResponse",
+    "ResearchReviewCreate",
+    "ResearchReviewEventResponse",
+    "ResearchReviewResponse",
+    "ResearchVerificationRequest",
     "OrganizationActionResponse",
     "OrganizationApplyCreate",
     "OrganizationApplyResponse",
