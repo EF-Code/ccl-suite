@@ -1,10 +1,9 @@
 # Research Evidence Agent
 
 This document describes the research-evidence capability delivered through
-17 September 2026. It covers evidence-field design, claim extraction,
-configurable applicability checks, and a non-persisted warning register.
-Human approval, correction comments, and export remain separate publication
-steps.
+21 September 2026. It covers evidence-field design, claim extraction,
+configurable applicability checks, a bounded warning register, and the
+durable human review and publication workflow.
 
 ## Purpose
 
@@ -19,7 +18,7 @@ Every extracted claim contains the following fields:
 
 | Field | Meaning | Boundary |
 | --- | --- | --- |
-| `claim_id` | Opaque identifier for this preview item | Generated for the response; not a database record |
+| `claim_id` | Opaque identifier for this claim | Retained inside a submitted review package |
 | `claim` | One bounded claim-sized text unit | Maximum 500 characters |
 | `classification` | `factual`, `heading`, `instruction`, `opinion`, or `creative` | Deterministic classification only |
 | `source_title` | Human-readable source name | Required metadata |
@@ -27,7 +26,7 @@ Every extracted claim contains the following fields:
 | `source_date` | Date supplied for the source | Optional; never inferred |
 | `passage` | Exact trimmed source line containing the claim | Retained for comparison and later review |
 | `scope` | Model year, engine, market, population, setting, and evidence type | Optional, allow-listed fields |
-| `review_status` | Current review state | Always `needs_review` in this slice |
+| `review_status` | Current review state | Preview claims start as `needs_review`; persisted claims can become `changes_requested` or `verified` |
 
 The response envelope is versioned as `research-evidence-v1` and includes the
 project ID, source metadata, scope, claim count, and validated claim list.
@@ -109,12 +108,25 @@ Source text + title/reference/date/scope
                  |
                  v
       completeness and consistency warnings
+                 |
+                 v
+        durable review package
+                 |
+                 +--> correction request (reopens claim)
+                 |
+                 +--> human verification for every claim
+                 |
+                 v
+              approval gate
+                 |
+                 v
+       CSV / JSON / Markdown export
 ```
 
-The extraction response is validated before it is returned. Nothing from this
-workflow is persisted as approved evidence. The exact source passage remains
-attached to the claim so a later reviewer can compare source and claim before
-any approval decision.
+The extraction response is validated before it is returned. A preview is not
+approved evidence. When a reviewer submits it, the package and its exact
+source passages are persisted for a bounded human review. Approval is blocked
+until every claim has a recorded verification action.
 
 ## Applicability checks
 
@@ -158,7 +170,28 @@ The register can report:
 Each claim receives `supported`, `needs_review`, or `not_applicable`. The
 `supported` label means only that these bounded checks found no warnings; it
 is not human verification or approval. Every source claim remains tied to its
-exact passage and `needs_review` lifecycle state.
+exact passage and is carried into the durable review package unchanged.
+
+## Human review and publication
+
+`POST /projects/{project_id}/research/reviews` creates a review package from
+the current validated claim preview. The server recomputes the warning
+register instead of trusting a client-supplied assessment. The package keeps
+the source metadata, target scope, claim provenance, and an append-only event
+history.
+
+Reviewers can request a correction for an individual claim, optionally
+including proposed replacement wording or scope. The correction returns the
+claim to `changes_requested` and clears any previous verification or package
+approval. A reviewer then calls the verification route for each claim. The
+package becomes `verified` only when every claim is verified.
+
+`POST /research/reviews/{review_id}/approve` is the final human gate. It
+returns a conflict response if any claim is still awaiting review. Only an
+approved package can be downloaded from the export route. CSV includes one
+row per claim, JSON includes the complete review history, and Markdown is a
+readable publication copy. Each export is recorded as an event without
+copying the source text into an audit record.
 
 ## API surface
 
@@ -170,12 +203,27 @@ exact passage and `needs_review` lifecycle state.
 - `POST /projects/{project_id}/research/evidence-register` checks a bounded
   claim list for missing evidence, source mismatches, duplicates, conflicts,
   and unsupported wording, then returns claim assessments and warning details.
+- `POST /projects/{project_id}/research/reviews` submits a validated claim set
+  to the durable human-review queue.
+- `GET /projects/{project_id}/research/reviews` lists the project's review
+  packages; `GET /research/reviews/{review_id}` returns one package.
+- `POST /research/reviews/{review_id}/claims/{claim_id}/correction` records a
+  correction request and reopens the affected claim.
+- `POST /research/reviews/{review_id}/claims/{claim_id}/verify` records human
+  verification for one claim.
+- `POST /research/reviews/{review_id}/approve` approves only a fully verified
+  package.
+- `GET /research/reviews/{review_id}/export?format=csv|json|markdown` exports
+  only an approved package.
 
-All three routes require the existing `knowledge.read` permission and apply the
-same project-owner or supervisor/administrator boundary as the knowledge base.
-Unsafe instruction-shaped input receives a bounded `422` response. Raw source
-text is not placed in audit records, and no extraction output is saved at this
-stage.
+The preview, register, and review-read routes require the existing
+`knowledge.read` permission and apply the same project-owner or
+supervisor/administrator boundary as the knowledge base. Correction requests
+require `workflow.manage`; verification, approval, and export require
+`approval.decide`. Unsafe instruction-shaped input receives a bounded `422`
+response. Raw source text is retained only inside the project-scoped review
+claim when the user explicitly submits it for review; audit events contain
+only bounded action notes and opaque IDs.
 
 ## Safety behavior
 
@@ -189,13 +237,6 @@ stage.
   explicit wildcard values. It does not infer a market, population, setting,
   or evidence type from the claim wording.
 
-## Deliberate boundary
-
-This slice does not implement reviewer approval, evidence corrections, a
-human-verified lifecycle state, or CSV/JSON/Markdown export. Those actions
-require a separate review and publication contract so that a preview cannot
-be mistaken for approved company evidence.
-
 ## Verification checklist
 
 The implementation is exercised at three layers:
@@ -208,4 +249,5 @@ RUN_BROWSER_TESTS=1 ~/.venv/bin/python -m pytest -q tests/test_dashboard_browser
 
 The browser check covers project selection, source metadata entry, claim
 preview, factual-claim selection, an applicable scope result, and a conflict
-warning register. It does not approve, correct, or export the preview.
+warning register, human review submission, claim verification, approval, and
+the three export controls.
