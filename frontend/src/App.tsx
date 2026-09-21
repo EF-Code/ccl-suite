@@ -923,14 +923,14 @@ export default function App() {
           </a>
           <nav className="app-links">
             <p className="nav-label">Operate</p>
-            {navigation.slice(0, 4).map(({ view, label, icon: Icon }) => (
+            {navigation.slice(0, 5).map(({ view, label, icon: Icon }) => (
               <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
                 <Icon className="h-4 w-4" />{label}
               </Button>
             ))}
             <Separator className="my-3 bg-white/10" />
             <p className="nav-label">Administration</p>
-            {navigation.slice(4).map(({ view, label, icon: Icon }) => (
+            {navigation.slice(5).map(({ view, label, icon: Icon }) => (
               <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
                 <Icon className="h-4 w-4" />{label}
               </Button>
