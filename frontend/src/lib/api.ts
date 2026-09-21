@@ -41,6 +41,31 @@ export type Project = {
   updated_at: string;
 };
 
+export type Workflow = {
+  id: string;
+  project_id: string;
+  created_by_id: string | null;
+  name: string;
+  status: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "cancelled";
+export type ApprovalDecision = Exclude<ApprovalStatus, "pending">;
+
+export type Approval = {
+  id: string;
+  workflow_id: string;
+  requested_by_id: string | null;
+  approved_by_id: string | null;
+  status: ApprovalStatus;
+  decision_code: string | null;
+  requested_at: string;
+  decided_at: string | null;
+};
+
 export type FileRecord = {
   id: string;
   project_id: string;
