@@ -239,7 +239,7 @@ export default function App() {
     const body = Object.fromEntries(fd.entries())
     try {
       const proj: any = await apiRequest("/projects", { method: "POST", body: JSON.stringify(body) })
-      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null); setResearchRegister(null); setResearchReview(null)
+      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null); setResearchRegister(null); setResearchReview(null); setWorkflows([]); setWorkflowApprovals({}); setWorkflowError(""); setApprovalDecisionCodes({})
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
