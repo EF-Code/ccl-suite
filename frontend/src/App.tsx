@@ -890,6 +890,7 @@ export default function App() {
     { view: "files", label: "Files", icon: Files },
     { view: "knowledge", label: "Knowledge", icon: Library },
     { view: "research", label: "Research", icon: FileSearch },
+    { view: "workflows", label: "Workflows", icon: GitBranch },
     { view: "recovery", label: "Recovery", icon: ArchiveRestore },
     { view: "setup", label: "Setup", icon: FolderCog },
   ]
@@ -899,6 +900,7 @@ export default function App() {
     files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
     knowledge: { title: "Knowledge", description: "Register, review, ingest, search, and answer from approved sources." },
     research: { title: "Research evidence", description: "Extract claims, check scope, and surface evidence warnings before review." },
+    workflows: { title: "Workflow orchestrator", description: "Move the active project through definitions, approval requests, and recorded decisions." },
     recovery: { title: "Recovery", description: "Create, verify, and restore checksummed project backups." },
     setup: { title: "Workspace setup", description: "Provision an owner, register a project, and prepare local storage." },
   }
