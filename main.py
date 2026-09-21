@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -58,13 +58,20 @@ from api_schemas import (
     ResearchApplicabilityCheckRequest,
     ResearchApplicabilityCheckResponse,
     ResearchApplicabilityFieldResponse,
+    ResearchApprovalRequest,
     ResearchClaimExtractionRequest,
     ResearchClaimExtractionResponse,
     ResearchClaimResponse,
+    ResearchCorrectionRequest,
     ResearchEvidenceAssessmentResponse,
     ResearchEvidenceRegisterRequest,
     ResearchEvidenceRegisterResponse,
     ResearchEvidenceWarningResponse,
+    ResearchReviewClaimResponse,
+    ResearchReviewCreate,
+    ResearchReviewEventResponse,
+    ResearchReviewResponse,
+    ResearchVerificationRequest,
     SemanticSearchRequest,
     SemanticSearchResponse,
     SemanticSearchResult,
@@ -170,6 +177,12 @@ from research_evidence import (
     check_claim_applicability,
     extract_claims,
 )
+from research_review import (
+    effective_claim,
+    effective_scope,
+    render_export,
+    review_status_after_claim_change,
+)
 from logger import logger
 from models import (
     Approval,
@@ -182,6 +195,9 @@ from models import (
     KnowledgeFeedback,
     KnowledgeSource,
     Project,
+    ResearchReview,
+    ResearchReviewClaim,
+    ResearchReviewEvent,
     SecurityEvent,
     User,
     Workflow,
