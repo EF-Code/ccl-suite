@@ -168,6 +168,30 @@ export default function App() {
       setResearchReview(null)
     }
   }, [])
+  const refreshWorkflows = useCallback(async (projectId: string) => {
+    if (!projectId) {
+      setWorkflows([])
+      setWorkflowApprovals({})
+      return
+    }
+    setWorkflowLoading(true)
+    try {
+      const workflowData = await apiRequest<Workflow[]>(`/projects/${projectId}/workflows`)
+      const approvalEntries = await Promise.all(workflowData.map(async (workflow) => {
+        const items = await apiRequest<Approval[]>(`/workflows/${workflow.id}/approvals`)
+        return [workflow.id, items] as const
+      }))
+      setWorkflows(workflowData)
+      setWorkflowApprovals(Object.fromEntries(approvalEntries))
+      setWorkflowError("")
+    } catch (err: any) {
+      setWorkflows([])
+      setWorkflowApprovals({})
+      setWorkflowError((err as Error).message)
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }, [])
 
   useEffect(()=>{ refreshHealth(); apiRequest<any>("/permissions").then(d=>setPermissions(d.roles)).catch(()=>{}); apiRequest<any>("/upload-policy").then(setUploadPolicy).catch(()=>{}); }, [refreshHealth])
   useEffect(()=>{
@@ -180,8 +204,9 @@ export default function App() {
       refreshFiles(selectedId)
       refreshKnowledgeSources(selectedId)
       refreshResearchReviews(selectedId)
+      refreshWorkflows(selectedId)
     }
-  }, [selectedId, refreshFiles, refreshKnowledgeSources, refreshResearchReviews])
+  }, [selectedId, refreshFiles, refreshKnowledgeSources, refreshResearchReviews, refreshWorkflows])
 
   // Actions
   async function handleCreateOwner(e: React.FormEvent<HTMLFormElement>) {
