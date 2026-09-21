@@ -1723,6 +1723,23 @@ export default function App() {
           </CardContent>
         </Card>
 
+        <section className={activeView === "workflows" ? "block" : "hidden"} aria-labelledby="workflow-page-title">
+          <h2 id="workflow-page-title" className="sr-only">Workflow orchestrator</h2>
+          <WorkflowOrchestrator
+            project={selectedProject}
+            workflows={workflows}
+            approvals={workflowApprovals}
+            loading={workflowLoading}
+            error={workflowError}
+            decisionCodes={approvalDecisionCodes}
+            onCreateWorkflow={handleCreateWorkflow}
+            onRefresh={() => selectedId && refreshWorkflows(selectedId)}
+            onRequestApproval={handleRequestApproval}
+            onDecision={handleApprovalDecision}
+            onDecisionCodeChange={(approvalId, value) => setApprovalDecisionCodes((current) => ({ ...current, [approvalId]: value }))}
+          />
+        </section>
+
       </main>
 
       <Dialog open={confirm.open} onOpenChange={(open)=>!open && setConfirm(c=>{ c.resolve?.(false); return {...c, open:false}})}>
