@@ -78,16 +78,17 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     title: "Workflow Orchestrator",
     purpose: "Move projects through controlled tasks and approvals",
     weeks: "Workflow delivery · 21 Sep - 2 Oct",
-    status: "upcoming",
+    status: "current",
     backendReady: true, // workflows/approvals exist in backend
-    frontendCoverage: "partial",
+    frontendCoverage: "full",
     endpoints: [
       "POST /projects/{id}/workflows",
       "GET /projects/{id}/workflows",
       "POST /workflows/{id}/approvals",
+      "GET /workflows/{id}/approvals",
       "POST /approvals/{id}/decision",
     ],
-    uiComponents: ["Project Intake", "States", "Approvals (read-only now)"],
+    uiComponents: ["Project Intake", "Lifecycle States", "Approval Trail", "Decision Controls"],
   },
   {
     id: 5,
@@ -103,4 +104,4 @@ export const SIWES_TIMELINE: TimelineModule[] = [
 ];
 
 export const CURRENT_WEEK = "Current capability";
-export const CURRENT_PHASE = "Research Evidence · Review and Publication";
+export const CURRENT_PHASE = "Workflow Orchestrator · Project Control";
