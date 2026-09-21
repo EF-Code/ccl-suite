@@ -12,18 +12,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
-import { apiRequest, getOwnerId, setOwnerId, type Project, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
+import { WorkflowOrchestrator } from "@/components/workflow-orchestrator"
+import { apiRequest, getOwnerId, setOwnerId, type Approval, type ApprovalDecision, type Project, type Workflow, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
   Database, FileText, ArrowLeftRight, Library,
-  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare
+  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare, GitBranch
 } from "lucide-react"
 
 // Helpers
 function escapeForTest(v: string) { return v }
 function compactId(v?: string) { return v ? `${v.slice(0, 13)}…` : "—" }
-type WorkspaceView = "operations" | "files" | "knowledge" | "research" | "recovery" | "setup"
+type WorkspaceView = "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup"
 
 function researchScopeFromForm(formData: FormData, prefix: "source" | "target"): ResearchScope {
   const readText = (field: string) => {
@@ -94,6 +95,11 @@ export default function App() {
   const [researchScopeLoading, setResearchScopeLoading] = useState(false)
   const [researchRegisterLoading, setResearchRegisterLoading] = useState(false)
   const [researchReviewLoading, setResearchReviewLoading] = useState(false)
+  const [workflows, setWorkflows] = useState<Workflow[]>([])
+  const [workflowApprovals, setWorkflowApprovals] = useState<Record<string, Approval[]>>({})
+  const [workflowLoading, setWorkflowLoading] = useState(false)
+  const [workflowError, setWorkflowError] = useState("")
+  const [approvalDecisionCodes, setApprovalDecisionCodes] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<FileRecord[]>([])
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
   const [uploadPolicy, setUploadPolicy] = useState<any>(null)
