@@ -3465,6 +3465,17 @@ async def create_approval(
         actor,
         denial_action="approval.create",
     )
+    pending_approval = db.scalar(
+        select(Approval).where(
+            Approval.workflow_id == workflow_record.id,
+            Approval.status == "pending",
+        )
+    )
+    if pending_approval is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An approval request is already pending for this workflow.",
+        )
 
     created_approval = persist_record(
         db,
