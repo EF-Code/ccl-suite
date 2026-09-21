@@ -691,6 +691,88 @@ export default function App() {
     }
   }
 
+  async function handleCreateWorkflow(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedId) return showMessage("Select a project before creating a workflow.", "error")
+    const form = event.currentTarget
+    const formData = new FormData(form)
+    const name = String(formData.get("name") || "").trim()
+    const version = Number(formData.get("version") || 1)
+    if (!name || !Number.isInteger(version) || version < 1) {
+      return showMessage("Enter a workflow name and a positive whole-number version.", "error")
+    }
+    setWorkflowLoading(true)
+    setWorkflowError("")
+    try {
+      await apiRequest<Workflow>(`/projects/${selectedId}/workflows`, {
+        method: "POST",
+        body: JSON.stringify({ name, version }),
+      })
+      form.reset()
+      await refreshWorkflows(selectedId)
+      showMessage(`Workflow “${name}” created for the active project.`)
+    } catch (err: any) {
+      setWorkflowError((err as Error).message)
+      showMessage((err as Error).message, "error")
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }
+
+  async function handleRequestApproval(workflowId: string) {
+    if (!selectedId) return showMessage("Select a project before requesting approval.", "error")
+    setWorkflowLoading(true)
+    try {
+      await apiRequest<Approval>(`/workflows/${workflowId}/approvals`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      })
+      await refreshWorkflows(selectedId)
+      showMessage("Approval request created. A decision is now pending.")
+    } catch (err: any) {
+      setWorkflowError((err as Error).message)
+      showMessage((err as Error).message, "error")
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }
+
+  async function handleApprovalDecision(approvalId: string, decision: ApprovalDecision) {
+    if (!selectedId) return showMessage("Select a project before deciding an approval.", "error")
+    const actorId = getOwnerId()
+    if (!actorId) return showMessage("Create or select an authenticated operator before deciding approvals.", "error")
+    const labels: Record<ApprovalDecision, string> = { approved: "Approve", rejected: "Reject", cancelled: "Cancel" }
+    const label = labels[decision]
+    const confirmed = await confirmAction(
+      `${label} approval request?`,
+      decision === "approved"
+        ? "This records that the workflow version has passed its review gate."
+        : "This records a final non-approval outcome for the workflow version.",
+      `${label} request`,
+    )
+    if (!confirmed) return
+    const code = approvalDecisionCodes[approvalId]?.trim() || `${decision}-by-operator`
+    setWorkflowLoading(true)
+    try {
+      await apiRequest<Approval>(`/approvals/${approvalId}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ status: decision, approved_by_id: actorId, decision_code: code }),
+      })
+      setApprovalDecisionCodes((current) => {
+        const next = { ...current }
+        delete next[approvalId]
+        return next
+      })
+      await refreshWorkflows(selectedId)
+      showMessage(`Approval request ${decision}.`)
+    } catch (err: any) {
+      setWorkflowError((err as Error).message)
+      showMessage((err as Error).message, "error")
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }
+
   async function handleKnowledgeFeedback(rating: KnowledgeFeedbackRating) {
     if (!selectedId || !answerResponse || feedbackLoading) return
     setFeedbackLoading(true)
