@@ -3530,6 +3530,13 @@ async def decide_approval(
         decision.approved_by_id,
         "approved_by_id",
     )
+    _, _workflow = require_project_workflow_access(
+        db,
+        request,
+        approval.workflow_id,
+        actor,
+        denial_action="approval.decide",
+    )
 
     approval.status = decision.status
     approval.approved_by_id = approved_by_id
