@@ -1558,6 +1558,45 @@ export default function App() {
                           <div id="research-register-warnings" className="mt-3 grid gap-2">{researchRegister.warnings.map((warning, index) => <div key={`${warning.code}-${warning.claim_id}-${index}`} data-warning-code={warning.code} className="rounded-lg border border-amber-200 bg-white/70 p-2.5"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className="capitalize">{warning.code.replaceAll("_", " ")}</Badge><span className="text-[0.68rem] font-semibold uppercase tracking-wide text-amber-800">{warning.severity}</span></div><p className="mt-1 text-xs leading-relaxed text-foreground">{warning.message}</p></div>)}</div>}
                       </div>}
                     </div>
+
+                    <div id="research-human-review" className="mt-4 border-t border-border pt-4">
+                      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="flex items-center gap-1.5 text-sm font-semibold"><ClipboardCheck className="h-4 w-4 text-primary" />Human review and publication</p>
+                          <p id="research-human-review-help" className="mt-1 text-xs text-muted-foreground">Automated warnings inform the reviewer; they never approve a claim. Verify each source passage, then approve the package before exporting it.</p>
+                        </div>
+                        {researchReview && <Badge className={researchReview.status === "approved" ? "bg-emerald-700 text-white" : researchReview.status === "changes_requested" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}>{researchReview.status.replaceAll("_", " ")}</Badge>}
+                      </div>
+                      {!researchReview ? <div className="rounded-xl border border-dashed border-border bg-muted/20 p-4">
+                        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div><p className="text-sm font-medium">No review package submitted</p><p className="mt-1 text-xs text-muted-foreground">Submit the current claim preview and register when a human reviewer is ready to work through it.</p></div>
+                          <Button id="research-submit-review" type="button" onClick={handleResearchSubmitReview} disabled={researchReviewLoading || !researchRegister}><ClipboardCheck className="mr-1.5 h-4 w-4" />{researchReviewLoading ? "Submitting…" : "Submit for human review"}</Button>
+                        </div>
+                      </div> : <div className="grid gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-muted/20 p-3 text-xs">
+                          <span><strong>{researchReview.verified_count}/{researchReview.claim_count}</strong> claims verified · <strong>{researchReview.warning_count}</strong> automated warning{researchReview.warning_count === 1 ? "" : "s"}</span>
+                          <span className="font-mono text-[0.65rem] text-muted-foreground">{compactId(researchReview.id)}</span>
+                        </div>
+                        <div className="grid gap-2">
+                          {researchReview.claims.map((claim, index) => <Card key={claim.claim_id} className="border-border bg-card/70">
+                            <CardHeader className="gap-2 pb-2">
+                              <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Claim {index + 1}</Badge><Badge className={claim.review_status === "verified" ? "bg-emerald-100 text-emerald-800" : claim.review_status === "changes_requested" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}>{claim.review_status.replaceAll("_", " ")}</Badge><span className="text-[0.68rem] text-muted-foreground">{claim.classification}</span></div>
+                              <CardTitle className="text-sm leading-relaxed">{claim.claim}</CardTitle>
+                              {claim.corrected_claim && <CardDescription className="text-xs">Proposed correction retained for verification: {claim.corrected_claim}</CardDescription>}
+                            </CardHeader>
+                            <CardContent className="space-y-3 pt-0">
+                              <div className="rounded-lg border border-border bg-muted/40 p-2.5"><p className="mb-1 text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">Source passage</p><p className="whitespace-pre-wrap text-xs leading-relaxed">{claim.passage}</p></div>
+                              {claim.correction_note && <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900"><MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span><strong>Correction request:</strong> {claim.correction_note}</span></div>}
+                              {researchReview.status !== "approved" && <div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" onClick={() => handleResearchCorrection(claim.claim_id)} disabled={researchReviewLoading}><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Request correction</Button>{claim.review_status !== "verified" && <Button type="button" size="sm" variant="secondary" onClick={() => handleResearchVerify(claim.claim_id)} disabled={researchReviewLoading}><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Mark verified</Button>}</div>}
+                            </CardContent>
+                          </Card>)}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                          {researchReview.status !== "approved" && <Button id="research-approve-review" type="button" onClick={handleResearchApprove} disabled={researchReviewLoading || researchReview.status !== "verified"}><CheckCircle2 className="mr-1.5 h-4 w-4" />Approve package</Button>}
+                          {researchReview.status === "approved" && <><span className="mr-1 text-xs font-medium text-emerald-800">Approved. Download a publication copy:</span><Button type="button" size="sm" variant="outline" onClick={() => handleResearchExport("csv")}><Download className="mr-1.5 h-3.5 w-3.5" />CSV</Button><Button type="button" size="sm" variant="outline" onClick={() => handleResearchExport("json")}><Download className="mr-1.5 h-3.5 w-3.5" />JSON</Button><Button type="button" size="sm" variant="outline" onClick={() => handleResearchExport("markdown")}><Download className="mr-1.5 h-3.5 w-3.5" />Markdown</Button></>}
+                        </div>
+                      </div>}
+                    </div>
                   </div>
                 </div>
               </div>
