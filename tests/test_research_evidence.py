@@ -1,4 +1,7 @@
-from datetime import date
+import csv
+import io
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -20,6 +23,42 @@ from research_evidence import (
     extract_claims,
     research_scope_fields,
 )
+from research_review import render_csv, render_export
+
+
+def _export_review(claim_text: str = "The vehicle uses a hybrid engine.") -> SimpleNamespace:
+    reviewed_at = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+    claim = SimpleNamespace(
+        id="claim-record-1",
+        claim_id="claim-1",
+        status="verified",
+        classification="factual",
+        claim=claim_text,
+        corrected_claim=None,
+        source_title="Vehicle study",
+        source_reference="local://vehicle-study",
+        source_date=date(2026, 9, 18),
+        passage=claim_text,
+        scope={"market": "Nigeria"},
+        corrected_scope=None,
+        correction_note=None,
+        verified_by_id="reviewer-1",
+        verified_at=reviewed_at,
+        created_at=reviewed_at,
+    )
+    return SimpleNamespace(
+        id="review-1",
+        project_id="project-1",
+        status="approved",
+        source_title="Vehicle study",
+        source_reference="local://vehicle-study",
+        source_date=date(2026, 9, 18),
+        target_scope={"market": "Nigeria"},
+        approved_by_id="reviewer-1",
+        approved_at=reviewed_at,
+        claims=[claim],
+        events=[],
+    )
 
 
 def test_classify_claim_separates_source_shapes() -> None:
@@ -392,3 +431,12 @@ def test_evidence_register_keeps_non_factual_text_out_of_support_checks() -> Non
     assert result.warning_count == 0
     assert result.not_applicable_count == 4
     assert all(assessment.status == "not_applicable" for assessment in result.assessments)
+
+
+def test_csv_export_neutralizes_spreadsheet_formula_values() -> None:
+    review = _export_review("=HYPERLINK(\"https://example.test\",\"open\")")
+
+    rows = list(csv.DictReader(io.StringIO(render_csv(review))))
+
+    assert rows[0]["claim"] == "'=HYPERLINK(\"https://example.test\",\"open\")"
+    assert rows[0]["source_title"] == "Vehicle study"
