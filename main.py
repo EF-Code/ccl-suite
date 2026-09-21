@@ -841,6 +841,26 @@ def require_project_knowledge_access(
     return project
 
 
+def require_project_workflow_access(
+    db: Session,
+    request: Request,
+    workflow_id: UUID,
+    actor: User,
+    denial_action: str,
+) -> tuple[Project, Workflow]:
+    """Load a workflow only after applying its project access boundary."""
+
+    workflow = require_record(db, Workflow, workflow_id, "Workflow was not found.")
+    project = require_project_knowledge_access(
+        db,
+        request,
+        workflow.project_id,
+        actor,
+        denial_action=denial_action,
+    )
+    return project, workflow
+
+
 def require_approved_knowledge_source(
     db: Session,
     project_id: UUID,
