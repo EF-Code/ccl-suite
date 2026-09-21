@@ -7,13 +7,14 @@ free-form personal profiles.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -100,6 +101,22 @@ class User(Base):
         back_populates="actor",
         foreign_keys=lambda: [KnowledgeErrorReport.actor_id],
     )
+    created_research_reviews: Mapped[list[ResearchReview]] = relationship(
+        back_populates="created_by",
+        foreign_keys=lambda: [ResearchReview.created_by_id],
+    )
+    approved_research_reviews: Mapped[list[ResearchReview]] = relationship(
+        back_populates="approved_by",
+        foreign_keys=lambda: [ResearchReview.approved_by_id],
+    )
+    verified_research_claims: Mapped[list[ResearchReviewClaim]] = relationship(
+        back_populates="verified_by",
+        foreign_keys=lambda: [ResearchReviewClaim.verified_by_id],
+    )
+    research_review_events: Mapped[list[ResearchReviewEvent]] = relationship(
+        back_populates="actor",
+        foreign_keys=lambda: [ResearchReviewEvent.actor_id],
+    )
 
 
 class Project(Base):
@@ -149,6 +166,9 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     knowledge_error_reports: Mapped[list[KnowledgeErrorReport]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    research_reviews: Mapped[list[ResearchReview]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -653,6 +673,148 @@ class Approval(Base):
     )
 
 
+class ResearchReview(Base):
+    """Persisted evidence package that can move through human review."""
+
+    __tablename__ = "research_reviews"
+    __table_args__ = (
+        Index("ix_research_reviews_project_status", "project_id", "status"),
+        CheckConstraint(
+            "status IN ('needs_review', 'changes_requested', 'verified', 'approved')",
+            name="ck_research_reviews_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    approved_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    source_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_reference: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    target_scope: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="needs_review")
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    project: Mapped[Project] = relationship(back_populates="research_reviews")
+    created_by: Mapped[User | None] = relationship(
+        back_populates="created_research_reviews",
+        foreign_keys=[created_by_id],
+    )
+    approved_by: Mapped[User | None] = relationship(
+        back_populates="approved_research_reviews",
+        foreign_keys=[approved_by_id],
+    )
+    claims: Mapped[list[ResearchReviewClaim]] = relationship(
+        back_populates="review", cascade="all, delete-orphan"
+    )
+    events: Mapped[list[ResearchReviewEvent]] = relationship(
+        back_populates="review", cascade="all, delete-orphan"
+    )
+
+
+class ResearchReviewClaim(Base):
+    """One source-backed claim retained inside a human review package."""
+
+    __tablename__ = "research_review_claims"
+    __table_args__ = (
+        UniqueConstraint(
+            "review_id", "claim_id", name="uq_research_review_claims_review_claim"
+        ),
+        Index("ix_research_review_claims_review_status", "review_id", "status"),
+        CheckConstraint(
+            "status IN ('needs_review', 'changes_requested', 'verified')",
+            name="ck_research_review_claims_status",
+        ),
+        CheckConstraint(
+            "classification IN ('factual', 'heading', 'instruction', 'opinion', 'creative')",
+            name="ck_research_review_claims_classification",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    review_id: Mapped[UUID] = mapped_column(
+        ForeignKey("research_reviews.id", ondelete="CASCADE"), nullable=False
+    )
+    claim_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    claim: Mapped[str] = mapped_column(String(500), nullable=False)
+    classification: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_reference: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    passage: Mapped[str] = mapped_column(Text, nullable=False)
+    scope: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="needs_review")
+    correction_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    corrected_claim: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    corrected_scope: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    verified_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    review: Mapped[ResearchReview] = relationship(back_populates="claims")
+    verified_by: Mapped[User | None] = relationship(
+        back_populates="verified_research_claims",
+        foreign_keys=[verified_by_id],
+    )
+
+
+class ResearchReviewEvent(Base):
+    """Append-only human review history for one review package."""
+
+    __tablename__ = "research_review_events"
+    __table_args__ = (
+        Index("ix_research_review_events_review_created_at", "review_id", "created_at"),
+        CheckConstraint(
+            "action IN ('submitted', 'correction_requested', 'verified', 'approved', 'exported')",
+            name="ck_research_review_events_action",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    review_id: Mapped[UUID] = mapped_column(
+        ForeignKey("research_reviews.id", ondelete="CASCADE"), nullable=False
+    )
+    claim_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    actor_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    review: Mapped[ResearchReview] = relationship(back_populates="events")
+    actor: Mapped[User | None] = relationship(
+        back_populates="research_review_events",
+        foreign_keys=[actor_id],
+    )
+
+
 class KnowledgeFeedback(Base):
     """Structured answer feedback without questions or evidence content."""
 
@@ -785,6 +947,9 @@ __all__ = [
     "KnowledgeFeedback",
     "KnowledgeSource",
     "Project",
+    "ResearchReview",
+    "ResearchReviewClaim",
+    "ResearchReviewEvent",
     "SecurityEvent",
     "User",
     "Workflow",
