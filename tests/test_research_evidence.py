@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -440,3 +441,20 @@ def test_csv_export_neutralizes_spreadsheet_formula_values() -> None:
 
     assert rows[0]["claim"] == "'=HYPERLINK(\"https://example.test\",\"open\")"
     assert rows[0]["source_title"] == "Vehicle study"
+
+
+def test_json_and_markdown_exports_preserve_provenance() -> None:
+    review = _export_review()
+
+    json_content, json_media_type = render_export(review, "json")
+    markdown_content, markdown_media_type = render_export(review, "markdown")
+
+    payload = json.loads(json_content)
+    assert json_media_type == "application/json"
+    assert payload["schema_version"] == "research-review-v1"
+    assert payload["source_reference"] == "local://vehicle-study"
+    assert payload["claims"][0]["passage"] == "The vehicle uses a hybrid engine."
+    assert markdown_media_type == "text/markdown; charset=utf-8"
+    assert "# Research evidence review" in markdown_content
+    assert "local://vehicle-study" in markdown_content
+    assert "The vehicle uses a hybrid engine." in markdown_content
