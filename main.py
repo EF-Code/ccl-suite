@@ -3481,16 +3481,24 @@ async def create_approval(
     "/workflows/{workflow_id}/approvals",
     response_model=list[ApprovalResponse],
     tags=["approvals"],
-    dependencies=[Depends(require_permission("workflow.manage"))],
 )
 async def list_approvals(
-    workflow_id: UUID, db: Session = Depends(get_db)
+    workflow_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
 ) -> list[ApprovalResponse]:
-    require_record(db, Workflow, workflow_id, "Workflow was not found.")
+    _, _workflow = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="approval.list",
+    )
     approvals = list_records(
         db,
         select(Approval)
-        .where(Approval.workflow_id == workflow_id)
+        .where(Approval.workflow_id == _workflow.id)
         .order_by(Approval.requested_at, Approval.id),
     )
     return [ApprovalResponse.model_validate(approval) for approval in approvals]
