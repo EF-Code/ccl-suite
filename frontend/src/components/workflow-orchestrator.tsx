@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import type { AgentDefinition, AgentHandoff, AgentName, Approval, ApprovalDecision, Project, Workflow, WorkflowAction, WorkflowToolName, WorkflowToolRun } from "@/lib/api"
+import type { AgentActorName, AgentDefinition, AgentHandoff, AgentName, Approval, ApprovalDecision, Project, Workflow, WorkflowAction, WorkflowToolName, WorkflowToolRun } from "@/lib/api"
 
 type WorkflowApprovals = Record<string, Approval[]>
 
@@ -57,6 +57,10 @@ function toolLabel(tool: WorkflowToolName): string {
 
 function actionLabel(action: WorkflowAction["action_code"]): string {
   return `${action.charAt(0).toUpperCase()}${action.slice(1)}`
+}
+
+function agentLabel(agent: AgentActorName): string {
+  return agent.replaceAll("_", " ")
 }
 
 function formatDate(value: string): string {
@@ -320,9 +324,10 @@ export function WorkflowOrchestrator({
                     {currentHandoffs.length === 0 ? <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/30 p-3 text-xs text-muted-foreground">No specialist handoffs yet. Run a role above to attach a structured result to this workflow.</div> : currentHandoffs.slice(0, 6).map((handoff) => (
                       <div key={handoff.id} data-agent-handoff-id={handoff.id} data-agent-status={handoff.status} className="rounded-xl border border-border bg-background/80 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2"><Badge className={statusTone(handoff.status)}>{statusLabel(handoff.status)}</Badge><span className="text-xs font-semibold">{handoff.target_agent.replaceAll("_", " ")} specialist</span></div>
+                          <div className="flex items-center gap-2"><Badge className={statusTone(handoff.status)}>{statusLabel(handoff.status)}</Badge><span className="text-xs font-semibold">{agentLabel(handoff.target_agent)} specialist</span></div>
                           <span className="font-mono text-[0.62rem] text-muted-foreground" title={handoff.trace_id}>trace:{handoff.trace_id.slice(0, 10)}</span>
                         </div>
+                        <p data-agent-route className="mt-1 text-[0.65rem] font-medium capitalize text-indigo-700">{agentLabel(handoff.source_agent)} → {agentLabel(handoff.target_agent)}</p>
                         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{handoff.output_summary || "No summary returned."}</p>
                         {handoff.blocked_reason && <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[0.68rem] text-rose-900">Guardrail: {handoff.blocked_reason}</p>}
                         <div className="mt-2 flex items-center gap-2 text-[0.65rem] text-muted-foreground"><History className="h-3 w-3" />{formatDate(handoff.created_at)} · input fingerprinted</div>
