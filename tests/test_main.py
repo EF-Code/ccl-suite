@@ -3902,6 +3902,13 @@ def test_specialist_guardrails_trace_blocked_injection_and_bad_delegation() -> N
     project = create_project("Guardrail trace project")
     workflow = create_workflow(str(project["id"]))
 
+    malformed = request(
+        "POST",
+        f"/workflows/{workflow['id']}/handoffs",
+        json={"target_agent": "unregistered"},
+    )
+    assert malformed.status_code == 422
+
     injection = request(
         "POST",
         f"/workflows/{workflow['id']}/handoffs",
