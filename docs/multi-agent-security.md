@@ -102,3 +102,8 @@ integrations require a separate provider boundary and threat review.
   safe summary, while raw context remains absent.
 - Database migrations and browser/API tests cover the same project boundary
   and guardrail outcomes described above.
+
+For a local pre-release check, run the backend tests with `~/.venv/bin/python
+-m pytest -q`, apply the head migration with `~/.venv/bin/python -m alembic
+upgrade head`, and build the dashboard with `pnpm --dir frontend build`. The
+browser suite should be run against a freshly migrated isolated database.
