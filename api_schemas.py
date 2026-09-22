@@ -8,12 +8,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agent_orchestration import MAX_AGENT_INPUT_CHARACTERS
 from knowledge_contract import (
     AGENT_INSTRUCTION_VERSION,
     ANSWER_CONTRACT_VERSION,
     ANSWER_MODE,
 )
-from models import Approval, File, KnowledgeSource, Project, SecurityEvent, User, Workflow
+from models import KnowledgeSource, Project
 from research_evidence import (
     EVIDENCE_WARNING_CODES,
     MAX_RESEARCH_WARNING_COUNT,
@@ -24,6 +25,7 @@ from research_evidence import (
     RESEARCH_EVIDENCE_SCHEMA_VERSION,
     RESEARCH_SCOPE_FIELDS,
 )
+from workflow_orchestration import MAX_TOOL_ATTEMPTS
 
 
 class UserCreate(BaseModel):
@@ -49,6 +51,23 @@ class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
     owner_id: UUID
+    category: str = Field(default="general", min_length=1, max_length=80)
+    scope: str = Field(default="", max_length=1000)
+    deadline: date | None = None
+    outputs: list[str] = Field(default_factory=list, max_length=8)
+    responsible_person: str = Field(default="", max_length=120)
+
+    @model_validator(mode="after")
+    def validate_intake_outputs(self) -> ProjectCreate:
+        """Reject blank output labels while keeping the API backwards compatible."""
+
+        cleaned = [value.strip() for value in self.outputs]
+        if any(not value for value in cleaned):
+            raise ValueError("outputs must contain non-empty labels.")
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("outputs must not contain duplicates.")
+        self.outputs = cleaned
+        return self
 
 
 class ProjectResponse(BaseModel):
@@ -59,6 +78,11 @@ class ProjectResponse(BaseModel):
     title: str
     storage_slug: str
     description: str
+    category: str
+    scope: str
+    deadline: date | None
+    outputs: list[str]
+    responsible_person: str
     status: str
     created_at: datetime
     updated_at: datetime
@@ -73,6 +97,11 @@ class ProjectResponse(BaseModel):
             title=project.name,
             storage_slug=project.storage_slug,
             description=project.description,
+            category=project.category,
+            scope=project.scope,
+            deadline=project.deadline,
+            outputs=list(project.outputs or []),
+            responsible_person=project.responsible_person,
             status=project.status,
             created_at=project.created_at,
             updated_at=project.updated_at,
@@ -987,6 +1016,7 @@ class WorkflowResponse(BaseModel):
     created_by_id: UUID | None
     name: str
     status: str
+    state: Literal["ready", "in_progress", "review", "changes_required", "approved", "archived"]
     version: int
     created_at: datetime
     updated_at: datetime
@@ -1011,12 +1041,138 @@ class ApprovalResponse(BaseModel):
 
     id: UUID
     workflow_id: UUID
+    action_id: UUID | None
     requested_by_id: UUID | None
     approved_by_id: UUID | None
     status: str
     decision_code: str | None
     requested_at: datetime
     decided_at: datetime | None
+
+
+class WorkflowStateTransitionRequest(BaseModel):
+    """Request one explicit, allow-listed workflow state transition."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    state: Literal[
+        "ready",
+        "in_progress",
+        "review",
+        "changes_required",
+        "approved",
+        "archived",
+    ]
+
+
+class WorkflowToolRequest(BaseModel):
+    """Bounded request for one read-only service tool."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    tool: Literal["files.summary", "knowledge.search", "research.summary"]
+    query: str | None = Field(default=None, min_length=1, max_length=500)
+    max_attempts: int = Field(default=1, ge=1, le=MAX_TOOL_ATTEMPTS)
+
+    @model_validator(mode="after")
+    def validate_tool_input(self) -> WorkflowToolRequest:
+        if self.tool == "knowledge.search" and not self.query:
+            raise ValueError("knowledge.search requires a query.")
+        if self.tool != "knowledge.search" and self.query is not None:
+            raise ValueError(f"{self.tool} does not accept a query.")
+        return self
+
+
+class WorkflowToolRunResponse(BaseModel):
+    """A traceable tool result with bounded retry metadata."""
+
+    id: UUID
+    project_id: UUID
+    workflow_id: UUID
+    requested_by_id: UUID | None
+    trace_id: str
+    tool_name: Literal["files.summary", "knowledge.search", "research.summary"]
+    status: Literal["succeeded", "failed", "blocked"]
+    attempt_count: int = Field(gt=0, le=MAX_TOOL_ATTEMPTS)
+    max_attempts: int = Field(gt=0, le=MAX_TOOL_ATTEMPTS)
+    input_summary: str
+    output_summary: str
+    error_code: str | None
+    result: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class WorkflowActionCreate(BaseModel):
+    """Request a high-impact action intent; execution always pauses for approval."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    action_code: Literal["send", "delete", "replace", "publish", "archive", "approve"]
+    target_ref: str = Field(min_length=1, max_length=255)
+    reason: str = Field(min_length=1, max_length=500)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class WorkflowActionResponse(BaseModel):
+    """Approval-gated action state; no destructive operation is implied by approval."""
+
+    id: UUID
+    project_id: UUID
+    workflow_id: UUID
+    requested_by_id: UUID | None
+    executed_by_id: UUID | None
+    action_code: Literal["send", "delete", "replace", "publish", "archive", "approve"]
+    target_ref: str
+    reason: str
+    idempotency_key: str | None
+    status: Literal["pending_approval", "approved", "rejected", "cancelled", "executed"]
+    approval_id: UUID | None
+    result_summary: str | None
+    created_at: datetime
+    approved_at: datetime | None
+    executed_at: datetime | None
+
+
+class AgentDefinitionResponse(BaseModel):
+    """Public responsibility and least-privilege boundary for one specialist."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent: Literal["intake", "research", "knowledge", "quality_control"]
+    label: str
+    responsibility: str
+    allowed_tools: list[str]
+    handoff_targets: list[str]
+
+
+class AgentHandoffCreate(BaseModel):
+    """Request one allow-listed specialist handoff with bounded context."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_agent: Literal["orchestrator", "intake", "research", "knowledge", "quality_control"] = "orchestrator"
+    target_agent: Literal["intake", "research", "knowledge", "quality_control"]
+    input_ref: str | None = Field(default=None, max_length=MAX_AGENT_INPUT_CHARACTERS)
+
+
+class AgentHandoffResponse(BaseModel):
+    """Safe handoff trace with structured result metadata and no raw input."""
+
+    id: UUID
+    project_id: UUID
+    workflow_id: UUID
+    requested_by_id: UUID | None
+    trace_id: str
+    source_agent: Literal["orchestrator", "intake", "research", "knowledge", "quality_control"]
+    target_agent: Literal["intake", "research", "knowledge", "quality_control"]
+    status: Literal["completed", "blocked", "failed"]
+    input_summary: str
+    output_summary: str
+    blocked_reason: str | None
+    result: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class SecurityEventCreate(BaseModel):
@@ -1044,9 +1200,17 @@ class SecurityEventResponse(BaseModel):
 
 
 __all__ = [
+    "AgentDefinitionResponse",
+    "AgentHandoffCreate",
+    "AgentHandoffResponse",
     "ApprovalCreate",
     "ApprovalDecisionRequest",
     "ApprovalResponse",
+    "WorkflowActionCreate",
+    "WorkflowActionResponse",
+    "WorkflowStateTransitionRequest",
+    "WorkflowToolRequest",
+    "WorkflowToolRunResponse",
     "BackupCreate",
     "BackupResponse",
     "BackupRestoreCreate",
