@@ -104,8 +104,9 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     frontendCoverage: "full",
     endpoints: [
       "GET /agents",
+      "GET /agents/{agent}",
       "POST /workflows/{id}/handoffs",
-      "GET /workflows/{id}/handoffs",
+      "GET /workflows/{id}/handoffs?limit≤50",
       "GET /security-events",
     ],
     uiComponents: ["Responsibility Matrix", "Least-Privilege Boundaries", "Guarded Handoffs", "Trace IDs", "Blocked-Run Feedback"],
