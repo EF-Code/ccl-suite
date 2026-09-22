@@ -28,6 +28,16 @@ from research_evidence import (
 from workflow_orchestration import MAX_TOOL_ATTEMPTS
 
 
+AgentNameContract = Literal["intake", "research", "knowledge", "quality_control"]
+AgentActorContract = Literal[
+    "orchestrator",
+    "intake",
+    "research",
+    "knowledge",
+    "quality_control",
+]
+
+
 class UserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -1139,11 +1149,11 @@ class AgentDefinitionResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    agent: Literal["intake", "research", "knowledge", "quality_control"]
+    agent: AgentNameContract
     label: str
     responsibility: str
     allowed_tools: list[str]
-    handoff_targets: list[str]
+    handoff_targets: list[AgentNameContract]
 
 
 class AgentHandoffCreate(BaseModel):
@@ -1151,8 +1161,8 @@ class AgentHandoffCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    source_agent: Literal["orchestrator", "intake", "research", "knowledge", "quality_control"] = "orchestrator"
-    target_agent: Literal["intake", "research", "knowledge", "quality_control"]
+    source_agent: AgentActorContract = "orchestrator"
+    target_agent: AgentNameContract
     input_ref: str | None = Field(default=None, max_length=MAX_AGENT_INPUT_CHARACTERS)
 
 
@@ -1164,8 +1174,8 @@ class AgentHandoffResponse(BaseModel):
     workflow_id: UUID
     requested_by_id: UUID | None
     trace_id: str
-    source_agent: Literal["orchestrator", "intake", "research", "knowledge", "quality_control"]
-    target_agent: Literal["intake", "research", "knowledge", "quality_control"]
+    source_agent: AgentActorContract
+    target_agent: AgentNameContract
     status: Literal["completed", "blocked", "failed"]
     input_summary: str
     output_summary: str
