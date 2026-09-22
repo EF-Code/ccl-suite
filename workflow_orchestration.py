@@ -46,6 +46,8 @@ HIGH_IMPACT_ACTIONS: Final[tuple[str, ...]] = (
 
 MAX_TOOL_ATTEMPTS: Final[int] = 3
 MAX_WORKFLOW_TRACE_RESULTS: Final[int] = 50
+APPROVAL_GATED_STATES: Final[frozenset[str]] = frozenset({"approved", "archived"})
+TERMINAL_WORKFLOW_STATES: Final[frozenset[str]] = frozenset({"archived"})
 
 
 def can_transition(current: str, target: str) -> bool:
@@ -60,8 +62,22 @@ def action_requires_approval(action_code: str) -> bool:
     return action_code in HIGH_IMPACT_ACTIONS
 
 
+def requires_human_approval(state: str) -> bool:
+    """Return whether entering a state is reserved for the approval gate."""
+
+    return state in APPROVAL_GATED_STATES
+
+
+def is_terminal_state(state: str) -> bool:
+    """Return whether a workflow state accepts no further transitions."""
+
+    return state in TERMINAL_WORKFLOW_STATES
+
+
 __all__ = [
     "HIGH_IMPACT_ACTIONS",
+    "APPROVAL_GATED_STATES",
+    "TERMINAL_WORKFLOW_STATES",
     "MAX_TOOL_ATTEMPTS",
     "MAX_WORKFLOW_TRACE_RESULTS",
     "WORKFLOW_STATES",
@@ -69,4 +85,6 @@ __all__ = [
     "WORKFLOW_TOOLS",
     "action_requires_approval",
     "can_transition",
+    "is_terminal_state",
+    "requires_human_approval",
 ]

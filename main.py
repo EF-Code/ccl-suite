@@ -232,6 +232,7 @@ from workflow_orchestration import (
     WORKFLOW_TOOLS,
     action_requires_approval,
     can_transition,
+    requires_human_approval,
 )
 from permissions import ROLES, canonical_role, permission_matrix, role_can
 from semantic_search import (
@@ -3909,7 +3910,7 @@ async def transition_workflow_state(
         actor,
         denial_action="workflow.state",
     )
-    if transition.state in {"approved", "archived"}:
+    if requires_human_approval(transition.state):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Approved and archived states require the human approval gate.",
