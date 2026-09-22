@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
+import math
 from typing import Final, Literal
 
 from knowledge_security import scan_prompt_injection
@@ -170,6 +171,8 @@ def validate_agent_result(agent: str, result: Mapping[str, object]) -> dict[str,
             raise ValueError("Agent result metric names are malformed.")
         if isinstance(value, (dict, list, tuple)):
             raise ValueError("Agent result metrics must be scalar values.")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Agent result metrics must contain finite numbers.")
         if not isinstance(value, (str, int, float, bool)) and value is not None:
             raise ValueError("Agent result metrics contain an unsupported value.")
         if any(secret_word in key.lower() for secret_word in ("secret", "token", "password", "credential")):
