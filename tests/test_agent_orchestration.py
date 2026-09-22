@@ -5,6 +5,7 @@ import pytest
 from agent_orchestration import (
     AGENT_DEFINITIONS,
     AGENT_HANDOFF_STATUSES,
+    MAX_AGENT_INPUT_CHARACTERS,
     AgentInputBlockedError,
     can_delegate,
     input_summary,
@@ -50,6 +51,8 @@ def test_agent_input_rejects_injection_and_traversal_without_raw_trace_text() ->
         validate_agent_input("../private/project")
     with pytest.raises(ValueError, match="control character"):
         validate_agent_input("project\nreference")
+    with pytest.raises(ValueError, match="too long"):
+        validate_agent_input("x" * (MAX_AGENT_INPUT_CHARACTERS + 1))
 
     summary = input_summary("private source context")
     assert "private source context" not in summary
