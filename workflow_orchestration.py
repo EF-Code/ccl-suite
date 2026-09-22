@@ -45,6 +45,7 @@ HIGH_IMPACT_ACTIONS: Final[tuple[str, ...]] = (
 )
 
 MAX_TOOL_ATTEMPTS: Final[int] = 3
+MAX_WORKFLOW_TRACE_RESULTS: Final[int] = 50
 
 
 def can_transition(current: str, target: str) -> bool:
@@ -62,6 +63,7 @@ def action_requires_approval(action_code: str) -> bool:
 __all__ = [
     "HIGH_IMPACT_ACTIONS",
     "MAX_TOOL_ATTEMPTS",
+    "MAX_WORKFLOW_TRACE_RESULTS",
     "WORKFLOW_STATES",
     "WORKFLOW_STATE_TRANSITIONS",
     "WORKFLOW_TOOLS",
