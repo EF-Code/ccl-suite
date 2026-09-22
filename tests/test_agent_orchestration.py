@@ -4,6 +4,7 @@ import pytest
 
 from agent_orchestration import (
     AGENT_DEFINITIONS,
+    AGENT_HANDOFF_STATUSES,
     AgentInputBlockedError,
     can_delegate,
     input_summary,
@@ -34,6 +35,10 @@ def test_delegation_edges_are_allow_listed() -> None:
     assert can_delegate("research", "intake") is False
     assert can_delegate("quality_control", "research") is False
     assert can_delegate("unknown", "intake") is False
+
+
+def test_handoff_status_vocabulary_is_closed() -> None:
+    assert AGENT_HANDOFF_STATUSES == ("completed", "blocked", "failed")
 
 
 def test_agent_input_rejects_injection_and_traversal_without_raw_trace_text() -> None:
