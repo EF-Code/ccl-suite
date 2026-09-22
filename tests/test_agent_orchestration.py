@@ -95,3 +95,15 @@ def test_agent_result_rejects_unstructured_or_secret_bearing_output() -> None:
                 "metrics": {"confidence": math.nan},
             },
         )
+
+    with pytest.raises(ValueError, match="unknown fields"):
+        validate_agent_result(
+            "intake",
+            {
+                "agent": "intake",
+                "status": "completed",
+                "summary": "Intake checked.",
+                "metrics": {},
+                "raw_output": "untrusted source text",
+            },
+        )
