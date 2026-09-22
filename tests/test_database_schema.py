@@ -161,6 +161,10 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
         "ck_agent_handoffs_source_agent_allowlist",
         "ck_agent_handoffs_target_agent_allowlist",
     }
+    assert AgentHandoff.__table__.c.trace_id.unique is True
+    assert AgentHandoff.__table__.c.input_fingerprint.type.length == 64
+    assert AgentHandoff.__table__.c.input_summary.type.length == 255
+    assert AgentHandoff.__table__.c.output_summary.type.length == 500
     assert {
         index.name for index in SecurityEvent.__table__.indexes
     } == {
