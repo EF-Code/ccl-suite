@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from agent_orchestration import (
@@ -80,5 +82,16 @@ def test_agent_result_rejects_unstructured_or_secret_bearing_output() -> None:
                 "status": "completed",
                 "summary": "Intake checked.",
                 "metrics": {"details": {"raw": "source"}},
+            },
+        )
+
+    with pytest.raises(ValueError, match="finite"):
+        validate_agent_result(
+            "intake",
+            {
+                "agent": "intake",
+                "status": "completed",
+                "summary": "Intake checked.",
+                "metrics": {"confidence": math.nan},
             },
         )
