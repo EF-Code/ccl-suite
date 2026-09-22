@@ -8,6 +8,7 @@ from agent_orchestration import (
     MAX_AGENT_INPUT_CHARACTERS,
     AgentInputBlockedError,
     can_delegate,
+    input_fingerprint,
     input_summary,
     validate_agent_input,
     validate_agent_result,
@@ -40,6 +41,14 @@ def test_delegation_edges_are_allow_listed() -> None:
 
 def test_handoff_status_vocabulary_is_closed() -> None:
     assert AGENT_HANDOFF_STATUSES == ("completed", "blocked", "failed")
+
+
+def test_input_fingerprints_are_stable_without_revealing_context() -> None:
+    first = input_fingerprint("same bounded context")
+    second = input_fingerprint("same bounded context")
+    assert first == second
+    assert len(first) == 64
+    assert "same bounded context" not in first
 
 
 def test_agent_input_rejects_injection_and_traversal_without_raw_trace_text() -> None:
