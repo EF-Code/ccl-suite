@@ -36,6 +36,11 @@ export type Project = {
   title: string;
   storage_slug: string;
   description: string;
+  category: string;
+  scope: string;
+  deadline: string | null;
+  outputs: string[];
+  responsible_person: string;
   status: string;
   created_at: string;
   updated_at: string;
@@ -47,6 +52,7 @@ export type Workflow = {
   created_by_id: string | null;
   name: string;
   status: string;
+  state: "ready" | "in_progress" | "review" | "changes_required" | "approved" | "archived";
   version: number;
   created_at: string;
   updated_at: string;
@@ -58,12 +64,78 @@ export type ApprovalDecision = Exclude<ApprovalStatus, "pending">;
 export type Approval = {
   id: string;
   workflow_id: string;
+  action_id: string | null;
   requested_by_id: string | null;
   approved_by_id: string | null;
   status: ApprovalStatus;
   decision_code: string | null;
   requested_at: string;
   decided_at: string | null;
+};
+
+export type WorkflowToolName = "files.summary" | "knowledge.search" | "research.summary";
+
+export type WorkflowToolRun = {
+  id: string;
+  project_id: string;
+  workflow_id: string;
+  requested_by_id: string | null;
+  trace_id: string;
+  tool_name: WorkflowToolName;
+  status: "succeeded" | "failed" | "blocked";
+  attempt_count: number;
+  max_attempts: number;
+  input_summary: string;
+  output_summary: string;
+  error_code: string | null;
+  result: Record<string, unknown>;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export type WorkflowAction = {
+  id: string;
+  project_id: string;
+  workflow_id: string;
+  requested_by_id: string | null;
+  executed_by_id: string | null;
+  action_code: "send" | "delete" | "replace" | "publish" | "archive" | "approve";
+  target_ref: string;
+  reason: string;
+  idempotency_key: string | null;
+  status: "pending_approval" | "approved" | "rejected" | "cancelled" | "executed";
+  approval_id: string | null;
+  result_summary: string | null;
+  created_at: string;
+  approved_at: string | null;
+  executed_at: string | null;
+};
+
+export type AgentName = "intake" | "research" | "knowledge" | "quality_control";
+
+export type AgentDefinition = {
+  agent: AgentName;
+  label: string;
+  responsibility: string;
+  allowed_tools: string[];
+  handoff_targets: AgentName[];
+};
+
+export type AgentHandoff = {
+  id: string;
+  project_id: string;
+  workflow_id: string;
+  requested_by_id: string | null;
+  trace_id: string;
+  source_agent: "orchestrator" | AgentName;
+  target_agent: AgentName;
+  status: "completed" | "blocked" | "failed";
+  input_summary: string;
+  output_summary: string;
+  blocked_reason: string | null;
+  result: Record<string, unknown>;
+  created_at: string;
+  completed_at: string | null;
 };
 
 export type FileRecord = {
