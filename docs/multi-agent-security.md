@@ -74,6 +74,15 @@ Security events use `agent.handoff.completed`, `agent.handoff.blocked`, and
 `agent.handoff.failed` codes. This links the operational audit stream to the
 workflow-level trace without duplicating source content.
 
+## Operator response
+
+When a handoff is blocked, review the workflow trace and matching security
+event by `trace_id` before retrying. Treat `delegation_not_allowlisted`,
+`source_handoff_missing`, and `workflow_archived` as workflow corrections;
+do not bypass them by changing the request payload. Treat an input-rule block
+or failed specialist result as untrusted data and escalate it for review if
+the same pattern repeats.
+
 ## Verification boundary
 
 The current prototype proves role separation, delegation blocking, bounded
