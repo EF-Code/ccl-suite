@@ -94,6 +94,10 @@ The connected-tool surface is deliberately allow-listed:
 Each tool call receives a trace ID, bounded retry count, status, and safe input
 and output summaries. Source text is not copied into the trace record.
 
+Trace-list endpoints accept a positive `limit` query parameter capped at 50.
+This keeps dashboard reads predictable while preserving the newest records
+first for operator review.
+
 High-impact action intents are limited to `send`, `delete`, `replace`,
 `publish`, `archive`, and `approve`. They are idempotent when an idempotency
 key is supplied, create a linked pending approval, and cannot execute until a
