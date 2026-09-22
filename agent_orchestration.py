@@ -37,6 +37,9 @@ AGENT_ACTOR_NAMES: Final[tuple[str, ...]] = ("orchestrator", *AGENT_NAMES)
 MAX_AGENT_INPUT_CHARACTERS: Final[int] = 500
 MAX_AGENT_OUTPUT_KEYS: Final[int] = 12
 MAX_AGENT_TRACE_RESULTS: Final[int] = 50
+AGENT_RESULT_KEYS: Final[frozenset[str]] = frozenset(
+    {"agent", "status", "summary", "metrics", "tool"}
+)
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,9 @@ def input_summary(input_ref: str | None) -> str:
 def validate_agent_result(agent: str, result: Mapping[str, object]) -> dict[str, object]:
     """Validate the structured result boundary before it is persisted."""
 
+    unexpected_keys = set(result) - AGENT_RESULT_KEYS
+    if unexpected_keys:
+        raise ValueError("Agent result contains unknown fields.")
     if agent not in AGENT_DEFINITION_BY_NAME:
         raise ValueError("Agent result names an unknown specialist.")
     if result.get("agent") != agent:
@@ -183,6 +189,7 @@ def validate_agent_result(agent: str, result: Mapping[str, object]) -> dict[str,
 __all__ = [
     "AGENT_ACTOR_NAMES",
     "AGENT_DEFINITIONS",
+    "AGENT_RESULT_KEYS",
     "AGENT_NAMES",
     "AgentDefinition",
     "AgentInputBlockedError",
