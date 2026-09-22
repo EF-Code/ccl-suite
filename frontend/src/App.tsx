@@ -14,7 +14,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Separator } from "@/components/ui/separator"
 import { OverviewDashboard } from "@/components/overview-dashboard"
 import { WorkflowOrchestrator } from "@/components/workflow-orchestrator"
-import { apiRequest, getOwnerId, setOwnerId, type Approval, type ApprovalDecision, type Project, type Workflow, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
@@ -99,6 +99,10 @@ export default function App() {
   const [researchReviewLoading, setResearchReviewLoading] = useState(false)
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [workflowApprovals, setWorkflowApprovals] = useState<Record<string, Approval[]>>({})
+  const [workflowToolRuns, setWorkflowToolRuns] = useState<Record<string, WorkflowToolRun[]>>({})
+  const [workflowActions, setWorkflowActions] = useState<Record<string, WorkflowAction[]>>({})
+  const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinition[]>([])
+  const [agentHandoffs, setAgentHandoffs] = useState<Record<string, AgentHandoff[]>>({})
   const [workflowLoading, setWorkflowLoading] = useState(false)
   const [workflowError, setWorkflowError] = useState("")
   const [approvalDecisionCodes, setApprovalDecisionCodes] = useState<Record<string, string>>({})
@@ -174,21 +178,39 @@ export default function App() {
     if (!projectId) {
       setWorkflows([])
       setWorkflowApprovals({})
+      setWorkflowToolRuns({})
+      setWorkflowActions({})
+      setAgentDefinitions([])
+      setAgentHandoffs({})
       return
     }
     setWorkflowLoading(true)
     try {
-      const workflowData = await apiRequest<Workflow[]>(`/projects/${projectId}/workflows`)
-      const approvalEntries = await Promise.all(workflowData.map(async (workflow) => {
-        const items = await apiRequest<Approval[]>(`/workflows/${workflow.id}/approvals`)
-        return [workflow.id, items] as const
+      const [workflowData, definitionData] = await Promise.all([
+        apiRequest<Workflow[]>(`/projects/${projectId}/workflows`),
+        apiRequest<AgentDefinition[]>("/agents"),
+      ])
+      const entries = await Promise.all(workflowData.map(async (workflow) => {
+        const [items, tools, actions, handoffs] = await Promise.all([
+          apiRequest<Approval[]>(`/workflows/${workflow.id}/approvals`),
+          apiRequest<WorkflowToolRun[]>(`/workflows/${workflow.id}/tools`),
+          apiRequest<WorkflowAction[]>(`/workflows/${workflow.id}/actions`),
+          apiRequest<AgentHandoff[]>(`/workflows/${workflow.id}/handoffs`),
+        ])
+        return [workflow.id, items, tools, actions, handoffs] as const
       }))
       setWorkflows(workflowData)
-      setWorkflowApprovals(Object.fromEntries(approvalEntries))
+      setAgentDefinitions(definitionData)
+      setWorkflowApprovals(Object.fromEntries(entries.map(([id, approvals]) => [id, approvals])))
+      setWorkflowToolRuns(Object.fromEntries(entries.map(([id, _approvals, tools]) => [id, tools])))
+      setWorkflowActions(Object.fromEntries(entries.map(([id, _approvals, _tools, actions]) => [id, actions])))
+      setAgentHandoffs(Object.fromEntries(entries.map(([id, _approvals, _tools, _actions, handoffs]) => [id, handoffs])))
       setWorkflowError("")
     } catch (err: any) {
       setWorkflows([])
       setWorkflowApprovals({})
+      setAgentDefinitions([])
+      setAgentHandoffs({})
       setWorkflowError((err as Error).message)
     } finally {
       setWorkflowLoading(false)
@@ -238,10 +260,18 @@ export default function App() {
     e.preventDefault()
     const form = e.currentTarget as HTMLFormElement
     const fd = new FormData(form)
-    const body = Object.fromEntries(fd.entries())
+    const raw = Object.fromEntries(fd.entries())
+    const body = {
+      ...raw,
+      deadline: String(raw.deadline || "").trim() || null,
+      outputs: String(raw.outputs || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    }
     try {
       const proj: any = await apiRequest("/projects", { method: "POST", body: JSON.stringify(body) })
-      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null); setResearchRegister(null); setResearchReview(null); setWorkflows([]); setWorkflowApprovals({}); setWorkflowError(""); setApprovalDecisionCodes({})
+      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null); setResearchRegister(null); setResearchReview(null); setWorkflows([]); setWorkflowApprovals({}); setWorkflowToolRuns({}); setWorkflowActions({}); setAgentDefinitions([]); setAgentHandoffs({}); setWorkflowError(""); setApprovalDecisionCodes({})
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
@@ -775,6 +805,116 @@ export default function App() {
     }
   }
 
+  async function handleWorkflowTransition(workflowId: string, state: Workflow["state"]) {
+    if (!selectedId) return showMessage("Select a project before changing workflow state.", "error")
+    setWorkflowLoading(true)
+    try {
+      await apiRequest<Workflow>(`/workflows/${workflowId}/state`, {
+        method: "POST",
+        body: JSON.stringify({ state }),
+      })
+      await refreshWorkflows(selectedId)
+      showMessage(`Workflow moved to ${state.replaceAll("_", " ")}.`)
+    } catch (err: any) {
+      setWorkflowError((err as Error).message)
+      showMessage((err as Error).message, "error")
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }
+
+  async function handleWorkflowToolRun(workflowId: string, tool: WorkflowToolName, query?: string) {
+    if (!selectedId) return showMessage("Select a project before connecting a workflow tool.", "error")
+    setWorkflowLoading(true)
+    try {
+      const result = await apiRequest<WorkflowToolRun>(`/workflows/${workflowId}/tools`, {
+        method: "POST",
+        body: JSON.stringify({ tool, ...(query ? { query } : {}), max_attempts: 2 }),
+      })
+      await refreshWorkflows(selectedId)
+      showMessage(`${tool} completed with trace ${result.trace_id.slice(0, 10)}.`)
+    } catch (err: any) {
+      setWorkflowError((err as Error).message)
+      showMessage((err as Error).message, "error")
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }
+
+  async function handleAgentHandoff(workflowId: string, targetAgent: AgentName) {
+    if (!selectedId) return showMessage("Select a project before delegating to a specialist.", "error")
+    setWorkflowLoading(true)
+    try {
+      const result = await apiRequest<AgentHandoff>(`/workflows/${workflowId}/handoffs`, {
+        method: "POST",
+        body: JSON.stringify({ source_agent: "orchestrator", target_agent: targetAgent }),
+      })
+      await refreshWorkflows(selectedId)
+      if (result.status === "blocked") {
+        showMessage(`${targetAgent.replaceAll("_", " ")} handoff was blocked by a guardrail.`, "error")
+      } else if (result.status === "failed") {
+        showMessage(`${targetAgent.replaceAll("_", " ")} handoff failed safely.`, "error")
+      } else {
+        showMessage(`${targetAgent.replaceAll("_", " ")} specialist completed with trace ${result.trace_id.slice(0, 10)}.`)
+      }
+    } catch (err: any) {
+      setWorkflowError((err as Error).message)
+      showMessage((err as Error).message, "error")
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }
+
+  async function handleWorkflowActionRequest(workflowId: string, actionCode: WorkflowAction["action_code"]) {
+    if (!selectedId) return showMessage("Select a project before requesting a protected action.", "error")
+    const confirmed = await confirmAction(
+      `Queue ${actionCode} for approval?`,
+      "The action will pause as pending approval. It will not perform an external or destructive side effect.",
+      "Queue for approval",
+    )
+    if (!confirmed) return
+    setWorkflowLoading(true)
+    try {
+      await apiRequest<WorkflowAction>(`/workflows/${workflowId}/actions`, {
+        method: "POST",
+        body: JSON.stringify({
+          action_code: actionCode,
+          target_ref: selectedProject?.storage_slug || selectedId,
+          reason: `Operator requested ${actionCode} for the active project.`,
+          idempotency_key: `${workflowId}:${actionCode}`,
+        }),
+      })
+      await refreshWorkflows(selectedId)
+      showMessage(`${actionCode} is waiting for human approval.`)
+    } catch (err: any) {
+      setWorkflowError((err as Error).message)
+      showMessage((err as Error).message, "error")
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }
+
+  async function handleWorkflowActionExecute(actionId: string) {
+    if (!selectedId) return showMessage("Select a project before executing an approved action.", "error")
+    const confirmed = await confirmAction(
+      "Record approved action execution?",
+      "This records the approved intent and updates the workflow state. The local prototype does not perform an external destructive operation.",
+      "Record execution",
+    )
+    if (!confirmed) return
+    setWorkflowLoading(true)
+    try {
+      await apiRequest<WorkflowAction>(`/workflow-actions/${actionId}/execute`, { method: "POST" })
+      await refreshWorkflows(selectedId)
+      showMessage("Approved action execution was recorded.")
+    } catch (err: any) {
+      setWorkflowError((err as Error).message)
+      showMessage((err as Error).message, "error")
+    } finally {
+      setWorkflowLoading(false)
+    }
+  }
+
   async function handleKnowledgeFeedback(rating: KnowledgeFeedbackRating) {
     if (!selectedId || !answerResponse || feedbackLoading) return
     setFeedbackLoading(true)
@@ -1136,6 +1276,13 @@ export default function App() {
                 <form id="project-form" onSubmit={handleCreateProject} className="grid gap-3" aria-describedby="project-form-help">
                   <div className="grid gap-1.5"><Label htmlFor="project-title" className="text-xs">Project title</Label><Input id="project-title" name="title" placeholder="e.g. Client Intake Q3" required maxLength={100} /></div>
                   <div className="grid gap-1.5"><Label htmlFor="project-description" className="text-xs">Description</Label><Textarea id="project-description" name="description" rows={3} maxLength={500} placeholder="What will this workspace contain?" /></div>
+                  <div className="grid gap-1.5"><Label htmlFor="project-category" className="text-xs">Category</Label><Input id="project-category" name="category" defaultValue="content production" required maxLength={80} placeholder="e.g. campaign, research, operations" /></div>
+                  <div className="grid gap-1.5"><Label htmlFor="project-scope" className="text-xs">Scope</Label><Textarea id="project-scope" name="scope" rows={2} maxLength={1000} placeholder="What should this project cover?" /></div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-1.5"><Label htmlFor="project-deadline" className="text-xs">Deadline <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="project-deadline" name="deadline" type="date" /></div>
+                    <div className="grid gap-1.5"><Label htmlFor="project-responsible" className="text-xs">Responsible person</Label><Input id="project-responsible" name="responsible_person" defaultValue="Operator" required maxLength={120} /></div>
+                  </div>
+                  <div className="grid gap-1.5"><Label htmlFor="project-outputs" className="text-xs">Expected outputs</Label><Input id="project-outputs" name="outputs" defaultValue="brief, reviewed package" required placeholder="Comma-separated outputs" /></div>
                   <div className="grid gap-1.5"><Label htmlFor="owner-id" className="text-xs">Owner ID</Label><Input id="owner-id" name="owner_id" placeholder="Create an owner above" required defaultValue={getOwnerId()} /></div>
                   <Button type="submit">Register project</Button>
                 </form>
@@ -1768,6 +1915,10 @@ export default function App() {
             project={selectedProject}
             workflows={workflows}
             approvals={workflowApprovals}
+            toolRuns={workflowToolRuns}
+            actions={workflowActions}
+            agentDefinitions={agentDefinitions}
+            agentHandoffs={agentHandoffs}
             loading={workflowLoading}
             error={workflowError}
             decisionCodes={approvalDecisionCodes}
@@ -1775,6 +1926,11 @@ export default function App() {
             onRefresh={() => selectedId && refreshWorkflows(selectedId)}
             onRequestApproval={handleRequestApproval}
             onDecision={handleApprovalDecision}
+            onTransition={handleWorkflowTransition}
+            onRunTool={handleWorkflowToolRun}
+            onDelegate={handleAgentHandoff}
+            onRequestAction={handleWorkflowActionRequest}
+            onExecuteAction={handleWorkflowActionExecute}
             onDecisionCodeChange={(approvalId, value) => setApprovalDecisionCodes((current) => ({ ...current, [approvalId]: value }))}
           />
         </section>
