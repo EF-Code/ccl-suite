@@ -156,6 +156,12 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
         index.name for index in AgentHandoff.__table__.indexes
     }
     assert {
+        constraint.name for constraint in AgentHandoff.__table__.constraints
+    } >= {
+        "ck_agent_handoffs_source_agent_allowlist",
+        "ck_agent_handoffs_target_agent_allowlist",
+    }
+    assert {
         index.name for index in SecurityEvent.__table__.indexes
     } == {
         "ix_security_events_actor_occurred_at",
