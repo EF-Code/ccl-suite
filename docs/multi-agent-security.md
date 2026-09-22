@@ -90,3 +90,14 @@ input handling, structured output validation, project scoping, migration
 coverage, and browser-visible trace feedback. It is not a claim that arbitrary
 third-party model providers or unrestricted external tools are safe; those
 integrations require a separate provider boundary and threat review.
+
+## Acceptance evidence
+
+- Responsibility ownership is visible from `GET /agents` and the dashboard
+  matrix.
+- Delegation edges are allow-listed and specialist chains require a completed
+  source trace before the next handoff.
+- Blocked, failed, and completed outcomes are stored with a trace ID and a
+  safe summary, while raw context remains absent.
+- Database migrations and browser/API tests cover the same project boundary
+  and guardrail outcomes described above.
