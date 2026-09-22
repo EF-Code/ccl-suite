@@ -3853,6 +3853,26 @@ def test_specialist_agents_return_project_scoped_results_and_traces() -> None:
     assert listed.json()[1]["trace_id"] == payload["trace_id"]
 
 
+def test_specialist_trace_listing_accepts_a_safe_limit() -> None:
+    project = create_project("Specialist trace limit project")
+    workflow = create_workflow(str(project["id"]))
+
+    for _ in range(3):
+        created = request(
+            "POST",
+            f"/workflows/{workflow['id']}/handoffs",
+            json={"target_agent": "intake"},
+        )
+        assert created.status_code == 201
+
+    limited = request("GET", f"/workflows/{workflow['id']}/handoffs?limit=2")
+    assert limited.status_code == 200
+    assert len(limited.json()) == 2
+
+    too_large = request("GET", f"/workflows/{workflow['id']}/handoffs?limit=51")
+    assert too_large.status_code == 422
+
+
 def test_specialist_guardrails_trace_blocked_injection_and_bad_delegation() -> None:
     project = create_project("Guardrail trace project")
     workflow = create_workflow(str(project["id"]))
