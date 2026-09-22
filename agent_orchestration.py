@@ -35,6 +35,7 @@ AGENT_NAMES: Final[tuple[str, ...]] = (
 AGENT_ACTOR_NAMES: Final[tuple[str, ...]] = ("orchestrator", *AGENT_NAMES)
 MAX_AGENT_INPUT_CHARACTERS: Final[int] = 500
 MAX_AGENT_OUTPUT_KEYS: Final[int] = 12
+MAX_AGENT_TRACE_RESULTS: Final[int] = 50
 
 
 @dataclass(frozen=True)
@@ -181,6 +182,7 @@ __all__ = [
     "AgentDefinition",
     "AgentInputBlockedError",
     "AgentName",
+    "MAX_AGENT_TRACE_RESULTS",
     "can_delegate",
     "get_agent_definition",
     "input_fingerprint",
