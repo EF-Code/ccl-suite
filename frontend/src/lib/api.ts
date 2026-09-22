@@ -1,5 +1,6 @@
 // Central API helpers - mirrors main.py contracts, no backend changes required
 export const API_BASE = ""; // same origin
+export const WORKFLOW_TRACE_LIMIT = 50;
 
 export function getOwnerId(): string {
   return localStorage.getItem("ccl-owner-id") || "";

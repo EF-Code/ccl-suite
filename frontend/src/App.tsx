@@ -14,7 +14,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Separator } from "@/components/ui/separator"
 import { OverviewDashboard } from "@/components/overview-dashboard"
 import { WorkflowOrchestrator } from "@/components/workflow-orchestrator"
-import { apiRequest, getOwnerId, setOwnerId, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
@@ -192,10 +192,10 @@ export default function App() {
       ])
       const entries = await Promise.all(workflowData.map(async (workflow) => {
         const [items, tools, actions, handoffs] = await Promise.all([
-          apiRequest<Approval[]>(`/workflows/${workflow.id}/approvals`),
-          apiRequest<WorkflowToolRun[]>(`/workflows/${workflow.id}/tools`),
-          apiRequest<WorkflowAction[]>(`/workflows/${workflow.id}/actions`),
-          apiRequest<AgentHandoff[]>(`/workflows/${workflow.id}/handoffs`),
+          apiRequest<Approval[]>(`/workflows/${workflow.id}/approvals?limit=${WORKFLOW_TRACE_LIMIT}`),
+          apiRequest<WorkflowToolRun[]>(`/workflows/${workflow.id}/tools?limit=${WORKFLOW_TRACE_LIMIT}`),
+          apiRequest<WorkflowAction[]>(`/workflows/${workflow.id}/actions?limit=${WORKFLOW_TRACE_LIMIT}`),
+          apiRequest<AgentHandoff[]>(`/workflows/${workflow.id}/handoffs?limit=${WORKFLOW_TRACE_LIMIT}`),
         ])
         return [workflow.id, items, tools, actions, handoffs] as const
       }))
