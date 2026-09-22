@@ -1,5 +1,5 @@
-import type { FormEvent } from "react"
-import { Check, GitBranch, Plus, RefreshCw, Send, X } from "lucide-react"
+import { useState, type FormEvent } from "react"
+import { BookOpen, Bot, Check, Database, FileText, GitBranch, History, LockKeyhole, Plus, RefreshCw, Send, ShieldCheck, Wrench, X } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import type { Approval, ApprovalDecision, Project, Workflow } from "@/lib/api"
+import { Textarea } from "@/components/ui/textarea"
+import type { AgentDefinition, AgentHandoff, AgentName, Approval, ApprovalDecision, Project, Workflow, WorkflowAction, WorkflowToolName, WorkflowToolRun } from "@/lib/api"
 
 type WorkflowApprovals = Record<string, Approval[]>
 
@@ -15,6 +16,10 @@ type WorkflowOrchestratorProps = {
   project: Project | null
   workflows: Workflow[]
   approvals: WorkflowApprovals
+  toolRuns: Record<string, WorkflowToolRun[]>
+  actions: Record<string, WorkflowAction[]>
+  agentDefinitions: AgentDefinition[]
+  agentHandoffs: Record<string, AgentHandoff[]>
   loading: boolean
   error: string
   decisionCodes: Record<string, string>
@@ -22,6 +27,11 @@ type WorkflowOrchestratorProps = {
   onRefresh: () => void
   onRequestApproval: (workflowId: string) => void
   onDecision: (approvalId: string, decision: ApprovalDecision) => void
+  onTransition: (workflowId: string, state: Workflow["state"]) => void
+  onRunTool: (workflowId: string, tool: WorkflowToolName, query?: string) => void
+  onDelegate: (workflowId: string, targetAgent: AgentName) => void
+  onRequestAction: (workflowId: string, actionCode: WorkflowAction["action_code"]) => void
+  onExecuteAction: (actionId: string) => void
   onDecisionCodeChange: (approvalId: string, value: string) => void
 }
 
@@ -31,10 +41,22 @@ function statusLabel(status: string): string {
 
 function statusTone(status: string): string {
   if (status === "approved") return "bg-emerald-100 text-emerald-800"
+  if (status === "executed") return "bg-emerald-100 text-emerald-800"
   if (status === "rejected") return "bg-rose-100 text-rose-800"
+  if (status === "blocked" || status === "failed") return "bg-rose-100 text-rose-800"
   if (status === "cancelled") return "bg-slate-100 text-slate-700"
-  if (status === "pending") return "bg-amber-100 text-amber-800"
+  if (status === "pending" || status === "pending_approval") return "bg-amber-100 text-amber-800"
   return "bg-teal-100 text-teal-800"
+}
+
+function toolLabel(tool: WorkflowToolName): string {
+  if (tool === "files.summary") return "File inventory"
+  if (tool === "knowledge.search") return "Knowledge search"
+  return "Research summary"
+}
+
+function actionLabel(action: WorkflowAction["action_code"]): string {
+  return `${action.charAt(0).toUpperCase()}${action.slice(1)}`
 }
 
 function formatDate(value: string): string {
@@ -51,6 +73,10 @@ export function WorkflowOrchestrator({
   project,
   workflows,
   approvals,
+  toolRuns,
+  actions,
+  agentDefinitions,
+  agentHandoffs,
   loading,
   error,
   decisionCodes,
@@ -58,14 +84,32 @@ export function WorkflowOrchestrator({
   onRefresh,
   onRequestApproval,
   onDecision,
+  onTransition,
+  onRunTool,
+  onDelegate,
+  onRequestAction,
+  onExecuteAction,
   onDecisionCodeChange,
 }: WorkflowOrchestratorProps) {
+  const [toolQuery, setToolQuery] = useState("")
   const approvalList = workflows.flatMap((workflow) => approvals[workflow.id] || [])
   const pendingCount = approvalList.filter((approval) => approval.status === "pending").length
   const decidedCount = approvalList.filter((approval) => approval.status !== "pending").length
   const definitionComplete = workflows.length > 0
   const requestComplete = approvalList.length > 0
   const decisionComplete = decidedCount > 0
+  const currentWorkflow = workflows[workflows.length - 1] || null
+  const nextStates: Record<Workflow["state"], Workflow["state"][]> = {
+    ready: ["in_progress", "review"],
+    in_progress: ["review"],
+    review: ["changes_required"],
+    changes_required: ["in_progress", "review"],
+    approved: ["archived"],
+    archived: [],
+  }
+  const currentToolRuns = currentWorkflow ? toolRuns[currentWorkflow.id] || [] : []
+  const currentActions = currentWorkflow ? actions[currentWorkflow.id] || [] : []
+  const currentHandoffs = currentWorkflow ? agentHandoffs[currentWorkflow.id] || [] : []
 
   return (
     <Card id="workflow-orchestrator" className="workspace-card major-panel">
@@ -125,6 +169,14 @@ export function WorkflowOrchestrator({
                 <div><strong className="block text-lg tracking-tight">{pendingCount}</strong><span className="text-[0.65rem] text-muted-foreground">pending</span></div>
                 <div><strong className="block text-lg tracking-tight">{decidedCount}</strong><span className="text-[0.65rem] text-muted-foreground">decided</span></div>
               </div>
+              {currentWorkflow && <div id="workflow-state-controls" className="mt-4 flex flex-wrap items-center gap-2 border-t border-teal-900/10 pt-3">
+                <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Current state</span>
+                <Badge variant="outline" data-workflow-state={currentWorkflow.state} className="capitalize">{currentWorkflow.state.replaceAll("_", " ")}</Badge>
+                {nextStates[currentWorkflow.state].map((state) => <Button key={state} type="button" size="sm" variant="outline" onClick={() => onTransition(currentWorkflow.id, state)} disabled={loading}>
+                  Move to {state.replaceAll("_", " ")}
+                </Button>)}
+                <span className="text-[0.68rem] text-muted-foreground">Approved and archived states require the approval gate.</span>
+              </div>}
             </section>
 
             {error && <Alert id="workflow-error" className="border-rose-200 bg-rose-50 text-rose-900"><X className="h-4 w-4" /><AlertDescription className="text-xs">{error}</AlertDescription></Alert>}
@@ -222,10 +274,152 @@ export function WorkflowOrchestrator({
                 })}
               </section>
             </div>
+
+            {currentWorkflow && <div className="grid gap-5 xl:grid-cols-2">
+              <Card id="workflow-agents-card" className="border-border bg-card/70 xl:col-span-2">
+                <CardHeader className="gap-2 pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="panel-label">Specialist network</p>
+                      <CardTitle className="flex items-center gap-1.5 text-base"><Bot className="h-4 w-4 text-primary" />Guarded agent handoffs</CardTitle>
+                    </div>
+                    <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-800"><LockKeyhole className="mr-1 h-3 w-3" />Allow-listed</Badge>
+                  </div>
+                  <CardDescription className="text-xs">Delegate bounded project checks to one specialist at a time. Each role has a fixed responsibility, least-privilege tools, and a traceable handoff.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {agentDefinitions.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/30 p-4 text-xs text-muted-foreground">Loading the responsibility matrix…</div>
+                  ) : (
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      {agentDefinitions.map((definition) => (
+                        <div key={definition.agent} data-agent-definition={definition.agent} className="flex flex-col rounded-xl border border-border bg-background/80 p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold">{definition.label}</p>
+                              <p className="mt-1 text-[0.68rem] leading-relaxed text-muted-foreground">{definition.responsibility}</p>
+                            </div>
+                            <span className="rounded-md bg-indigo-50 px-1.5 py-1 font-mono text-[0.58rem] text-indigo-800">{definition.agent}</span>
+                          </div>
+                          <div className="mt-3 flex-1 border-t border-border pt-3">
+                            <p className="text-[0.62rem] font-bold uppercase tracking-[0.14em] text-muted-foreground">Permitted tools</p>
+                            <p className="mt-1 min-h-8 text-[0.68rem] text-foreground">{definition.allowed_tools.length ? definition.allowed_tools.join(" · ") : "No direct tools"}</p>
+                          </div>
+                          <Button id={`workflow-agent-${definition.agent}`} type="button" size="sm" variant="outline" className="mt-3" onClick={() => onDelegate(currentWorkflow.id, definition.agent)} disabled={loading}>
+                            <Bot className="mr-1.5 h-3.5 w-3.5" />Run specialist
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div id="workflow-agent-handoffs" className="space-y-2" aria-live="polite">
+                    <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.16em] text-muted-foreground">Handoff traces</p>
+                      <span className="text-[0.68rem] text-muted-foreground">{currentHandoffs.length} run{currentHandoffs.length === 1 ? "" : "s"}</span>
+                    </div>
+                    {currentHandoffs.length === 0 ? <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/30 p-3 text-xs text-muted-foreground">No specialist handoffs yet. Run a role above to attach a structured result to this workflow.</div> : currentHandoffs.slice(0, 6).map((handoff) => (
+                      <div key={handoff.id} data-agent-handoff-id={handoff.id} data-agent-status={handoff.status} className="rounded-xl border border-border bg-background/80 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2"><Badge className={statusTone(handoff.status)}>{statusLabel(handoff.status)}</Badge><span className="text-xs font-semibold">{handoff.target_agent.replaceAll("_", " ")} specialist</span></div>
+                          <span className="font-mono text-[0.62rem] text-muted-foreground" title={handoff.trace_id}>trace:{handoff.trace_id.slice(0, 10)}</span>
+                        </div>
+                        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{handoff.output_summary || "No summary returned."}</p>
+                        {handoff.blocked_reason && <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[0.68rem] text-rose-900">Guardrail: {handoff.blocked_reason}</p>}
+                        <div className="mt-2 flex items-center gap-2 text-[0.65rem] text-muted-foreground"><History className="h-3 w-3" />{formatDate(handoff.created_at)} · input fingerprinted</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card id="workflow-tools-card" className="border-border bg-card/70">
+                <CardHeader className="gap-2 pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="panel-label">Connected services</p>
+                      <CardTitle className="flex items-center gap-1.5 text-base"><Wrench className="h-4 w-4 text-primary" />Read-only workflow tools</CardTitle>
+                    </div>
+                    <Badge variant="outline" className="border-teal-200 bg-teal-50 text-teal-800">Max 3 attempts</Badge>
+                  </div>
+                  <CardDescription className="text-xs">Run project-scoped file, knowledge, and research lookups. Each request leaves a trace without performing a write.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Button id="workflow-tool-files" type="button" variant="outline" size="sm" onClick={() => onRunTool(currentWorkflow.id, "files.summary")} disabled={loading}>
+                      <FileText className="mr-1.5 h-3.5 w-3.5" />Files
+                    </Button>
+                    <Button id="workflow-tool-research" type="button" variant="outline" size="sm" onClick={() => onRunTool(currentWorkflow.id, "research.summary")} disabled={loading}>
+                      <Database className="mr-1.5 h-3.5 w-3.5" />Research
+                    </Button>
+                    <Button id="workflow-tool-knowledge" type="button" variant="outline" size="sm" onClick={() => { onRunTool(currentWorkflow.id, "knowledge.search", toolQuery.trim()); setToolQuery("") }} disabled={loading || !toolQuery.trim()}>
+                      <BookOpen className="mr-1.5 h-3.5 w-3.5" />Search knowledge
+                    </Button>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="workflow-tool-query" className="text-xs">Knowledge query</Label>
+                    <Textarea id="workflow-tool-query" value={toolQuery} onChange={(event) => setToolQuery(event.target.value)} rows={2} maxLength={500} placeholder="Ask only about approved project sources…" />
+                    <p className="text-[0.68rem] text-muted-foreground">Knowledge search stays bounded to approved sources and records only a safe result summary.</p>
+                  </div>
+                  <div id="workflow-tool-runs" className="space-y-2" aria-live="polite">
+                    <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.16em] text-muted-foreground">Recent traces</p>
+                      <span className="text-[0.68rem] text-muted-foreground">{currentToolRuns.length} run{currentToolRuns.length === 1 ? "" : "s"}</span>
+                    </div>
+                    {currentToolRuns.length === 0 ? <div className="rounded-xl border border-dashed border-teal-200 bg-teal-50/30 p-3 text-xs text-muted-foreground">No tool calls yet. Run a read-only lookup to attach its trace to this workflow.</div> : currentToolRuns.slice(0, 5).map((run) => (
+                      <div key={run.id} data-tool-run-id={run.id} className="rounded-xl border border-border bg-background/80 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2"><Badge data-tool-status={run.status} className={statusTone(run.status)}>{statusLabel(run.status)}</Badge><span className="text-xs font-semibold">{toolLabel(run.tool_name)}</span></div>
+                          <span className="font-mono text-[0.62rem] text-muted-foreground" title={run.trace_id}>trace:{run.trace_id.slice(0, 10)}</span>
+                        </div>
+                        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{run.output_summary || "No summary returned."}</p>
+                        <div className="mt-2 flex items-center gap-2 text-[0.65rem] text-muted-foreground"><History className="h-3 w-3" />{run.attempt_count}/{run.max_attempts} attempts · {formatDate(run.created_at)}{run.error_code ? ` · ${run.error_code}` : ""}</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card id="workflow-actions-card" className="border-border bg-card/70">
+                <CardHeader className="gap-2 pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="panel-label">Safety boundary</p>
+                      <CardTitle className="flex items-center gap-1.5 text-base"><ShieldCheck className="h-4 w-4 text-primary" />Human approval gate</CardTitle>
+                    </div>
+                    <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">No auto-execution</Badge>
+                  </div>
+                  <CardDescription className="text-xs">Sending, deleting, replacing, publishing, archiving, and approving always pause as an explicit action intent.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {(["send", "delete", "replace", "publish", "archive", "approve"] as WorkflowAction["action_code"][]).map((action) => <Button key={action} id={`workflow-action-${action}`} type="button" variant="outline" size="sm" onClick={() => onRequestAction(currentWorkflow.id, action)} disabled={loading}>
+                      {actionLabel(action)}
+                    </Button>)}
+                  </div>
+                  <div id="workflow-actions-list" className="space-y-2" aria-live="polite">
+                    <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.16em] text-muted-foreground">Action intents</p>
+                      <span className="text-[0.68rem] text-muted-foreground">{currentActions.length} record{currentActions.length === 1 ? "" : "s"}</span>
+                    </div>
+                    {currentActions.length === 0 ? <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/30 p-3 text-xs text-muted-foreground">No protected action has been requested. The controls above create a reviewable intent instead of acting immediately.</div> : currentActions.slice(0, 5).map((action) => (
+                      <div key={action.id} data-workflow-action-id={action.id} data-action-status={action.status} className="rounded-xl border border-border bg-background/80 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2"><Badge className={statusTone(action.status)}>{statusLabel(action.status)}</Badge><span className="text-xs font-semibold">{actionLabel(action.action_code)} action</span></div>
+                          <span className="font-mono text-[0.62rem] text-muted-foreground">{action.target_ref}</span>
+                        </div>
+                        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{action.reason}</p>
+                        {action.status === "pending_approval" && <p data-action-approval-id={action.approval_id || undefined} className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[0.68rem] text-amber-900">Awaiting reviewer approval. The action cannot execute while it is pending.</p>}
+                        {action.status === "approved" && <Button id={`workflow-action-execute-${action.id}`} type="button" size="sm" className="mt-3" onClick={() => onExecuteAction(action.id)} disabled={loading}><Check className="mr-1.5 h-3.5 w-3.5" />Record approved execution</Button>}
+                        {action.result_summary && <p className="mt-2 text-[0.68rem] text-muted-foreground">{action.result_summary}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>}
           </>
         )}
       </CardContent>
     </Card>
   )
 }
-
