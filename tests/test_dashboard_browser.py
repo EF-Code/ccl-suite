@@ -587,10 +587,13 @@ def test_dashboard_runs_guarded_specialist_handoff(dashboard_page: Page) -> None
     assert workflow_id
 
     expect(page.locator("#workflow-agents-card")).to_contain_text("Guarded agent handoffs")
+    expect(page.locator("[data-agent-matrix-summary]")).to_contain_text("4 registered roles")
+    expect(page.locator("#workflow-agent-intake")).to_have_attribute("data-agent-target", "intake")
     page.locator("#workflow-agent-intake").click()
     completed_trace = page.locator("#workflow-agent-handoffs [data-agent-status='completed']").first
     completed_trace.wait_for(state="visible")
     expect(completed_trace).to_contain_text("intake specialist")
+    expect(completed_trace.locator("[data-agent-route]")).to_contain_text("orchestrator")
     expect(completed_trace).to_contain_text("input fingerprinted")
 
     blocked = page.request.post(
