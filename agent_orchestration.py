@@ -122,6 +122,8 @@ def validate_agent_input(input_ref: str | None) -> str | None:
         raise ValueError("Agent input is too long.")
     if "\x00" in normalized or "\\" in normalized:
         raise ValueError("Agent input contains an unsafe path character.")
+    if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        raise ValueError("Agent input contains an unsafe control character.")
     if normalized.startswith("/") or any(
         segment in {".", ".."} for segment in normalized.split("/")
     ):
