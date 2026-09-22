@@ -310,7 +310,7 @@ export function WorkflowOrchestrator({
                             <p className="text-[0.62rem] font-bold uppercase tracking-[0.14em] text-muted-foreground">Permitted tools</p>
                             {definition.allowed_tools.length ? <div className="mt-2 flex min-h-8 flex-wrap content-start gap-1">{definition.allowed_tools.map((tool) => <Badge key={tool} variant="outline" className="border-indigo-200 bg-indigo-50/70 px-1.5 py-0.5 text-[0.58rem] text-indigo-800">{tool}</Badge>)}</div> : <p className="mt-1 min-h-8 text-[0.68rem] text-foreground">No direct tools</p>}
                           </div>
-                          <Button id={`workflow-agent-${definition.agent}`} type="button" size="sm" variant="outline" className="mt-3" onClick={() => onDelegate(currentWorkflow.id, definition.agent)} disabled={loading}>
+                          <Button id={`workflow-agent-${definition.agent}`} data-agent-target={definition.agent} aria-label={`Run ${definition.label}`} type="button" size="sm" variant="outline" className="mt-3" onClick={() => onDelegate(currentWorkflow.id, definition.agent)} disabled={loading}>
                             <Bot className="mr-1.5 h-3.5 w-3.5" />Run specialist
                           </Button>
                         </div>
@@ -323,7 +323,7 @@ export function WorkflowOrchestrator({
                       <span className="text-[0.68rem] text-muted-foreground">{currentHandoffs.length} run{currentHandoffs.length === 1 ? "" : "s"}</span>
                     </div>
                     {currentHandoffs.length === 0 ? <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/30 p-3 text-xs text-muted-foreground">No specialist handoffs yet. Run a role above to attach a structured result to this workflow.</div> : currentHandoffs.slice(0, 6).map((handoff) => (
-                      <div key={handoff.id} data-agent-handoff-id={handoff.id} data-agent-status={handoff.status} className="rounded-xl border border-border bg-background/80 p-3">
+                      <div key={handoff.id} data-agent-handoff-id={handoff.id} data-agent-source={handoff.source_agent} data-agent-status={handoff.status} className="rounded-xl border border-border bg-background/80 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex items-center gap-2"><Badge className={statusTone(handoff.status)}>{statusLabel(handoff.status)}</Badge><span className="text-xs font-semibold">{agentLabel(handoff.target_agent)} specialist</span></div>
                           <span className="font-mono text-[0.62rem] text-muted-foreground" title={handoff.trace_id}>trace:{handoff.trace_id.slice(0, 10)}</span>
