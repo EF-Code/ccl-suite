@@ -41,6 +41,8 @@ def test_agent_input_rejects_injection_and_traversal_without_raw_trace_text() ->
 
     with pytest.raises(ValueError):
         validate_agent_input("../private/project")
+    with pytest.raises(ValueError, match="control character"):
+        validate_agent_input("project\nreference")
 
     summary = input_summary("private source context")
     assert "private source context" not in summary
