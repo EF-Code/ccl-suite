@@ -13,10 +13,22 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from agent_orchestration import (
+    AGENT_DEFINITIONS,
+    AgentInputBlockedError,
+    can_delegate,
+    input_fingerprint,
+    input_summary,
+    validate_agent_input,
+    validate_agent_result,
+)
 from api_schemas import (
     ApprovalCreate,
     ApprovalDecisionRequest,
     ApprovalResponse,
+    AgentDefinitionResponse,
+    AgentHandoffCreate,
+    AgentHandoffResponse,
     BackupCreate,
     BackupResponse,
     BackupRestoreCreate,
@@ -81,7 +93,12 @@ from api_schemas import (
     UserResponse,
     UploadResponse,
     UploadPolicyResponse,
+    WorkflowActionCreate,
+    WorkflowActionResponse,
     WorkflowCreate,
+    WorkflowStateTransitionRequest,
+    WorkflowToolRequest,
+    WorkflowToolRunResponse,
     WorkflowResponse,
 )
 from config import ENVIRONMENT
@@ -185,6 +202,7 @@ from research_review import (
 )
 from logger import logger
 from models import (
+    AgentHandoff,
     Approval,
     Backup,
     DocumentChunk,
@@ -201,7 +219,15 @@ from models import (
     SecurityEvent,
     User,
     Workflow,
+    WorkflowAction,
+    WorkflowToolRun,
     utc_now,
+)
+from workflow_orchestration import (
+    MAX_TOOL_ATTEMPTS,
+    WORKFLOW_TOOLS,
+    action_requires_approval,
+    can_transition,
 )
 from permissions import ROLES, canonical_role, permission_matrix, role_can
 from semantic_search import (
@@ -780,6 +806,11 @@ async def create_project(
             name=project.title,
             storage_slug=storage_slug,
             description=project.description,
+            category=project.category,
+            scope=project.scope,
+            deadline=project.deadline,
+            outputs=project.outputs,
+            responsible_person=project.responsible_person,
         ),
         "Project",
     )
@@ -859,6 +890,237 @@ def require_project_workflow_access(
         denial_action=denial_action,
     )
     return project, workflow
+
+
+def workflow_tool_run_response(
+    run: WorkflowToolRun,
+    result: dict[str, object] | None = None,
+) -> WorkflowToolRunResponse:
+    """Translate a persisted tool trace without exposing stored source text."""
+
+    return WorkflowToolRunResponse(
+        id=run.id,
+        project_id=run.project_id,
+        workflow_id=run.workflow_id,
+        requested_by_id=run.requested_by_id,
+        trace_id=run.trace_id,
+        tool_name=run.tool_name,
+        status=run.status,
+        attempt_count=run.attempt_count,
+        max_attempts=run.max_attempts,
+        input_summary=run.input_summary,
+        output_summary=run.output_summary,
+        error_code=run.error_code,
+        result=result or {},
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+    )
+
+
+def workflow_action_response(
+    db: Session,
+    action: WorkflowAction,
+) -> WorkflowActionResponse:
+    """Return one action intent together with its approval record identifier."""
+
+    approval = db.scalar(select(Approval).where(Approval.action_id == action.id))
+    return WorkflowActionResponse(
+        id=action.id,
+        project_id=action.project_id,
+        workflow_id=action.workflow_id,
+        requested_by_id=action.requested_by_id,
+        executed_by_id=action.executed_by_id,
+        action_code=action.action_code,
+        target_ref=action.target_ref,
+        reason=action.reason,
+        idempotency_key=action.idempotency_key,
+        status=action.status,
+        approval_id=approval.id if approval else None,
+        result_summary=action.result_summary,
+        created_at=action.created_at,
+        approved_at=action.approved_at,
+        executed_at=action.executed_at,
+    )
+
+
+def agent_handoff_response(handoff: AgentHandoff) -> AgentHandoffResponse:
+    """Translate one specialist trace without exposing raw handoff input."""
+
+    return AgentHandoffResponse(
+        id=handoff.id,
+        project_id=handoff.project_id,
+        workflow_id=handoff.workflow_id,
+        requested_by_id=handoff.requested_by_id,
+        trace_id=handoff.trace_id,
+        source_agent=handoff.source_agent,
+        target_agent=handoff.target_agent,
+        status=handoff.status,
+        input_summary=handoff.input_summary,
+        output_summary=handoff.output_summary,
+        blocked_reason=handoff.blocked_reason,
+        result=handoff.result or {},
+        created_at=handoff.created_at,
+        completed_at=handoff.completed_at,
+    )
+
+
+def build_specialist_result(
+    db: Session,
+    project: Project,
+    workflow: Workflow,
+    agent: str,
+) -> dict[str, object]:
+    """Build a deterministic, project-scoped result for one specialist."""
+
+    if agent == "intake":
+        missing_field_count = sum(
+            (
+                not bool(project.category.strip()),
+                not bool(project.scope.strip()),
+                project.deadline is None,
+                not bool(project.outputs),
+                not bool(project.responsible_person.strip()),
+            )
+        )
+        return {
+            "agent": agent,
+            "status": "completed",
+            "summary": "Project intake fields are ready for specialist review.",
+            "metrics": {
+                "intake_complete": missing_field_count == 0,
+                "missing_field_count": missing_field_count,
+                "output_count": len(project.outputs or []),
+            },
+        }
+
+    if agent == "research":
+        reviews = list_records(
+            db,
+            select(ResearchReview).where(ResearchReview.project_id == project.id),
+        )
+        by_status = Counter(review.status for review in reviews)
+        return {
+            "agent": agent,
+            "status": "completed",
+            "summary": "Research review state was summarized for quality control.",
+            "metrics": {
+                "review_count": len(reviews),
+                "needs_review": by_status.get("needs_review", 0),
+                "changes_requested": by_status.get("changes_requested", 0),
+                "verified": by_status.get("verified", 0),
+                "approved": by_status.get("approved", 0),
+            },
+            "tool": "research.summary",
+        }
+
+    if agent == "knowledge":
+        sources = list_records(
+            db,
+            select(KnowledgeSource).where(KnowledgeSource.project_id == project.id),
+        )
+        by_status = Counter(source.approval_status for source in sources)
+        return {
+            "agent": agent,
+            "status": "completed",
+            "summary": "Approved knowledge-source readiness was summarized.",
+            "metrics": {
+                "source_count": len(sources),
+                "approved_source_count": by_status.get("approved", 0),
+                "pending_source_count": by_status.get("pending", 0),
+                "rejected_source_count": by_status.get("rejected", 0),
+            },
+            "tool": "knowledge.search",
+        }
+
+    if agent == "quality_control":
+        pending_approvals = list_records(
+            db,
+            select(Approval).where(
+                Approval.workflow_id == workflow.id,
+                Approval.status == "pending",
+            ),
+        )
+        pending_actions = list_records(
+            db,
+            select(WorkflowAction).where(
+                WorkflowAction.workflow_id == workflow.id,
+                WorkflowAction.status == "pending_approval",
+            ),
+        )
+        failed_tools = list_records(
+            db,
+            select(WorkflowToolRun).where(
+                WorkflowToolRun.workflow_id == workflow.id,
+                WorkflowToolRun.status == "failed",
+            ),
+        )
+        return {
+            "agent": agent,
+            "status": "completed",
+            "summary": "Workflow readiness and approval blockers were checked.",
+            "metrics": {
+                "workflow_state": workflow.state,
+                "pending_approval_count": len(pending_approvals),
+                "pending_action_count": len(pending_actions),
+                "failed_tool_count": len(failed_tools),
+            },
+        }
+
+    raise ValueError("Agent is not registered.")
+
+
+def run_workflow_tool(
+    db: Session,
+    project: Project,
+    tool_request: WorkflowToolRequest,
+) -> tuple[dict[str, object], str]:
+    """Run one allow-listed read-only service tool and return a safe summary."""
+
+    if tool_request.tool not in WORKFLOW_TOOLS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Workflow tool is not allow-listed.",
+        )
+
+    if tool_request.tool == "files.summary":
+        records = list_records(
+            db,
+            select(File).where(File.project_id == project.id, File.status == "active"),
+        )
+        total_bytes = sum(record.size_bytes for record in records)
+        result = {
+            "tool": tool_request.tool,
+            "project_id": str(project.id),
+            "active_file_count": len(records),
+            "total_bytes": total_bytes,
+        }
+        return result, f"active_files:{len(records)} total_bytes:{total_bytes}"
+
+    if tool_request.tool == "knowledge.search":
+        search_result = retrieve_project_knowledge(
+            db,
+            project,
+            SemanticSearchRequest(query=tool_request.query or "", limit=5),
+        )
+        result = search_result.model_dump(mode="json")
+        return result, f"search_results:{search_result.result_count}"
+
+    reviews = list_records(
+        db,
+        select(ResearchReview)
+        .where(ResearchReview.project_id == project.id)
+        .order_by(ResearchReview.created_at.desc(), ResearchReview.id),
+    )
+    by_status = {state: 0 for state in ("needs_review", "changes_requested", "verified", "approved")}
+    for review in reviews:
+        by_status[review.status] = by_status.get(review.status, 0) + 1
+    result = {
+        "tool": tool_request.tool,
+        "project_id": str(project.id),
+        "review_count": len(reviews),
+        "reviews_by_status": by_status,
+    }
+    return result, f"reviews:{len(reviews)}"
 
 
 def require_approved_knowledge_source(
@@ -3477,14 +3739,28 @@ async def create_approval(
             detail="An approval request is already pending for this workflow.",
         )
 
-    created_approval = persist_record(
-        db,
-        Approval(
-            workflow_id=workflow_record.id,
-            requested_by_id=requested_by_id,
-        ),
-        "Approval",
+    if workflow_record.state == "archived":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived workflows cannot receive new approvals.",
+        )
+    workflow_record.state = "review"
+    created_approval = Approval(
+        workflow_id=workflow_record.id,
+        requested_by_id=requested_by_id,
     )
+    db.add(workflow_record)
+    db.add(created_approval)
+    try:
+        db.commit()
+        db.refresh(created_approval)
+    except IntegrityError as exc:
+        db.rollback()
+        logger.error("Approval request could not be saved for workflow %s.", workflow_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Approval request could not be saved safely.",
+        ) from exc
     return ApprovalResponse.model_validate(created_approval)
 
 
@@ -3549,12 +3825,576 @@ async def decide_approval(
         denial_action="approval.decide",
     )
 
+    action = None
+    if approval.action_id is not None:
+        action = require_record(db, WorkflowAction, approval.action_id, "Workflow action was not found.")
+        if action.workflow_id != _workflow.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow action was not found.",
+            )
+
     approval.status = decision.status
     approval.approved_by_id = approved_by_id
     approval.decision_code = decision.decision_code
     approval.decided_at = utc_now()
-    updated_approval = persist_record(db, approval, "Approval")
+    if action is not None:
+        action.status = {
+            "approved": "approved",
+            "rejected": "rejected",
+            "cancelled": "cancelled",
+        }[decision.status]
+        if decision.status == "approved":
+            action.approved_at = approval.decided_at
+            action.result_summary = "Approved; explicit execution is still required."
+        else:
+            action.result_summary = f"Action {decision.status} by reviewer."
+
+    target_state = {
+        "approved": "approved" if action is None or action.action_code == "approve" else _workflow.state,
+        "rejected": "changes_required",
+        "cancelled": "in_progress",
+    }[decision.status]
+    if target_state != _workflow.state:
+        if not can_transition(_workflow.state, target_state):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Workflow cannot move from {_workflow.state} to {target_state}.",
+            )
+        _workflow.state = target_state
+
+    db.add(approval)
+    if action is not None:
+        db.add(action)
+    db.add(_workflow)
+    try:
+        db.commit()
+        db.refresh(approval)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Approval decision could not be saved for %s.", approval_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Approval decision could not be saved.",
+        ) from exc
+    updated_approval = approval
     return ApprovalResponse.model_validate(updated_approval)
+
+
+@app.post(
+    "/workflows/{workflow_id}/state",
+    response_model=WorkflowResponse,
+    tags=["workflows"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def transition_workflow_state(
+    workflow_id: UUID,
+    transition: WorkflowStateTransitionRequest,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
+) -> WorkflowResponse:
+    """Move a workflow through its allow-listed non-approval states."""
+
+    _, workflow = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="workflow.state",
+    )
+    if transition.state in {"approved", "archived"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Approved and archived states require the human approval gate.",
+        )
+    if not can_transition(workflow.state, transition.state):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Workflow cannot move from {workflow.state} to {transition.state}.",
+        )
+    workflow.state = transition.state
+    try:
+        db.add(workflow)
+        db.commit()
+        db.refresh(workflow)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Workflow state could not be saved for %s.", workflow_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Workflow state could not be saved.",
+        ) from exc
+    return WorkflowResponse.model_validate(workflow)
+
+
+@app.post(
+    "/workflows/{workflow_id}/tools",
+    response_model=WorkflowToolRunResponse,
+    tags=["workflow-tools"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def run_workflow_tool_endpoint(
+    workflow_id: UUID,
+    tool_request: WorkflowToolRequest,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
+) -> WorkflowToolRunResponse:
+    """Call one read-only project service with a bounded retry budget."""
+
+    project, workflow = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="workflow.tool",
+    )
+    attempts_allowed = min(tool_request.max_attempts, MAX_TOOL_ATTEMPTS)
+    trace_id = uuid4().hex
+    result: dict[str, object] = {}
+    output_summary = ""
+    error_code: str | None = None
+    run_status = "failed"
+    attempt_count = 0
+
+    for attempt_count in range(1, attempts_allowed + 1):
+        try:
+            result, output_summary = run_workflow_tool(db, project, tool_request)
+            run_status = "succeeded"
+            error_code = None
+            break
+        except HTTPException as exc:
+            error_code = f"http_{exc.status_code}"
+            output_summary = "Tool returned a bounded application error."
+        except (SQLAlchemyError, ValueError) as exc:
+            error_code = type(exc).__name__.lower()
+            output_summary = "Tool failed without persisting source content."
+        except Exception:
+            error_code = "tool_execution_failed"
+            output_summary = "Tool failed without persisting source content."
+
+    run = WorkflowToolRun(
+        project_id=project.id,
+        workflow_id=workflow.id,
+        requested_by_id=actor.id,
+        trace_id=trace_id,
+        tool_name=tool_request.tool,
+        status=run_status,
+        attempt_count=attempt_count or 1,
+        max_attempts=attempts_allowed,
+        input_summary=(
+            f"query_supplied:{tool_request.query is not None} "
+            f"max_attempts:{attempts_allowed}"
+        ),
+        output_summary=output_summary,
+        error_code=error_code,
+        completed_at=utc_now(),
+    )
+    try:
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Workflow tool trace could not be saved for %s.", workflow_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Workflow tool trace could not be saved.",
+        ) from exc
+    return workflow_tool_run_response(run, result)
+
+
+@app.get(
+    "/workflows/{workflow_id}/tools",
+    response_model=list[WorkflowToolRunResponse],
+    tags=["workflow-tools"],
+)
+async def list_workflow_tools(
+    workflow_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
+) -> list[WorkflowToolRunResponse]:
+    """List trace metadata for one project-scoped workflow."""
+
+    _, workflow = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="workflow.tool.list",
+    )
+    runs = list_records(
+        db,
+        select(WorkflowToolRun)
+        .where(WorkflowToolRun.workflow_id == workflow.id)
+        .order_by(WorkflowToolRun.created_at.desc(), WorkflowToolRun.id),
+    )
+    return [workflow_tool_run_response(run) for run in runs]
+
+
+@app.post(
+    "/workflows/{workflow_id}/actions",
+    response_model=WorkflowActionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["workflow-actions"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def request_workflow_action(
+    workflow_id: UUID,
+    action_request: WorkflowActionCreate,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
+) -> WorkflowActionResponse:
+    """Create an idempotent high-impact action and pause it for approval."""
+
+    if not action_requires_approval(action_request.action_code):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{action_request.action_code} is not an approval-gated action.",
+        )
+    project, workflow = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="workflow.action.request",
+    )
+    if workflow.state == "archived":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived workflows cannot receive new actions.",
+        )
+    if action_request.idempotency_key:
+        existing = db.scalar(
+            select(WorkflowAction).where(
+                WorkflowAction.workflow_id == workflow.id,
+                WorkflowAction.idempotency_key == action_request.idempotency_key,
+            )
+        )
+        if existing is not None:
+            return workflow_action_response(db, existing)
+
+    pending_approval = db.scalar(
+        select(Approval.id).where(
+            Approval.workflow_id == workflow.id,
+            Approval.status == "pending",
+        )
+    )
+    if pending_approval is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An approval request is already pending for this workflow.",
+        )
+
+    action = WorkflowAction(
+        project_id=project.id,
+        workflow_id=workflow.id,
+        requested_by_id=actor.id,
+        action_code=action_request.action_code,
+        target_ref=action_request.target_ref,
+        reason=action_request.reason,
+        idempotency_key=action_request.idempotency_key,
+        status="pending_approval",
+    )
+    if workflow.state in {"ready", "in_progress", "changes_required"}:
+        workflow.state = "review"
+    db.add(action)
+    db.flush()
+    db.add(
+        Approval(
+            workflow_id=workflow.id,
+            action_id=action.id,
+            requested_by_id=actor.id,
+        )
+    )
+    db.add(workflow)
+    try:
+        db.commit()
+        db.refresh(action)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The workflow action could not be queued twice.",
+        ) from exc
+    return workflow_action_response(db, action)
+
+
+@app.get(
+    "/workflows/{workflow_id}/actions",
+    response_model=list[WorkflowActionResponse],
+    tags=["workflow-actions"],
+)
+async def list_workflow_actions(
+    workflow_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
+) -> list[WorkflowActionResponse]:
+    """List approval-gated action intents for one workflow."""
+
+    _, workflow = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="workflow.action.list",
+    )
+    actions = list_records(
+        db,
+        select(WorkflowAction)
+        .where(WorkflowAction.workflow_id == workflow.id)
+        .order_by(WorkflowAction.created_at.desc(), WorkflowAction.id),
+    )
+    return [workflow_action_response(db, action) for action in actions]
+
+
+@app.post(
+    "/workflow-actions/{action_id}/execute",
+    response_model=WorkflowActionResponse,
+    tags=["workflow-actions"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def execute_workflow_action(
+    action_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("approval.decide")),
+    db: Session = Depends(get_db),
+) -> WorkflowActionResponse:
+    """Record explicit execution only after a reviewer approved the intent."""
+
+    action = require_record(db, WorkflowAction, action_id, "Workflow action was not found.")
+    project, workflow = require_project_workflow_access(
+        db,
+        request,
+        action.workflow_id,
+        actor,
+        denial_action="workflow.action.execute",
+    )
+    approval = db.scalar(select(Approval).where(Approval.action_id == action.id))
+    if approval is None or approval.status != "approved" or action.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The action must be human-approved before execution.",
+        )
+    if workflow.state == "archived" and action.action_code != "archive":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived workflows cannot execute another action.",
+        )
+    action.status = "executed"
+    action.executed_by_id = actor.id
+    action.executed_at = utc_now()
+    action.result_summary = (
+        "Approved action intent recorded; no external destructive side effect was performed."
+    )
+    if action.action_code == "archive" and workflow.state != "archived":
+        if not can_transition(workflow.state, "archived"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Workflow cannot move from {workflow.state} to archived.",
+            )
+        workflow.state = "archived"
+    if action.action_code == "approve" and workflow.state != "approved":
+        if not can_transition(workflow.state, "approved"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Workflow cannot move from {workflow.state} to approved.",
+            )
+        workflow.state = "approved"
+    db.add(action)
+    db.add(workflow)
+    try:
+        db.commit()
+        db.refresh(action)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Workflow action execution could not be saved for %s.", action_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Workflow action execution could not be saved.",
+        ) from exc
+    return workflow_action_response(db, action)
+
+
+@app.get(
+    "/agents",
+    response_model=list[AgentDefinitionResponse],
+    tags=["agents"],
+)
+async def list_agents(
+    actor: User = Depends(require_permission("workflow.manage")),
+) -> list[AgentDefinitionResponse]:
+    """Expose the specialist responsibility matrix without executable code."""
+
+    del actor
+    return [
+        AgentDefinitionResponse(
+            agent=definition.agent,
+            label=definition.label,
+            responsibility=definition.responsibility,
+            allowed_tools=list(definition.allowed_tools),
+            handoff_targets=list(definition.handoff_targets),
+        )
+        for definition in AGENT_DEFINITIONS
+    ]
+
+
+@app.post(
+    "/workflows/{workflow_id}/handoffs",
+    response_model=AgentHandoffResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["agents"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def create_agent_handoff(
+    workflow_id: UUID,
+    handoff_request: AgentHandoffCreate,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
+) -> AgentHandoffResponse:
+    """Run one deterministic specialist with explicit delegation guardrails."""
+
+    project, workflow = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="agent.handoff",
+    )
+    trace_id = uuid4().hex
+    raw_input = handoff_request.input_ref
+    handoff_status = "completed"
+    blocked_reason: str | None = None
+    result: dict[str, object] = {}
+    output_summary = ""
+
+    try:
+        validate_agent_input(raw_input)
+    except AgentInputBlockedError as exc:
+        handoff_status = "blocked"
+        blocked_reason = f"input_rule:{exc.reason_code}"[:128]
+        output_summary = "Handoff blocked before specialist execution."
+    except ValueError:
+        handoff_status = "blocked"
+        blocked_reason = "invalid_input"
+        output_summary = "Handoff blocked before specialist execution."
+
+    if handoff_status == "completed" and not can_delegate(
+        handoff_request.source_agent,
+        handoff_request.target_agent,
+    ):
+        handoff_status = "blocked"
+        blocked_reason = "delegation_not_allowlisted"
+        output_summary = "Handoff blocked because the delegation edge is not approved."
+
+    if handoff_status == "completed" and handoff_request.source_agent != "orchestrator":
+        source_trace = db.scalar(
+            select(AgentHandoff.id).where(
+                AgentHandoff.workflow_id == workflow.id,
+                AgentHandoff.target_agent == handoff_request.source_agent,
+                AgentHandoff.status == "completed",
+            )
+        )
+        if source_trace is None:
+            handoff_status = "blocked"
+            blocked_reason = "source_handoff_missing"
+            output_summary = "Handoff blocked because the source specialist has not completed."
+
+    if handoff_status == "completed" and workflow.state == "archived":
+        handoff_status = "blocked"
+        blocked_reason = "workflow_archived"
+        output_summary = "Handoff blocked because the workflow is archived."
+
+    if handoff_status == "completed":
+        try:
+            candidate_result = build_specialist_result(
+                db,
+                project,
+                workflow,
+                handoff_request.target_agent,
+            )
+            result = validate_agent_result(handoff_request.target_agent, candidate_result)
+            output_summary = str(result["summary"])
+        except Exception:
+            logger.exception(
+                "Specialist handoff failed for workflow %s and target %s.",
+                workflow_id,
+                handoff_request.target_agent,
+            )
+            handoff_status = "failed"
+            output_summary = "Specialist failed without exposing project contents."
+
+    handoff = AgentHandoff(
+        project_id=project.id,
+        workflow_id=workflow.id,
+        requested_by_id=actor.id,
+        trace_id=trace_id,
+        source_agent=handoff_request.source_agent,
+        target_agent=handoff_request.target_agent,
+        status=handoff_status,
+        input_fingerprint=input_fingerprint(raw_input),
+        input_summary=input_summary(raw_input),
+        output_summary=output_summary,
+        blocked_reason=blocked_reason,
+        result=result,
+        completed_at=utc_now(),
+    )
+    db.add(handoff)
+    db.add(
+        SecurityEvent(
+            actor_id=actor.id,
+            event_code=f"agent.handoff.{handoff_status}",
+            outcome="success" if handoff_status == "completed" else "denied" if handoff_status == "blocked" else "failure",
+            resource_type="workflow",
+            resource_ref=str(workflow.id),
+            request_ref=trace_id,
+        )
+    )
+    try:
+        db.commit()
+        db.refresh(handoff)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Agent handoff trace could not be saved for %s.", workflow_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent handoff trace could not be saved.",
+        ) from exc
+    return agent_handoff_response(handoff)
+
+
+@app.get(
+    "/workflows/{workflow_id}/handoffs",
+    response_model=list[AgentHandoffResponse],
+    tags=["agents"],
+)
+async def list_agent_handoffs(
+    workflow_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("workflow.manage")),
+    db: Session = Depends(get_db),
+) -> list[AgentHandoffResponse]:
+    """List bounded specialist traces for one project-scoped workflow."""
+
+    _, workflow = require_project_workflow_access(
+        db,
+        request,
+        workflow_id,
+        actor,
+        denial_action="agent.handoff.list",
+    )
+    handoffs = list_records(
+        db,
+        select(AgentHandoff)
+        .where(AgentHandoff.workflow_id == workflow.id)
+        .order_by(AgentHandoff.created_at.desc(), AgentHandoff.id),
+    )
+    return [agent_handoff_response(handoff) for handoff in handoffs]
 
 
 @app.post(
