@@ -228,6 +228,7 @@ from models import (
 )
 from workflow_orchestration import (
     MAX_TOOL_ATTEMPTS,
+    MAX_WORKFLOW_TRACE_RESULTS,
     WORKFLOW_TOOLS,
     action_requires_approval,
     can_transition,
@@ -3777,6 +3778,7 @@ async def list_approvals(
     request: Request,
     actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
+    limit: int = Query(default=MAX_WORKFLOW_TRACE_RESULTS, ge=1, le=MAX_WORKFLOW_TRACE_RESULTS),
 ) -> list[ApprovalResponse]:
     _, _workflow = require_project_workflow_access(
         db,
@@ -3789,7 +3791,8 @@ async def list_approvals(
         db,
         select(Approval)
         .where(Approval.workflow_id == _workflow.id)
-        .order_by(Approval.requested_at, Approval.id),
+        .order_by(Approval.requested_at, Approval.id)
+        .limit(limit),
     )
     return [ApprovalResponse.model_validate(approval) for approval in approvals]
 
@@ -4018,6 +4021,7 @@ async def list_workflow_tools(
     request: Request,
     actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
+    limit: int = Query(default=MAX_WORKFLOW_TRACE_RESULTS, ge=1, le=MAX_WORKFLOW_TRACE_RESULTS),
 ) -> list[WorkflowToolRunResponse]:
     """List trace metadata for one project-scoped workflow."""
 
@@ -4032,7 +4036,8 @@ async def list_workflow_tools(
         db,
         select(WorkflowToolRun)
         .where(WorkflowToolRun.workflow_id == workflow.id)
-        .order_by(WorkflowToolRun.created_at.desc(), WorkflowToolRun.id),
+        .order_by(WorkflowToolRun.created_at.desc(), WorkflowToolRun.id)
+        .limit(limit),
     )
     return [workflow_tool_run_response(run) for run in runs]
 
@@ -4136,6 +4141,7 @@ async def list_workflow_actions(
     request: Request,
     actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
+    limit: int = Query(default=MAX_WORKFLOW_TRACE_RESULTS, ge=1, le=MAX_WORKFLOW_TRACE_RESULTS),
 ) -> list[WorkflowActionResponse]:
     """List approval-gated action intents for one workflow."""
 
@@ -4150,7 +4156,8 @@ async def list_workflow_actions(
         db,
         select(WorkflowAction)
         .where(WorkflowAction.workflow_id == workflow.id)
-        .order_by(WorkflowAction.created_at.desc(), WorkflowAction.id),
+        .order_by(WorkflowAction.created_at.desc(), WorkflowAction.id)
+        .limit(limit),
     )
     return [workflow_action_response(db, action) for action in actions]
 
