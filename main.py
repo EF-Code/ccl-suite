@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from agent_orchestration import (
     AGENT_DEFINITIONS,
+    MAX_AGENT_TRACE_RESULTS,
     AgentInputBlockedError,
     can_delegate,
     input_fingerprint,
@@ -4378,6 +4379,7 @@ async def list_agent_handoffs(
     request: Request,
     actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
+    limit: int = Query(default=MAX_AGENT_TRACE_RESULTS, ge=1, le=MAX_AGENT_TRACE_RESULTS),
 ) -> list[AgentHandoffResponse]:
     """List bounded specialist traces for one project-scoped workflow."""
 
@@ -4392,7 +4394,8 @@ async def list_agent_handoffs(
         db,
         select(AgentHandoff)
         .where(AgentHandoff.workflow_id == workflow.id)
-        .order_by(AgentHandoff.created_at.desc(), AgentHandoff.id),
+        .order_by(AgentHandoff.created_at.desc(), AgentHandoff.id)
+        .limit(limit),
     )
     return [agent_handoff_response(handoff) for handoff in handoffs]
 
