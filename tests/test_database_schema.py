@@ -3,6 +3,7 @@ from sqlalchemy.orm import configure_mappers
 
 from database import Base
 from models import (
+    AgentHandoff,
     Approval,
     Backup,
     DocumentChunk,
@@ -20,6 +21,8 @@ from models import (
     SecurityEvent,
     User,
     Workflow,
+    WorkflowAction,
+    WorkflowToolRun,
 )
 
 
@@ -31,7 +34,10 @@ REQUIRED_TABLES = {
     "file_versions",
     "backups",
     "workflows",
+    "agent_handoffs",
     "approvals",
+    "workflow_actions",
+    "workflow_tool_runs",
     "security_events",
     "knowledge_sources",
     "ingestion_runs",
@@ -68,6 +74,9 @@ def test_relationship_mappers_configure() -> None:
     assert File.knowledge_sources.property.mapper.class_ is KnowledgeSource
     assert Project.workflows.property.mapper.class_ is Workflow
     assert Workflow.approvals.property.mapper.class_ is Approval
+    assert Workflow.actions.property.mapper.class_ is WorkflowAction
+    assert Workflow.tool_runs.property.mapper.class_ is WorkflowToolRun
+    assert Workflow.agent_handoffs.property.mapper.class_ is AgentHandoff
     assert ResearchReview.claims.property.mapper.class_ is ResearchReviewClaim
     assert ResearchReview.events.property.mapper.class_ is ResearchReviewEvent
     assert User.security_events.property.mapper.class_ is SecurityEvent
@@ -133,6 +142,18 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     }
     assert "ix_approvals_workflow_status" in {
         index.name for index in Approval.__table__.indexes
+    }
+    assert "ix_workflow_actions_project_status" in {
+        index.name for index in WorkflowAction.__table__.indexes
+    }
+    assert "ix_workflow_tool_runs_project_created_at" in {
+        index.name for index in WorkflowToolRun.__table__.indexes
+    }
+    assert "ix_agent_handoffs_project_created_at" in {
+        index.name for index in AgentHandoff.__table__.indexes
+    }
+    assert "ix_agent_handoffs_workflow_created_at" in {
+        index.name for index in AgentHandoff.__table__.indexes
     }
     assert {
         index.name for index in SecurityEvent.__table__.indexes
