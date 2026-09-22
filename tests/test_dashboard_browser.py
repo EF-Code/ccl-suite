@@ -607,6 +607,7 @@ def test_dashboard_runs_guarded_specialist_handoff(dashboard_page: Page) -> None
     page.locator("#workflow-refresh").click()
     blocked_trace = page.locator("#workflow-agent-handoffs [data-agent-status='blocked']").first
     blocked_trace.wait_for(state="visible")
+    expect(blocked_trace).to_have_attribute("data-agent-source", "research")
     expect(blocked_trace).to_contain_text("delegation_not_allowlisted")
 
 
