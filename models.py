@@ -811,8 +811,16 @@ class AgentHandoff(Base):
             name="ck_agent_handoffs_source_agent_not_blank",
         ),
         CheckConstraint(
+            "source_agent IN ('orchestrator', 'intake', 'research', 'knowledge', 'quality_control')",
+            name="ck_agent_handoffs_source_agent_allowlist",
+        ),
+        CheckConstraint(
             "length(trim(target_agent)) > 0",
             name="ck_agent_handoffs_target_agent_not_blank",
+        ),
+        CheckConstraint(
+            "target_agent IN ('intake', 'research', 'knowledge', 'quality_control')",
+            name="ck_agent_handoffs_target_agent_allowlist",
         ),
     )
 
