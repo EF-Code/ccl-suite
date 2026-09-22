@@ -120,7 +120,7 @@ class User(Base):
 
 
 class Project(Base):
-    """A user-owned unit containing files and workflow definitions."""
+    """A user-owned unit containing intake metadata and workflow definitions."""
 
     __tablename__ = "projects"
     __table_args__ = (
@@ -135,6 +135,11 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     storage_slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    category: Mapped[str] = mapped_column(String(80), nullable=False, default="general")
+    scope: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
+    outputs: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    responsible_person: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
@@ -602,6 +607,10 @@ class Workflow(Base):
         Index("ix_workflows_project_status", "project_id", "status"),
         CheckConstraint("version > 0", name="ck_workflows_version_positive"),
         CheckConstraint("length(trim(name)) > 0", name="ck_workflows_name_not_blank"),
+        CheckConstraint(
+            "state IN ('ready', 'in_progress', 'review', 'changes_required', 'approved', 'archived')",
+            name="ck_workflows_state",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -613,6 +622,7 @@ class Workflow(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="ready")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
@@ -629,6 +639,15 @@ class Workflow(Base):
     approvals: Mapped[list[Approval]] = relationship(
         back_populates="workflow", cascade="all, delete-orphan"
     )
+    tool_runs: Mapped[list[WorkflowToolRun]] = relationship(
+        back_populates="workflow", cascade="all, delete-orphan"
+    )
+    actions: Mapped[list[WorkflowAction]] = relationship(
+        back_populates="workflow", cascade="all, delete-orphan"
+    )
+    agent_handoffs: Mapped[list[AgentHandoff]] = relationship(
+        back_populates="workflow", cascade="all, delete-orphan"
+    )
 
 
 class Approval(Base):
@@ -637,6 +656,7 @@ class Approval(Base):
     __tablename__ = "approvals"
     __table_args__ = (
         Index("ix_approvals_workflow_status", "workflow_id", "status"),
+        Index("ix_approvals_action_id", "action_id"),
         CheckConstraint(
             "status IN ('pending', 'approved', 'rejected', 'cancelled')",
             name="ck_approvals_status",
@@ -646,6 +666,9 @@ class Approval(Base):
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     workflow_id: Mapped[UUID] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False
+    )
+    action_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("workflow_actions.id", ondelete="SET NULL"), nullable=True
     )
     requested_by_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
@@ -671,6 +694,155 @@ class Approval(Base):
         back_populates="decided_approvals",
         foreign_keys=[approved_by_id],
     )
+
+
+class WorkflowToolRun(Base):
+    """One bounded, traceable read-only tool request from a workflow."""
+
+    __tablename__ = "workflow_tool_runs"
+    __table_args__ = (
+        Index("ix_workflow_tool_runs_project_created_at", "project_id", "created_at"),
+        Index("ix_workflow_tool_runs_workflow_created_at", "workflow_id", "created_at"),
+        CheckConstraint(
+            "status IN ('succeeded', 'failed', 'blocked')",
+            name="ck_workflow_tool_runs_status",
+        ),
+        CheckConstraint("attempt_count > 0", name="ck_workflow_tool_runs_attempt_positive"),
+        CheckConstraint(
+            "max_attempts > 0 AND max_attempts <= 3",
+            name="ck_workflow_tool_runs_max_attempts",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False
+    )
+    requested_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    trace_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    tool_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_summary: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    output_summary: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    workflow: Mapped[Workflow] = relationship(back_populates="tool_runs")
+
+
+class WorkflowAction(Base):
+    """A high-impact action intent that cannot execute before approval."""
+
+    __tablename__ = "workflow_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_id",
+            "idempotency_key",
+            name="uq_workflow_actions_workflow_idempotency",
+        ),
+        Index("ix_workflow_actions_project_status", "project_id", "status"),
+        CheckConstraint(
+            "action_code IN ('send', 'delete', 'replace', 'publish', 'archive', 'approve')",
+            name="ck_workflow_actions_code",
+        ),
+        CheckConstraint(
+            "status IN ('pending_approval', 'approved', 'rejected', 'cancelled', 'executed')",
+            name="ck_workflow_actions_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False
+    )
+    requested_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    executed_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    action_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending_approval")
+    result_summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    executed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    workflow: Mapped[Workflow] = relationship(back_populates="actions")
+
+
+class AgentHandoff(Base):
+    """One bounded specialist-agent handoff attached to a workflow trace."""
+
+    __tablename__ = "agent_handoffs"
+    __table_args__ = (
+        Index("ix_agent_handoffs_project_created_at", "project_id", "created_at"),
+        Index("ix_agent_handoffs_workflow_created_at", "workflow_id", "created_at"),
+        CheckConstraint(
+            "status IN ('completed', 'blocked', 'failed')",
+            name="ck_agent_handoffs_status",
+        ),
+        CheckConstraint(
+            "length(trim(source_agent)) > 0",
+            name="ck_agent_handoffs_source_agent_not_blank",
+        ),
+        CheckConstraint(
+            "length(trim(target_agent)) > 0",
+            name="ck_agent_handoffs_target_agent_not_blank",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False
+    )
+    requested_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    trace_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    source_agent: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_agent: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    input_summary: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    output_summary: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    blocked_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    workflow: Mapped[Workflow] = relationship(back_populates="agent_handoffs")
 
 
 class ResearchReview(Base):
@@ -936,6 +1108,7 @@ class SecurityEvent(Base):
 
 
 __all__ = [
+    "AgentHandoff",
     "Approval",
     "Backup",
     "DocumentChunk",
