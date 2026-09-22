@@ -54,7 +54,8 @@ secret-bearing metric names are rejected. Unknown result fields, non-finite
 numbers, and control characters in the bounded context are rejected as well,
 so a trace cannot become a hidden multiline instruction channel.
 
-`GET /workflows/{workflow_id}/handoffs` returns the bounded trace history. The
+`GET /workflows/{workflow_id}/handoffs` returns the bounded trace history. Its
+optional `limit` is capped at 50 and the newest traces are returned first. The
 workflow ID is resolved through the project access boundary before a trace is
 read or written, so an actor cannot use a handoff endpoint to cross projects.
 
