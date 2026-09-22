@@ -290,6 +290,7 @@ export function WorkflowOrchestrator({
                     <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-800"><LockKeyhole className="mr-1 h-3 w-3" />Allow-listed</Badge>
                   </div>
                   <CardDescription className="text-xs">Delegate bounded project checks to one specialist at a time. Each role has a fixed responsibility, least-privilege tools, and a traceable handoff.</CardDescription>
+                  <p data-agent-matrix-summary className="text-[0.68rem] font-medium text-indigo-800">{agentDefinitions.length ? `${agentDefinitions.length} registered roles · delegation stays inside the approved graph` : "Loading the approved specialist graph…"}</p>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {agentDefinitions.length === 0 ? (
