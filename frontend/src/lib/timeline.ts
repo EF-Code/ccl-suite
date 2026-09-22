@@ -76,22 +76,42 @@ export const SIWES_TIMELINE: TimelineModule[] = [
   {
     id: 4,
     title: "Workflow Orchestrator",
-    purpose: "Move projects through controlled tasks and approvals",
-    weeks: "Workflow delivery · 21 Sep - 2 Oct",
-    status: "current",
-    backendReady: true, // workflows/approvals exist in backend
+    purpose: "Move projects through validated intake, controlled states, connected tools, and approvals",
+    weeks: "Workflow delivery · 21-25 Sep",
+    status: "complete",
+    backendReady: true,
     frontendCoverage: "full",
     endpoints: [
       "POST /projects/{id}/workflows",
       "GET /projects/{id}/workflows",
+      "POST /workflows/{id}/state",
       "POST /workflows/{id}/approvals",
       "GET /workflows/{id}/approvals",
       "POST /approvals/{id}/decision",
+      "POST /workflows/{id}/tools · GET traces",
+      "POST /workflows/{id}/actions · GET intents",
+      "POST /workflow-actions/{id}/execute",
     ],
-    uiComponents: ["Project Intake", "Lifecycle States", "Approval Trail", "Decision Controls"],
+    uiComponents: ["Project Intake", "Lifecycle States", "Connected Tools", "Approval Trail", "Protected Actions", "Decision Controls"],
   },
   {
     id: 5,
+    title: "Multi-Agent Security",
+    purpose: "Coordinate specialist agents with least-privilege tools, guardrails, threat tests, and traceable handoffs",
+    weeks: "Agent security delivery · 28 Sep - 2 Oct",
+    status: "current",
+    backendReady: true,
+    frontendCoverage: "full",
+    endpoints: [
+      "GET /agents",
+      "POST /workflows/{id}/handoffs",
+      "GET /workflows/{id}/handoffs",
+      "GET /security-events",
+    ],
+    uiComponents: ["Responsibility Matrix", "Least-Privilege Boundaries", "Guarded Handoffs", "Trace IDs", "Blocked-Run Feedback"],
+  },
+  {
+    id: 6,
     title: "Security Dashboard",
     purpose: "Monitor project status, agent actions, failures and incidents",
     weeks: "Security delivery · 5-22 Oct",
@@ -104,4 +124,4 @@ export const SIWES_TIMELINE: TimelineModule[] = [
 ];
 
 export const CURRENT_WEEK = "Current capability";
-export const CURRENT_PHASE = "Workflow Orchestrator · Project Control";
+export const CURRENT_PHASE = "Multi-Agent Security · Guardrails & Traceability";
