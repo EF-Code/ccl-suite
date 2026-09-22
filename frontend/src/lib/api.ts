@@ -112,6 +112,8 @@ export type WorkflowAction = {
 };
 
 export type AgentName = "intake" | "research" | "knowledge" | "quality_control";
+export type AgentActorName = "orchestrator" | AgentName;
+export type AgentHandoffStatus = "completed" | "blocked" | "failed";
 
 export type AgentDefinition = {
   agent: AgentName;
@@ -127,9 +129,9 @@ export type AgentHandoff = {
   workflow_id: string;
   requested_by_id: string | null;
   trace_id: string;
-  source_agent: "orchestrator" | AgentName;
+  source_agent: AgentActorName;
   target_agent: AgentName;
-  status: "completed" | "blocked" | "failed";
+  status: AgentHandoffStatus;
   input_summary: string;
   output_summary: string;
   blocked_reason: string | null;
