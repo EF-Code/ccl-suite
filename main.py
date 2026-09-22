@@ -18,6 +18,7 @@ from agent_orchestration import (
     MAX_AGENT_TRACE_RESULTS,
     AgentInputBlockedError,
     can_delegate,
+    handoff_event_code,
     input_fingerprint,
     input_summary,
     get_agent_definition,
@@ -4374,7 +4375,7 @@ async def create_agent_handoff(
     db.add(
         SecurityEvent(
             actor_id=actor.id,
-            event_code=f"agent.handoff.{handoff_status}",
+            event_code=handoff_event_code(handoff_status),
             outcome="success" if handoff_status == "completed" else "denied" if handoff_status == "blocked" else "failure",
             resource_type="workflow",
             resource_ref=str(workflow.id),

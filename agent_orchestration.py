@@ -115,6 +115,14 @@ def can_delegate(source_agent: str, target_agent: str) -> bool:
     return source is not None and target_agent in source.handoff_targets
 
 
+def handoff_event_code(status: str) -> str:
+    """Return the stable audit event code for one persisted handoff outcome."""
+
+    if status not in AGENT_HANDOFF_STATUSES:
+        raise ValueError("Unknown specialist handoff status.")
+    return f"agent.handoff.{status}"
+
+
 def validate_agent_input(input_ref: str | None) -> str | None:
     """Validate bounded, untrusted handoff context without treating it as code."""
 
@@ -199,6 +207,7 @@ __all__ = [
     "MAX_AGENT_TRACE_RESULTS",
     "can_delegate",
     "get_agent_definition",
+    "handoff_event_code",
     "input_fingerprint",
     "input_summary",
     "validate_agent_input",
