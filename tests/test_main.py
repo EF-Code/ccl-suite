@@ -3896,6 +3896,15 @@ def test_specialist_guardrails_trace_blocked_injection_and_bad_delegation() -> N
     assert injection_payload["status"] == "blocked"
     assert injection_payload["blocked_reason"] == "input_rule:instruction-override"
     assert "system secrets" not in injection.text
+    security_events = request("GET", "/security-events?limit=10")
+    assert security_events.status_code == 200
+    blocked_event = next(
+        event
+        for event in security_events.json()
+        if event["request_ref"] == injection_payload["trace_id"]
+    )
+    assert blocked_event["event_code"] == "agent.handoff.blocked"
+    assert blocked_event["outcome"] == "denied"
 
     bad_edge = request(
         "POST",
