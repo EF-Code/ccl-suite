@@ -3820,6 +3820,12 @@ def test_specialist_agents_return_project_scoped_results_and_traces() -> None:
     assert intake_definition["allowed_tools"] == []
     assert "research" in intake_definition["handoff_targets"]
 
+    focused = request("GET", "/agents/intake")
+    assert focused.status_code == 200
+    assert focused.json() == intake_definition
+    missing = request("GET", "/agents/not-registered")
+    assert missing.status_code == 404
+
     handoff = request(
         "POST",
         f"/workflows/{workflow['id']}/handoffs",
