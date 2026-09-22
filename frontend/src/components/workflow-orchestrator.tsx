@@ -307,7 +307,7 @@ export function WorkflowOrchestrator({
                           </div>
                           <div className="mt-3 flex-1 border-t border-border pt-3">
                             <p className="text-[0.62rem] font-bold uppercase tracking-[0.14em] text-muted-foreground">Permitted tools</p>
-                            <p className="mt-1 min-h-8 text-[0.68rem] text-foreground">{definition.allowed_tools.length ? definition.allowed_tools.join(" · ") : "No direct tools"}</p>
+                            {definition.allowed_tools.length ? <div className="mt-2 flex min-h-8 flex-wrap content-start gap-1">{definition.allowed_tools.map((tool) => <Badge key={tool} variant="outline" className="border-indigo-200 bg-indigo-50/70 px-1.5 py-0.5 text-[0.58rem] text-indigo-800">{tool}</Badge>)}</div> : <p className="mt-1 min-h-8 text-[0.68rem] text-foreground">No direct tools</p>}
                           </div>
                           <Button id={`workflow-agent-${definition.agent}`} type="button" size="sm" variant="outline" className="mt-3" onClick={() => onDelegate(currentWorkflow.id, definition.agent)} disabled={loading}>
                             <Bot className="mr-1.5 h-3.5 w-3.5" />Run specialist
