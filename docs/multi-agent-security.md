@@ -50,7 +50,9 @@ Every attempt receives a unique trace ID. The database stores only a SHA-256
 fingerprint and a safe presence summary for the input; it does not store the
 raw handoff text. Successful results must contain the requested agent, a
 completed status, a short summary, and scalar metrics. Nested payloads and
-secret-bearing metric names are rejected.
+secret-bearing metric names are rejected. Unknown result fields, non-finite
+numbers, and control characters in the bounded context are rejected as well,
+so a trace cannot become a hidden multiline instruction channel.
 
 `GET /workflows/{workflow_id}/handoffs` returns the bounded trace history. The
 workflow ID is resolved through the project access boundary before a trace is
