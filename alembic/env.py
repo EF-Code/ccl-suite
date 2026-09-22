@@ -7,6 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 from database import Base, get_database_url
 from models import (  # noqa: F401
+    AgentHandoff,
     Approval,
     Backup,
     DocumentChunk,
@@ -24,6 +25,8 @@ from models import (  # noqa: F401
     SecurityEvent,
     User,
     Workflow,
+    WorkflowAction,
+    WorkflowToolRun,
 )
 
 config = context.config
