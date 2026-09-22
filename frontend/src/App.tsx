@@ -12,19 +12,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
+import { OverviewDashboard } from "@/components/overview-dashboard"
 import { WorkflowOrchestrator } from "@/components/workflow-orchestrator"
 import { apiRequest, getOwnerId, setOwnerId, type Approval, type ApprovalDecision, type Project, type Workflow, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
   Database, FileText, ArrowLeftRight, Library,
-  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare, GitBranch
+  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare, GitBranch, Bell
 } from "lucide-react"
 
 // Helpers
 function escapeForTest(v: string) { return v }
 function compactId(v?: string) { return v ? `${v.slice(0, 13)}…` : "—" }
-type WorkspaceView = "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup"
+type WorkspaceView = "overview" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup"
 
 function researchScopeFromForm(formData: FormData, prefix: "source" | "target"): ResearchScope {
   const readText = (field: string) => {
@@ -64,8 +65,9 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedId, setSelectedId] = useState("")
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
-  const [activeView, setActiveView] = useState<WorkspaceView>("operations")
+  const [activeView, setActiveView] = useState<WorkspaceView>("overview")
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [globalSearch, setGlobalSearch] = useState("")
 
   // Forms + results
   const [ownerResult, setOwnerResult] = useState("")
@@ -820,6 +822,20 @@ export default function App() {
     if (!q) { refreshFiles(selectedId); return }
     try { const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?q=${encodeURIComponent(q)}`); setFiles(data) } catch (e: any) { showMessage(e.message, "error") }
   }
+  async function handleGlobalSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const query = globalSearch.trim()
+    if (!query) return
+    if (!selectedId) return showMessage("Select a project before searching its files.", "error")
+    setFileSearch(query)
+    openView("files")
+    try {
+      const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?q=${encodeURIComponent(query)}`)
+      setFiles(data.filter((file) => file.status === "active"))
+    } catch (err: any) {
+      showMessage((err as Error).message, "error")
+    }
+  }
   async function openFileDetail(f: FileRecord) {
     setSelectedFile(f)
     try {
@@ -886,6 +902,7 @@ export default function App() {
   }
 
   const navigation: Array<{ view: WorkspaceView; label: string; icon: typeof Gauge }> = [
+    { view: "overview", label: "Overview", icon: Gauge },
     { view: "operations", label: "Operations", icon: Gauge },
     { view: "files", label: "Files", icon: Files },
     { view: "knowledge", label: "Knowledge", icon: Library },
@@ -896,6 +913,7 @@ export default function App() {
   ]
 
   const viewCopy: Record<WorkspaceView, { title: string; description: string }> = {
+    overview: { title: "Overview", description: "See project health, workflow progress, evidence readiness, and the next decision." },
     operations: { title: "Operations", description: "Preview and run controlled work inside the active project." },
     files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
     knowledge: { title: "Knowledge", description: "Register, review, ingest, search, and answer from approved sources." },
@@ -923,14 +941,14 @@ export default function App() {
           </a>
           <nav className="app-links">
             <p className="nav-label">Operate</p>
-            {navigation.slice(0, 5).map(({ view, label, icon: Icon }) => (
+            {navigation.slice(0, 7).map(({ view, label, icon: Icon }) => (
               <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
                 <Icon className="h-4 w-4" />{label}
               </Button>
             ))}
             <Separator className="my-3 bg-white/10" />
             <p className="nav-label">Administration</p>
-            {navigation.slice(5).map(({ view, label, icon: Icon }) => (
+            {navigation.slice(7).map(({ view, label, icon: Icon }) => (
               <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
                 <Icon className="h-4 w-4" />{label}
               </Button>
@@ -966,22 +984,43 @@ export default function App() {
             </Select>
           </div>
         </div>
+        <form id="global-search-form" className="global-search hidden xl:flex" onSubmit={handleGlobalSearch} role="search">
+          <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <Input id="global-search" aria-label="Search project files" value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} placeholder="Search projects, files, or knowledge…" />
+          <kbd>⌘K</kbd>
+        </form>
         <div className="flex items-center gap-3">
           <span className={`service-state ${health.ok ? "is-online" : "is-offline"}`}><span />{health.ok ? "Ready" : "Unavailable"}</span>
           <Separator orientation="vertical" className="hidden h-6 sm:block" />
           <Button variant="ghost" size="icon" className="hidden sm:inline-flex" asChild><a href="/docs" target="_blank" rel="noreferrer" aria-label="Open API documentation"><CircleHelp className="h-4 w-4" /></a></Button>
-          <div className="operator-menu"><span>Operator</span><span className="operator-avatar">OP</span></div>
+          <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="View notifications"><Bell className="h-4 w-4" /></Button>
+          <div className="operator-menu"><span className="operator-copy"><small>Workspace</small><strong>Operator</strong></span><span className="operator-avatar">OP</span></div>
         </div>
       </header>
 
       <main id="main-content" className="app-main" data-view={activeView}>
-        <header className={activeView === "operations" ? "sr-only" : "workspace-heading"}>
+        <header className={activeView === "operations" || activeView === "overview" ? "sr-only" : "workspace-heading"}>
           <div><h1 id="page-title">{viewCopy[activeView].title}</h1><p>{viewCopy[activeView].description}</p></div>
           {activeView === "setup" && <Button id="workspace-projects-refresh" variant="outline" size="sm" onClick={() => refreshProjects()}><RefreshCw className="h-3.5 w-3.5" />Refresh projects</Button>}
         </header>
 
         {/* Flash */}
         <div id="flash" className={`rounded-lg border px-3 py-2.5 text-sm mb-4 ${showFlash ? "block" : "hidden"} ${flash.kind==="error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`} role={flash.kind==="error" ? "alert" : "status"} aria-live="polite" hidden={!showFlash}>{flash.msg}</div>
+
+        <section className={activeView === "overview" ? "block" : "hidden"}>
+          <OverviewDashboard
+            project={selectedProject}
+            projects={projects}
+            health={health}
+            files={files}
+            knowledgeSources={knowledgeSources}
+            researchClaims={researchClaims}
+            researchReview={researchReview}
+            workflows={workflows}
+            approvals={workflowApprovals}
+            onNavigate={openView}
+          />
+        </section>
 
         {/* Workflow steps — production */}
         <Card className={`${activeView === "setup" ? "block" : "hidden"} workflow-panel major-panel mb-5 card-elevated`}>

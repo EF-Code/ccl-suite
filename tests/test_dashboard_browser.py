@@ -486,3 +486,35 @@ def test_dashboard_runs_workflow_definition_and_approval(dashboard_page: Page) -
     confirm_protected_action(page)
     expect(approval.locator("[data-approval-status='approved']")).to_be_visible()
     expect(workflow_panel.locator("[data-workflow-stage='decide']")).to_contain_text("Outcome recorded")
+
+
+def test_dashboard_overview_surfaces_active_project_control(dashboard_page: Page) -> None:
+    """Keep the reference-inspired overview tied to real project state."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    open_workspace(page, "Setup")
+
+    suffix = uuid4().hex[:10]
+    owner_ref = f"overview-browser-owner-{suffix}"
+    project_title = f"Overview Browser {suffix}"
+
+    user_form = page.locator("#user-form")
+    user_form.locator("input[name='external_ref']").fill(owner_ref)
+    user_form.get_by_role("button", name="Create development owner").click()
+    page.locator("#user-result").wait_for(state="visible")
+
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_row.wait_for(state="visible")
+    project_row.get_by_role("button", name="Use project").click()
+
+    open_workspace(page, "Overview")
+    overview = page.locator("#overview-dashboard")
+    expect(overview).to_be_visible()
+    expect(overview.locator("#overview-title")).to_have_text("Keep every project moving.")
+    expect(overview.locator(".overview-project-card")).to_contain_text(project_title)
+    expect(overview.locator(".overview-workflow-card")).to_contain_text("Project delivery path")
+    expect(overview.locator(".overview-actions-card")).to_contain_text("Move the work forward")
