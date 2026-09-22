@@ -488,6 +488,125 @@ def test_dashboard_runs_workflow_definition_and_approval(dashboard_page: Page) -
     expect(workflow_panel.locator("[data-workflow-stage='decide']")).to_contain_text("Outcome recorded")
 
 
+def test_dashboard_runs_accelerated_workflow_controls(dashboard_page: Page) -> None:
+    """Exercise the lifecycle, connected tools, and protected action gate."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    open_workspace(page, "Setup")
+
+    suffix = uuid4().hex[:10]
+    owner_ref = f"orchestration-browser-owner-{suffix}"
+    project_title = f"Orchestration Browser {suffix}"
+
+    user_form = page.locator("#user-form")
+    user_form.locator("input[name='external_ref']").fill(owner_ref)
+    user_form.get_by_role("button", name="Create development owner").click()
+    page.locator("#user-result").wait_for(state="visible")
+
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.locator("textarea[name='scope']").fill("Validate the workflow intake and review boundary.")
+    project_form.locator("input[name='outputs']").fill("brief, reviewed package, audit trace")
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_row.wait_for(state="visible")
+    project_row.get_by_role("button", name="Use project").click()
+
+    open_workspace(page, "Workflows")
+    workflow_panel = page.locator("#workflow-orchestrator")
+    expect(workflow_panel).to_be_visible()
+    page.locator("#workflow-name").fill("Accelerated delivery workflow")
+    page.locator("#workflow-submit").click()
+
+    workflow_card = page.locator("#workflow-list [data-workflow-id]").first
+    workflow_card.wait_for(state="visible")
+    workflow_id = workflow_card.get_attribute("data-workflow-id")
+    assert workflow_id
+    expect(workflow_panel.locator("[data-workflow-state='ready']")).to_be_visible()
+
+    workflow_panel.get_by_role("button", name="Move to in progress").click()
+    expect(workflow_panel.locator("[data-workflow-state='in_progress']")).to_be_visible()
+
+    page.locator("#workflow-tool-files").click()
+    tool_run = page.locator("#workflow-tool-runs [data-tool-run-id]").first
+    tool_run.wait_for(state="visible")
+    expect(tool_run.locator("[data-tool-status='succeeded']")).to_be_visible()
+    expect(tool_run).to_contain_text("active_files:0")
+
+    page.locator("#workflow-action-publish").click()
+    confirm_protected_action(page)
+    action = page.locator("#workflow-actions-list [data-workflow-action-id]").first
+    action.wait_for(state="visible")
+    expect(action).to_have_attribute("data-action-status", "pending_approval")
+    approval_id = action.locator("[data-action-approval-id]").get_attribute("data-action-approval-id")
+    assert approval_id
+
+    approval = workflow_card.locator(f"[data-approval-id='{approval_id}']")
+    approval.wait_for(state="visible")
+    approval.get_by_role("button", name="Approve").click()
+    confirm_protected_action(page)
+    expect(action).to_have_attribute("data-action-status", "approved")
+
+    action.get_by_role("button", name="Record approved execution").click()
+    confirm_protected_action(page)
+    expect(action).to_have_attribute("data-action-status", "executed")
+    expect(action).to_contain_text("no external destructive side effect")
+
+
+def test_dashboard_runs_guarded_specialist_handoff(dashboard_page: Page) -> None:
+    """Show the responsibility matrix and a blocked delegation trace."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    open_workspace(page, "Setup")
+
+    suffix = uuid4().hex[:10]
+    owner_ref = f"agent-browser-owner-{suffix}"
+    project_title = f"Agent Browser {suffix}"
+
+    user_form = page.locator("#user-form")
+    user_form.locator("input[name='external_ref']").fill(owner_ref)
+    user_form.get_by_role("button", name="Create development owner").click()
+    page.locator("#user-result").wait_for(state="visible")
+    owner_id = page.locator("#owner-id").input_value()
+
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_row.wait_for(state="visible")
+    project_row.get_by_role("button", name="Use project").click()
+
+    open_workspace(page, "Workflows")
+    page.locator("#workflow-name").fill("Guarded specialist workflow")
+    page.locator("#workflow-submit").click()
+    workflow_card = page.locator("#workflow-list [data-workflow-id]").first
+    workflow_card.wait_for(state="visible")
+    workflow_id = workflow_card.get_attribute("data-workflow-id")
+    assert workflow_id
+
+    expect(page.locator("#workflow-agents-card")).to_contain_text("Guarded agent handoffs")
+    page.locator("#workflow-agent-intake").click()
+    completed_trace = page.locator("#workflow-agent-handoffs [data-agent-status='completed']").first
+    completed_trace.wait_for(state="visible")
+    expect(completed_trace).to_contain_text("intake specialist")
+    expect(completed_trace).to_contain_text("input fingerprinted")
+
+    blocked = page.request.post(
+        f"{BASE_URL}/workflows/{workflow_id}/handoffs",
+        headers={"X-User-ID": owner_id},
+        data={"source_agent": "research", "target_agent": "intake"},
+    )
+    assert blocked.status == 201
+    assert blocked.json()["status"] == "blocked"
+
+    page.locator("#workflow-refresh").click()
+    blocked_trace = page.locator("#workflow-agent-handoffs [data-agent-status='blocked']").first
+    blocked_trace.wait_for(state="visible")
+    expect(blocked_trace).to_contain_text("delegation_not_allowlisted")
+
+
 def test_dashboard_overview_surfaces_active_project_control(dashboard_page: Page) -> None:
     """Keep the reference-inspired overview tied to real project state."""
 
