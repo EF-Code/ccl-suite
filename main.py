@@ -20,6 +20,7 @@ from agent_orchestration import (
     can_delegate,
     input_fingerprint,
     input_summary,
+    get_agent_definition,
     validate_agent_input,
     validate_agent_result,
 )
@@ -4242,6 +4243,30 @@ async def list_agents(
         )
         for definition in AGENT_DEFINITIONS
     ]
+
+
+@app.get(
+    "/agents/{agent_name}",
+    response_model=AgentDefinitionResponse,
+    tags=["agents"],
+)
+async def get_agent(
+    agent_name: str,
+    actor: User = Depends(require_permission("workflow.manage")),
+) -> AgentDefinitionResponse:
+    """Return one allow-listed specialist definition for focused review."""
+
+    del actor
+    definition = get_agent_definition(agent_name)
+    if definition is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent was not found.")
+    return AgentDefinitionResponse(
+        agent=definition.agent,
+        label=definition.label,
+        responsibility=definition.responsibility,
+        allowed_tools=list(definition.allowed_tools),
+        handoff_targets=list(definition.handoff_targets),
+    )
 
 
 @app.post(
