@@ -3802,6 +3802,25 @@ def test_workflow_tools_are_traceable_and_bounded() -> None:
     assert listed.json()[0]["trace_id"] == payload["trace_id"]
 
 
+def test_workflow_trace_listings_share_a_safe_limit() -> None:
+    project = create_project("Workflow trace limit project")
+    workflow = create_workflow(str(project["id"]))
+
+    for _ in range(2):
+        result = request(
+            "POST",
+            f"/workflows/{workflow['id']}/tools",
+            json={"tool": "files.summary", "max_attempts": 1},
+        )
+        assert result.status_code == 200
+
+    listed = request("GET", f"/workflows/{workflow['id']}/tools?limit=1")
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    assert request("GET", f"/workflows/{workflow['id']}/tools?limit=51").status_code == 422
+    assert request("GET", f"/workflows/{workflow['id']}/approvals?limit=51").status_code == 422
+
+
 def test_specialist_agents_return_project_scoped_results_and_traces() -> None:
     project = create_project("Specialist trace project")
     workflow = create_workflow(str(project["id"]))
