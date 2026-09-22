@@ -34,6 +34,7 @@ AGENT_NAMES: Final[tuple[str, ...]] = (
     "quality_control",
 )
 AGENT_ACTOR_NAMES: Final[tuple[str, ...]] = ("orchestrator", *AGENT_NAMES)
+AGENT_HANDOFF_STATUSES: Final[tuple[str, ...]] = ("completed", "blocked", "failed")
 MAX_AGENT_INPUT_CHARACTERS: Final[int] = 500
 MAX_AGENT_OUTPUT_KEYS: Final[int] = 12
 MAX_AGENT_TRACE_RESULTS: Final[int] = 50
@@ -189,6 +190,7 @@ def validate_agent_result(agent: str, result: Mapping[str, object]) -> dict[str,
 __all__ = [
     "AGENT_ACTOR_NAMES",
     "AGENT_DEFINITIONS",
+    "AGENT_HANDOFF_STATUSES",
     "AGENT_RESULT_KEYS",
     "AGENT_NAMES",
     "AgentDefinition",
