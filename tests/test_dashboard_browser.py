@@ -1,8 +1,9 @@
 """Opt-in Playwright smoke tests for the local operations dashboard.
 
 These tests intentionally run against a live API process.  Set
-``RUN_BROWSER_TESTS=1`` and optionally ``DASHBOARD_BASE_URL`` before running
-them.  The API should use an isolated development database and project root.
+``RUN_BROWSER_TESTS=1``, ``DASHBOARD_TEST_EMAIL``, and
+``DASHBOARD_TEST_PASSWORD`` before running them. The API should use an
+isolated development database and project root with a bootstrapped admin.
 """
 
 from __future__ import annotations
@@ -24,10 +25,14 @@ if os.getenv("RUN_BROWSER_TESTS") != "1":
     )
 
 playwright = pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright  # noqa: E402
 
 
 BASE_URL = os.getenv("DASHBOARD_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+TEST_EMAIL = os.getenv("DASHBOARD_TEST_EMAIL")
+TEST_PASSWORD = os.getenv("DASHBOARD_TEST_PASSWORD")
+if not TEST_EMAIL or not TEST_PASSWORD:
+    pytest.skip("Set DASHBOARD_TEST_EMAIL and DASHBOARD_TEST_PASSWORD.", allow_module_level=True)
 
 
 def installed_browser(playwright_api: object) -> str | None:
@@ -57,6 +62,11 @@ def open_workspace(page: Page, label: str) -> None:
     ).click()
 
 
+def csrf_headers(page: Page) -> dict[str, str]:
+    csrf = next(cookie["value"] for cookie in page.context.cookies() if cookie["name"] == "ccl_csrf")
+    return {"X-CSRF-Token": csrf}
+
+
 @pytest.fixture
 def dashboard_page() -> Page:
     """Open one isolated browser page and close it after the workflow."""
@@ -75,11 +85,16 @@ def dashboard_page() -> Page:
         page.on(
             "console",
             lambda message: browser_errors.append(message.text)
-            if message.type == "error"
+            if message.type == "error" and "401 (Unauthorized)" not in message.text
             else None,
         )
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
         try:
+            page.goto(BASE_URL, wait_until="networkidle")
+            page.locator("#login-email").fill(TEST_EMAIL)
+            page.locator("#login-password").fill(TEST_PASSWORD)
+            page.locator("#login-form").get_by_role("button", name="Sign in").click()
+            page.locator("#health-badge").wait_for(state="visible")
             yield page
         finally:
             browser.close()
@@ -98,16 +113,9 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
-    owner_ref = f"browser-owner-{suffix}"
     project_title = f"Browser Workflow {suffix}"
-
-    user_form = page.locator("#user-form")
-    user_form.locator("input[name='external_ref']").fill(owner_ref)
-    user_form.get_by_role("button", name="Create development owner").click()
-    page.locator("#user-result").wait_for(state="visible")
     owner_id = page.locator("#owner-id").input_value()
     assert owner_id
-    assert owner_ref in page.locator("#user-result").inner_text()
 
     project_form = page.locator("#project-form")
     project_form.locator("input[name='title']").fill(project_title)
@@ -188,13 +196,7 @@ def test_dashboard_registers_a_pending_knowledge_source(dashboard_page: Page) ->
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
-    owner_ref = f"knowledge-browser-owner-{suffix}"
     project_title = f"Knowledge Browser {suffix}"
-
-    user_form = page.locator("#user-form")
-    user_form.locator("input[name='external_ref']").fill(owner_ref)
-    user_form.get_by_role("button", name="Create development owner").click()
-    page.locator("#user-result").wait_for(state="visible")
     owner_id = page.locator("#owner-id").input_value()
 
     project_form = page.locator("#project-form")
@@ -211,6 +213,7 @@ def test_dashboard_registers_a_pending_knowledge_source(dashboard_page: Page) ->
 
     file_response = page.request.post(
         f"{BASE_URL}/projects/{project_id}/files",
+        headers=csrf_headers(page),
         data={
             "storage_key": "incoming/company-rules.txt",
             "media_type": "text/plain",
@@ -247,14 +250,7 @@ def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
-    owner_ref = f"answer-browser-owner-{suffix}"
     project_title = f"Answer Browser {suffix}"
-
-    user_form = page.locator("#user-form")
-    user_form.locator("input[name='external_ref']").fill(owner_ref)
-    user_form.get_by_role("button", name="Create development owner").click()
-    page.locator("#user-result").wait_for(state="visible")
-    owner_id = page.locator("#owner-id").input_value()
 
     project_form = page.locator("#project-form")
     project_form.locator("input[name='title']").fill(project_title)
@@ -268,15 +264,9 @@ def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
     folder_form.get_by_role("button", name="Generate folder layout").click()
     page.locator("#folder-result").wait_for(state="visible")
 
-    supervisor_response = page.request.post(
-        f"{BASE_URL}/users",
-        data={"external_ref": f"answer-browser-supervisor-{suffix}", "role": "supervisor"},
-    )
-    assert supervisor_response.status == 201
-    supervisor_id = supervisor_response.json()["id"]
     upload_response = page.request.put(
         f"{BASE_URL}/projects/{project_id}/uploads/incoming/company-rules.md",
-        headers={"X-User-ID": owner_id, "Content-Type": "text/markdown"},
+        headers={**csrf_headers(page), "Content-Type": "text/markdown"},
         data="# Restore\n\nVerify file hashes before restoring a file. Keep the original intact.",
     )
     assert upload_response.status == 201
@@ -294,19 +284,18 @@ def test_dashboard_answers_from_cited_knowledge(dashboard_page: Page) -> None:
 
     source_response = page.request.get(
         f"{BASE_URL}/projects/{project_id}/knowledge-sources",
-        headers={"X-User-ID": owner_id},
     )
     assert source_response.status == 200
     source_id = source_response.json()[0]["id"]
     approved = page.request.post(
         f"{BASE_URL}/projects/{project_id}/knowledge-sources/{source_id}/review",
-        headers={"X-User-ID": supervisor_id},
+        headers=csrf_headers(page),
         data={"decision": "approved"},
     )
     assert approved.status == 200
     ingested = page.request.post(
         f"{BASE_URL}/projects/{project_id}/knowledge-sources/{source_id}/ingest",
-        headers={"X-User-ID": supervisor_id},
+        headers=csrf_headers(page),
     )
     assert ingested.status == 201
 
@@ -357,13 +346,7 @@ def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) 
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
-    owner_ref = f"research-browser-owner-{suffix}"
     project_title = f"Research Browser {suffix}"
-
-    user_form = page.locator("#user-form")
-    user_form.locator("input[name='external_ref']").fill(owner_ref)
-    user_form.get_by_role("button", name="Create development owner").click()
-    page.locator("#user-result").wait_for(state="visible")
     owner_id = page.locator("#owner-id").input_value()
     assert owner_id
 
@@ -449,13 +432,7 @@ def test_dashboard_runs_workflow_definition_and_approval(dashboard_page: Page) -
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
-    owner_ref = f"workflow-browser-owner-{suffix}"
     project_title = f"Workflow Browser {suffix}"
-
-    user_form = page.locator("#user-form")
-    user_form.locator("input[name='external_ref']").fill(owner_ref)
-    user_form.get_by_role("button", name="Create development owner").click()
-    page.locator("#user-result").wait_for(state="visible")
 
     project_form = page.locator("#project-form")
     project_form.locator("input[name='title']").fill(project_title)
@@ -496,13 +473,7 @@ def test_dashboard_runs_accelerated_workflow_controls(dashboard_page: Page) -> N
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
-    owner_ref = f"orchestration-browser-owner-{suffix}"
     project_title = f"Orchestration Browser {suffix}"
-
-    user_form = page.locator("#user-form")
-    user_form.locator("input[name='external_ref']").fill(owner_ref)
-    user_form.get_by_role("button", name="Create development owner").click()
-    page.locator("#user-result").wait_for(state="visible")
 
     project_form = page.locator("#project-form")
     project_form.locator("input[name='title']").fill(project_title)
@@ -562,14 +533,7 @@ def test_dashboard_runs_guarded_specialist_handoff(dashboard_page: Page) -> None
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
-    owner_ref = f"agent-browser-owner-{suffix}"
     project_title = f"Agent Browser {suffix}"
-
-    user_form = page.locator("#user-form")
-    user_form.locator("input[name='external_ref']").fill(owner_ref)
-    user_form.get_by_role("button", name="Create development owner").click()
-    page.locator("#user-result").wait_for(state="visible")
-    owner_id = page.locator("#owner-id").input_value()
 
     project_form = page.locator("#project-form")
     project_form.locator("input[name='title']").fill(project_title)
@@ -598,7 +562,7 @@ def test_dashboard_runs_guarded_specialist_handoff(dashboard_page: Page) -> None
 
     blocked = page.request.post(
         f"{BASE_URL}/workflows/{workflow_id}/handoffs",
-        headers={"X-User-ID": owner_id},
+        headers=csrf_headers(page),
         data={"source_agent": "research", "target_agent": "intake"},
     )
     assert blocked.status == 201
@@ -619,13 +583,7 @@ def test_dashboard_overview_surfaces_active_project_control(dashboard_page: Page
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
-    owner_ref = f"overview-browser-owner-{suffix}"
     project_title = f"Overview Browser {suffix}"
-
-    user_form = page.locator("#user-form")
-    user_form.locator("input[name='external_ref']").fill(owner_ref)
-    user_form.get_by_role("button", name="Create development owner").click()
-    page.locator("#user-result").wait_for(state="visible")
 
     project_form = page.locator("#project-form")
     project_form.locator("input[name='title']").fill(project_title)

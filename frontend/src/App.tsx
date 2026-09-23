@@ -14,7 +14,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Separator } from "@/components/ui/separator"
 import { OverviewDashboard } from "@/components/overview-dashboard"
 import { WorkflowOrchestrator } from "@/components/workflow-orchestrator"
-import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
@@ -55,7 +55,7 @@ function researchScopeLabel(scope: ResearchScope): string {
   ].filter(Boolean).join(" · ") || "No scope recorded"
 }
 
-export default function App() {
+function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => Promise<void> }) {
   // Global
   const [health, setHealth] = useState<{ ok: boolean; text: string; detail: string }>({ ok: false, text: "Checking connection…", detail: "Waiting for /health" })
   const [healthBadge, setHealthBadge] = useState("Checking API…")
@@ -233,7 +233,7 @@ export default function App() {
   }, [selectedId, refreshFiles, refreshKnowledgeSources, refreshResearchReviews, refreshWorkflows])
 
   // Actions
-  async function handleCreateOwner(e: React.FormEvent<HTMLFormElement>) {
+  async function handleInviteMember(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const form = e.currentTarget as HTMLFormElement
     const fd = new FormData(form)
@@ -241,18 +241,14 @@ export default function App() {
     const btn = form.querySelector("button[type=submit]") as HTMLButtonElement
     try {
       if (btn) { btn.disabled=true; btn.textContent="Creating…"; btn.setAttribute("aria-busy","true") }
-      const user: any = await apiRequest("/users", { method: "POST", body: JSON.stringify(body) })
-      setOwnerId(user.id)
-      const ownerInput = document.querySelector<HTMLInputElement>("#owner-id")
-      if (ownerInput) ownerInput.value = user.id
-      setOwnerResult(`Created owner ${user.external_ref}\nID: ${user.id}`)
-      await refreshProjects()
-      showMessage("Development owner created. Its ID was copied into the project form.")
-      if (btn) { btn.disabled=false; btn.removeAttribute("aria-busy"); btn.textContent="Create development owner" }
+      const invite = await apiRequest<InvitationResult>("/auth/invitations", { method: "POST", body: JSON.stringify(body) })
+      setOwnerResult(invite.invite_url)
+      showMessage(`Invitation created for ${invite.email}. Share the link through a trusted channel.`)
+      form.reset()
     } catch (err: any) {
-      setOwnerResult(err.message)
       showMessage(err.message, "error")
-      if (btn) { btn.disabled=false; btn.removeAttribute("aria-busy"); btn.textContent="Create development owner" }
+    } finally {
+      if (btn) { btn.disabled=false; btn.removeAttribute("aria-busy"); btn.textContent="Create invitation" }
     }
   }
 
@@ -700,10 +696,7 @@ export default function App() {
   async function handleResearchExport(format: "csv" | "json" | "markdown") {
     if (!researchReview) return
     try {
-      const headers: Record<string, string> = {}
-      const ownerId = getOwnerId()
-      if (ownerId) headers["X-User-ID"] = ownerId
-      const response = await fetch(`/research/reviews/${researchReview.id}/export?format=${format}`, { headers })
+      const response = await fetch(`/research/reviews/${researchReview.id}/export?format=${format}`, { credentials: "same-origin" })
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
         throw new Error(payload?.detail || `Export failed (${response.status})`)
@@ -1001,14 +994,12 @@ export default function App() {
     if (content===null) return
     try {
       const blob = new Blob([content], { type: "text/plain" })
-      const res = await fetch(`/projects/${selectedId}/uploads/${encodeURIComponent(uploadStorageKey)}`, {
+      const result = await apiRequest<any>(`/projects/${selectedId}/uploads/${encodeURIComponent(uploadStorageKey)}`, {
         method: "PUT",
-        headers: { "X-User-ID": getOwnerId(), "Content-Type": "text/plain" },
+        headers: { "Content-Type": "text/plain" },
         body: blob
       })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j.detail || "Upload failed")
-      showMessage(`Uploaded ${j.name} · ${j.size_bytes} bytes · ${j.checksum_sha256.slice(0,12)}…`)
+      showMessage(`Uploaded ${result.name} · ${result.size_bytes} bytes · ${result.checksum_sha256.slice(0,12)}…`)
       refreshFiles(selectedId)
     } catch (e: any) { showMessage(e.message, "error") }
   }
@@ -1134,7 +1125,8 @@ export default function App() {
           <Separator orientation="vertical" className="hidden h-6 sm:block" />
           <Button variant="ghost" size="icon" className="hidden sm:inline-flex" asChild><a href="/docs" target="_blank" rel="noreferrer" aria-label="Open API documentation"><CircleHelp className="h-4 w-4" /></a></Button>
           <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="View notifications"><Bell className="h-4 w-4" /></Button>
-          <div className="operator-menu"><span className="operator-copy"><small>Workspace</small><strong>Operator</strong></span><span className="operator-avatar">OP</span></div>
+          <div className="operator-menu"><span className="operator-copy"><small>{account.role}</small><strong title={account.email}>{account.email}</strong></span><span className="operator-avatar">{account.email.slice(0, 2).toUpperCase()}</span></div>
+          <Button variant="outline" size="sm" onClick={() => void onLogout()}>Log out</Button>
         </div>
       </header>
 
@@ -1171,7 +1163,7 @@ export default function App() {
           <CardContent>
             <ol className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 list-none p-0">
               {[
-                { n: 1, t: "Create an owner", d: "Get the ID needed for projects.", href: "#owner-setup" },
+                { n: 1, t: "Confirm your account", d: "Your signed-in account owns new projects.", href: "#owner-setup" },
                 { n: 2, t: "Register a project", d: "Give the workspace a stable folder name.", href: "#project-setup" },
                 { n: 3, t: "Prepare storage", d: "Generate its controlled folder layout.", href: "#folder-setup" },
                 { n: 4, t: "Run operations", d: "Scan, convert, organise, or recover.", href: "#file-operations" },
@@ -1232,40 +1224,29 @@ export default function App() {
               </CardContent>
             </Card>
 
-            {/* Owner - preserve #user-form, #owner-id, #user-result */}
+            {/* Account and administrator invitations */}
             <Card id="owner-setup" className="setup-panel">
               <CardHeader className="pb-2 flex flex-row items-start justify-between">
-                <div><p className="panel-label">Identity</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><Users className="w-4 h-4 text-primary" />Development owner</CardTitle></div>
+                <div><p className="panel-label">Identity</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><Users className="w-4 h-4 text-primary" />Your account</CardTitle></div>
                 <span className="panel-icon"><Users className="h-4 w-4" /></span>
               </CardHeader>
               <CardContent className="space-y-3">
-                <p id="owner-form-help" className="text-xs text-muted-foreground">Create the local owner whose opaque ID will be attached to new projects.</p>
-                <form id="user-form" onSubmit={handleCreateOwner} className="grid gap-3" aria-describedby="owner-form-help">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="user-external-ref" className="text-xs">External reference</Label>
-                    <Input id="user-external-ref" name="external_ref" defaultValue="local-owner" required maxLength={128} />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="user-role" className="text-xs">Role</Label>
-                    <Select name="role" defaultValue="member">
-                      <SelectTrigger id="user-role"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="administrator">administrator</SelectItem>
-                        <SelectItem value="supervisor">supervisor</SelectItem>
-                        <SelectItem value="member">member (→ staff)</SelectItem>
-                        <SelectItem value="staff">staff</SelectItem>
-                        <SelectItem value="intern">intern (read-only)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-[0.68rem] text-muted-foreground">member→staff, reviewer→supervisor aliases.</p>
-                  </div>
-                  <Button type="submit">Create development owner</Button>
-                </form>
-                <div id="user-result" className={`text-xs whitespace-pre-wrap ${ownerResult ? "quiet-result block" : "hidden"}`} role="status" aria-live="polite" tabIndex={-1} hidden={!ownerResult}>{ownerResult}</div>
+                <p className="text-sm font-medium">{account.email}</p>
+                <p className="text-xs text-muted-foreground">{account.role} · projects you create are linked to this account.</p>
+                {account.role === "administrator" && <>
+                  <Separator />
+                  <p id="owner-form-help" className="text-xs text-muted-foreground">Invite a teammate. The link appears once; share it through a trusted channel.</p>
+                  <form id="user-form" onSubmit={handleInviteMember} className="grid gap-3" aria-describedby="owner-form-help">
+                    <div className="grid gap-1.5"><Label htmlFor="invite-email" className="text-xs">Email address</Label><Input id="invite-email" name="email" type="email" required maxLength={254} /></div>
+                    <div className="grid gap-1.5"><Label htmlFor="invite-role" className="text-xs">Role</Label><select id="invite-role" name="role" defaultValue="staff" className="h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="intern">Intern</option><option value="administrator">Administrator</option></select></div>
+                    <Button type="submit">Create invitation</Button>
+                  </form>
+                  {ownerResult && <div id="user-result" className="quiet-result grid gap-2 text-xs" role="status" aria-live="polite"><span>Share this invitation link:</span><Input aria-label="Invitation link" value={ownerResult} readOnly onFocus={(event) => event.currentTarget.select()} /><Button type="button" size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(ownerResult).then(() => showMessage("Invitation link copied.")).catch(() => showMessage("Select and copy the link manually.", "error"))}>Copy link</Button></div>}
+                </>}
               </CardContent>
             </Card>
 
-            {/* Project - preserve #project-form, #owner-id */}
+            {/* Project owner is derived from the signed-in account. */}
             <Card id="project-setup" className="setup-panel">
               <CardHeader className="pb-2 flex flex-row items-start justify-between">
                 <div><p className="panel-label">Workspace</p><CardTitle className="text-[1rem] flex items-center gap-1.5"><FolderKanban className="w-4 h-4 text-primary" />Register a project</CardTitle></div>
@@ -1283,7 +1264,7 @@ export default function App() {
                     <div className="grid gap-1.5"><Label htmlFor="project-responsible" className="text-xs">Responsible person</Label><Input id="project-responsible" name="responsible_person" defaultValue="Operator" required maxLength={120} /></div>
                   </div>
                   <div className="grid gap-1.5"><Label htmlFor="project-outputs" className="text-xs">Expected outputs</Label><Input id="project-outputs" name="outputs" defaultValue="brief, reviewed package" required placeholder="Comma-separated outputs" /></div>
-                  <div className="grid gap-1.5"><Label htmlFor="owner-id" className="text-xs">Owner ID</Label><Input id="owner-id" name="owner_id" placeholder="Create an owner above" required defaultValue={getOwnerId()} /></div>
+                  <input id="owner-id" name="owner_id" type="hidden" value={account.id} readOnly />
                   <Button type="submit">Register project</Button>
                 </form>
               </CardContent>
@@ -1961,5 +1942,114 @@ export default function App() {
         </div>
       </footer>
     </div>
+  )
+}
+
+export default function App() {
+  const [account, setAccount] = useState<AuthUser | null | undefined>(undefined)
+  const [error, setError] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [inviteToken, setInviteToken] = useState(
+    () => new URLSearchParams(window.location.hash.slice(1)).get("invite") || "",
+  )
+
+  const refreshSession = useCallback(() => {
+    apiRequest<AuthUser>("/auth/me")
+      .then((user) => { setOwnerId(user.id); setAccount(user) })
+      .catch(() => { setOwnerId(""); setAccount(null) })
+  }, [])
+
+  useEffect(() => { refreshSession() }, [refreshSession])
+
+  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const fields = new FormData(form)
+    setBusy(true); setError("")
+    try {
+      const user = await apiRequest<AuthUser>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: fields.get("email"), password: fields.get("password") }),
+      })
+      setOwnerId(user.id)
+      setAccount(user)
+      form.reset()
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleAcceptInvitation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const fields = new FormData(form)
+    if (fields.get("password") !== fields.get("confirm_password")) {
+      setError("Passwords do not match.")
+      return
+    }
+    setBusy(true); setError("")
+    try {
+      const user = await apiRequest<AuthUser>("/auth/invitations/accept", {
+        method: "POST",
+        body: JSON.stringify({ token: inviteToken, password: fields.get("password") }),
+      })
+      window.history.replaceState(null, "", window.location.pathname)
+      setInviteToken("")
+      setOwnerId(user.id)
+      setAccount(user)
+      form.reset()
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await apiRequest("/auth/logout", { method: "POST" })
+      setOwnerId("")
+      setAccount(null)
+      setError("")
+    } catch (cause) {
+      setError((cause as Error).message)
+    }
+  }
+
+  if (account === undefined) {
+    return <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">Checking your session…</main>
+  }
+  if (account) return <Dashboard account={account} onLogout={handleLogout} />
+
+  return (
+    <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#e8eef3] px-4 py-12">
+      <div className="absolute inset-x-0 top-0 h-56 bg-gradient-to-br from-[#102e46] via-[#174e64] to-[#287b83]" aria-hidden="true" />
+      <Card className="relative w-full max-w-[29rem] border-white/70 shadow-[0_24px_70px_rgba(14,42,54,0.19)]">
+        <CardHeader className="space-y-5 pb-3">
+          <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[#0e5664] text-lg font-black text-white">C</span><div><p className="text-sm font-semibold tracking-tight">CCL AI Suite</p><p className="text-xs text-muted-foreground">Private team workspace</p></div></div>
+          <div><CardTitle className="text-2xl tracking-tight">{inviteToken ? "Accept your invitation" : "Welcome back"}</CardTitle><CardDescription className="mt-2 text-sm">{inviteToken ? "Set a password to activate your team account." : "Sign in to continue to your projects and operations."}</CardDescription></div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {error && <Alert variant="destructive" role="alert"><AlertDescription>{error}</AlertDescription></Alert>}
+          {inviteToken ? (
+            <form id="invitation-form" onSubmit={handleAcceptInvitation} className="grid gap-4">
+              <div className="grid gap-1.5"><Label htmlFor="new-password">Password</Label><Input id="new-password" name="password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /><p className="text-xs text-muted-foreground">Use at least 12 characters.</p></div>
+              <div className="grid gap-1.5"><Label htmlFor="confirm-password">Confirm password</Label><Input id="confirm-password" name="confirm_password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /></div>
+              <Button type="submit" disabled={busy}>{busy ? "Activating…" : "Activate account"}</Button>
+              <Button type="button" variant="ghost" onClick={() => { window.history.replaceState(null, "", window.location.pathname); setInviteToken(""); setError("") }}>Back to sign in</Button>
+            </form>
+          ) : (
+            <form id="login-form" onSubmit={handleLogin} className="grid gap-4">
+              <div className="grid gap-1.5"><Label htmlFor="login-email">Email address</Label><Input id="login-email" name="email" type="email" autoComplete="username" required autoFocus /></div>
+              <div className="grid gap-1.5"><Label htmlFor="login-password">Password</Label><Input id="login-password" name="password" type="password" autoComplete="current-password" required /></div>
+              <Button type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
+            </form>
+          )}
+          <p className="border-t pt-4 text-center text-xs text-muted-foreground">Accounts are created by invitation from a team administrator.</p>
+        </CardContent>
+      </Card>
+    </main>
   )
 }

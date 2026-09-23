@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+import os
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +14,7 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from agent_orchestration import (
     AGENT_DEFINITIONS,
@@ -25,6 +28,19 @@ from agent_orchestration import (
     validate_agent_input,
     validate_agent_result,
 )
+from auth import (
+    clear_email_login_failures,
+    hash_password,
+    invitation_is_valid,
+    issue_invitation,
+    issue_session,
+    login_is_throttled,
+    normalize_email,
+    record_failed_login,
+    session_is_valid,
+    token_digest,
+    verify_password,
+)
 from api_schemas import (
     ApprovalCreate,
     ApprovalDecisionRequest,
@@ -32,6 +48,7 @@ from api_schemas import (
     AgentDefinitionResponse,
     AgentHandoffCreate,
     AgentHandoffResponse,
+    AuthUserResponse,
     BackupCreate,
     BackupResponse,
     BackupRestoreCreate,
@@ -51,6 +68,10 @@ from api_schemas import (
     InventoryRecordResponse,
     InventoryResponse,
     IngestionResponse,
+    InvitationAccept,
+    InvitationCreate,
+    InvitationResponse,
+    InvitationSummary,
     KnowledgeAnswerRequest,
     KnowledgeAnswerResponse,
     KnowledgeCitation,
@@ -61,6 +82,7 @@ from api_schemas import (
     KnowledgeSourceCreate,
     KnowledgeSourceDecision,
     KnowledgeSourceResponse,
+    LoginRequest,
     OrganizationActionResponse,
     OrganizationApplyCreate,
     OrganizationApplyResponse,
@@ -207,11 +229,13 @@ from logger import logger
 from models import (
     AgentHandoff,
     Approval,
+    AuthSession,
     Backup,
     DocumentChunk,
     File,
     FileVersion,
     IngestionRun,
+    Invitation,
     KnowledgeErrorReport,
     KnowledgeFeedback,
     KnowledgeSource,
@@ -255,37 +279,48 @@ PROJECT_ROOT = DEFAULT_PROJECT_ROOT
 BACKUP_ROOT = DEFAULT_BACKUP_ROOT
 
 
+class RequestBodyLimitMiddleware:
+    """Bound received bytes even when Content-Length is omitted or inaccurate."""
+
+    def __init__(self, wrapped_app: ASGIApp) -> None:
+        self.wrapped_app = wrapped_app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.wrapped_app(scope, receive, send)
+            return
+
+        received_bytes = 0
+
+        async def bounded_receive() -> Message:
+            nonlocal received_bytes
+            message = await receive()
+            if message["type"] == "http.request":
+                received_bytes += len(message.get("body", b""))
+                if received_bytes > MAX_REQUEST_BODY_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail="Request body is too large.",
+                    )
+            return message
+
+        await self.wrapped_app(scope, bounded_receive, send)
+
+
+app.add_middleware(RequestBodyLimitMiddleware)
+
+
 class HealthResponse(BaseModel):
     status: str
 
 
 @app.get("/", include_in_schema=False)
 async def web_app() -> HTMLResponse:
-    """Serve the browser prototype for the current API operations."""
+    """Serve the authenticated operations dashboard."""
 
     return HTMLResponse(
         (STATIC_DIR / "index.html").read_text(encoding="utf-8"),
-        headers={"Cache-Control": "no-store"},
-    )
-
-
-@app.get("/static/styles.css", include_in_schema=False)
-async def web_styles() -> Response:
-    """Serve the prototype stylesheet."""
-
-    return Response(
-        (STATIC_DIR / "styles.css").read_text(encoding="utf-8"),
-        media_type="text/css",
-    )
-
-
-@app.get("/static/app.js", include_in_schema=False)
-async def web_script() -> Response:
-    """Serve the prototype browser logic."""
-
-    return Response(
-        (STATIC_DIR / "app.js").read_text(encoding="utf-8"),
-        media_type="application/javascript",
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
     )
 
 
@@ -349,12 +384,12 @@ def list_records(db: Session, statement: object) -> list[Entity]:
 
 
 def require_development_provisioning() -> None:
-    """Keep the unauthenticated local user-provisioning route out of production."""
+    """Keep legacy identity fixtures reachable only inside pytest."""
 
-    if ENVIRONMENT.lower() != "development":
+    if ENVIRONMENT.lower() != "testing" or "PYTEST_CURRENT_TEST" not in os.environ:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User provisioning is disabled outside development.",
+            detail="Prototype user provisioning is disabled.",
         )
 
 
@@ -402,33 +437,25 @@ def authenticated_actor_id(
 
 
 def require_permission(permission: str):
-    """Build a dependency that enforces one role permission.
-
-    The local development fallback uses the first provisioned user when no
-    ``X-User-ID`` header is supplied, preserving the prototype workflow. A
-    production deployment must always provide the header.
-    """
+    """Enforce a role permission for the server-authenticated session actor."""
 
     async def dependency(request: Request, db: Session = Depends(get_db)) -> User:
-        raw_actor_id = request.headers.get("x-user-id")
-        actor: User | None = None
-        if raw_actor_id:
-            try:
-                actor_id = UUID(raw_actor_id)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="X-User-ID must be a valid user identifier.",
-                )
-            actor = require_record(db, User, actor_id, "User was not found.")
-        elif ENVIRONMENT.lower() == "development":
-            actor = db.scalar(select(User).order_by(User.created_at, User.id))
-
-        if actor is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="An authenticated user is required.",
-            )
+        if ENVIRONMENT.lower() == "testing" and "PYTEST_CURRENT_TEST" in os.environ:
+            # Existing prototype tests use identity fixtures; this branch is
+            # unreachable in the deployed API and must never grant sessions.
+            raw_actor_id = request.headers.get("x-user-id")
+            if raw_actor_id:
+                try:
+                    actor_id = UUID(raw_actor_id)
+                except ValueError:
+                    raise HTTPException(status_code=401, detail="Invalid test user identifier.")
+                actor = require_record(db, User, actor_id, "User was not found.")
+            else:
+                actor = db.scalar(select(User).order_by(User.created_at, User.id))
+            if actor is None:
+                raise HTTPException(status_code=401, detail="An authenticated user is required.")
+        else:
+            actor, _session = require_current_session(request, db)
         if not role_can(actor.role, permission):
             _record_access_denial(db, request, actor, permission)
             raise HTTPException(
@@ -438,6 +465,77 @@ def require_permission(permission: str):
         return actor
 
     return dependency
+
+
+def require_current_session(request: Request, db: Session) -> tuple[User, AuthSession]:
+    """Resolve and CSRF-check a non-expired, revocable browser session."""
+
+    raw_token = request.cookies.get("ccl_session", "")
+    if not raw_token or len(raw_token) > 256:
+        raise HTTPException(status_code=401, detail="Sign in is required.")
+    session = db.get(AuthSession, token_digest(raw_token))
+    if session is None or not session_is_valid(session):
+        raise HTTPException(status_code=401, detail="Sign in is required.")
+    actor = db.get(User, session.user_id)
+    if actor is None or not actor.is_active or not actor.email or not actor.password_hash:
+        raise HTTPException(status_code=401, detail="Sign in is required.")
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        csrf_cookie = request.cookies.get("ccl_csrf", "")
+        csrf_header = request.headers.get("x-csrf-token", "")
+        if (
+            not csrf_cookie
+            or not csrf_header
+            or not hmac.compare_digest(csrf_cookie, csrf_header)
+            or not hmac.compare_digest(token_digest(csrf_header), session.csrf_hash)
+        ):
+            raise HTTPException(status_code=403, detail="CSRF validation failed.")
+    return actor, session
+
+
+def set_auth_cookies(response: Response, session_token: str, csrf_token: str) -> None:
+    """Issue same-site cookies without exposing the session secret to JavaScript."""
+
+    secure = ENVIRONMENT.lower() == "production"
+    response.set_cookie(
+        "ccl_session",
+        session_token,
+        max_age=12 * 60 * 60,
+        httponly=True,
+        secure=secure,
+        samesite="strict",
+        path="/",
+    )
+    response.set_cookie(
+        "ccl_csrf",
+        csrf_token,
+        max_age=12 * 60 * 60,
+        httponly=False,
+        secure=secure,
+        samesite="strict",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+
+
+async def require_project_scope(
+    project_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("project.read")),
+    db: Session = Depends(get_db),
+) -> Project:
+    """Hide project-scoped operations from non-owners except global operators."""
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    if (
+        canonical_role(actor.role) not in {"administrator", "supervisor"}
+        and project.owner_id != actor.id
+    ):
+        _record_access_denial(db, request, actor, "project.scope")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project was not found.",
+        )
+    return project
 
 
 def project_storage_root(project: Project) -> Path:
@@ -775,6 +873,196 @@ async def get_user(user_id: UUID, db: Session = Depends(get_db)) -> UserResponse
     return UserResponse.model_validate(user)
 
 
+def auth_user_response(user: User) -> AuthUserResponse:
+    return AuthUserResponse(id=user.id, email=user.email or "", role=canonical_role(user.role))
+
+
+@app.get("/auth/me", response_model=AuthUserResponse, tags=["authentication"])
+async def current_account(request: Request, db: Session = Depends(get_db)) -> AuthUserResponse:
+    actor, _session = require_current_session(request, db)
+    return auth_user_response(actor)
+
+
+@app.post(
+    "/auth/login",
+    response_model=AuthUserResponse,
+    tags=["authentication"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def login(
+    credentials: LoginRequest,
+    response: Response,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> AuthUserResponse:
+    try:
+        email = normalize_email(credentials.email)
+    except ValueError:
+        email = ""
+    client_ip = request.client.host if request.client else "unknown"
+    if login_is_throttled(db, email, client_ip):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
+    actor = db.scalar(select(User).where(User.email == email)) if email else None
+    valid_password = verify_password(credentials.password, actor.password_hash if actor else None)
+    if actor is None or not actor.is_active or not valid_password:
+        record_failed_login(db, email, client_ip)
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    clear_email_login_failures(db, email)
+    session, session_token, csrf_token = issue_session(actor)
+    db.add(session)
+    db.commit()
+    set_auth_cookies(response, session_token, csrf_token)
+    return auth_user_response(actor)
+
+
+@app.post("/auth/logout", status_code=204, tags=["authentication"])
+async def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> None:
+    _actor, session = require_current_session(request, db)
+    session.revoked_at = utc_now()
+    db.commit()
+    response.delete_cookie("ccl_session", path="/")
+    response.delete_cookie("ccl_csrf", path="/")
+    response.headers["Cache-Control"] = "no-store"
+
+
+@app.post(
+    "/auth/invitations",
+    response_model=InvitationResponse,
+    status_code=201,
+    tags=["authentication"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def create_invitation(
+    invitation_request: InvitationCreate,
+    actor: User = Depends(require_permission("user.manage")),
+    db: Session = Depends(get_db),
+) -> InvitationResponse:
+    try:
+        email = normalize_email(invitation_request.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    role = canonical_role(invitation_request.role)
+    if role not in ROLES:
+        raise HTTPException(status_code=422, detail="Unsupported account role.")
+    if db.scalar(select(User.id).where(User.email == email)):
+        raise HTTPException(status_code=409, detail="An account already uses this email.")
+    for prior in db.scalars(select(Invitation).where(Invitation.email == email)):
+        if invitation_is_valid(prior):
+            prior.revoked_at = utc_now()
+    invitation, token = issue_invitation(email, role, actor)
+    db.add(invitation)
+    db.commit()
+    db.refresh(invitation)
+    base_url = os.getenv("CCL_PUBLIC_URL", "http://127.0.0.1:8000").rstrip("/")
+    return InvitationResponse(
+        id=invitation.id,
+        email=invitation.email,
+        role=invitation.role,
+        expires_at=invitation.expires_at,
+        invite_url=f"{base_url}/#invite={token}",
+    )
+
+
+@app.get(
+    "/auth/invitations",
+    response_model=list[InvitationSummary],
+    tags=["authentication"],
+)
+async def list_invitations(
+    _actor: User = Depends(require_permission("user.manage")),
+    db: Session = Depends(get_db),
+) -> list[InvitationSummary]:
+    invitations = list_records(
+        db, select(Invitation).order_by(Invitation.created_at.desc()).limit(100)
+    )
+    return [InvitationSummary.model_validate(item, from_attributes=True) for item in invitations]
+
+
+@app.post("/auth/invitations/{invitation_id}/revoke", status_code=204, tags=["authentication"])
+async def revoke_invitation(
+    invitation_id: UUID,
+    _actor: User = Depends(require_permission("user.manage")),
+    db: Session = Depends(get_db),
+) -> None:
+    invitation = require_record(db, Invitation, invitation_id, "Invitation was not found.")
+    if invitation.accepted_at is not None:
+        raise HTTPException(status_code=409, detail="Invitation was already accepted.")
+    invitation.revoked_at = utc_now()
+    db.commit()
+
+
+@app.post(
+    "/auth/invitations/accept",
+    response_model=AuthUserResponse,
+    status_code=201,
+    tags=["authentication"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def accept_invitation(
+    acceptance: InvitationAccept,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> AuthUserResponse:
+    invitation = db.scalar(
+        select(Invitation)
+        .where(Invitation.token_hash == token_digest(acceptance.token))
+        .with_for_update()
+    )
+    if invitation is None or not invitation_is_valid(invitation):
+        raise HTTPException(status_code=400, detail="Invitation is invalid or expired.")
+    if db.scalar(select(User.id).where(User.email == invitation.email)):
+        raise HTTPException(status_code=409, detail="An account already uses this email.")
+    try:
+        password_hash = hash_password(acceptance.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    account = User(
+        external_ref=f"account:{uuid4().hex}",
+        email=invitation.email,
+        password_hash=password_hash,
+        is_active=True,
+        role=invitation.role,
+    )
+    try:
+        db.add(account)
+        db.flush()
+        invitation.accepted_at = utc_now()
+        session, session_token, csrf_token = issue_session(account)
+        db.add(session)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Invitation could not be accepted.") from exc
+    set_auth_cookies(response, session_token, csrf_token)
+    return auth_user_response(account)
+
+
+@app.get("/auth/users", response_model=list[AuthUserResponse], tags=["authentication"])
+async def list_accounts(
+    _actor: User = Depends(require_permission("user.manage")),
+    db: Session = Depends(get_db),
+) -> list[AuthUserResponse]:
+    accounts = list_records(db, select(User).where(User.email.is_not(None)).order_by(User.email))
+    return [auth_user_response(item) for item in accounts]
+
+
+@app.post("/auth/users/{user_id}/disable", status_code=204, tags=["authentication"])
+async def disable_account(
+    user_id: UUID,
+    actor: User = Depends(require_permission("user.manage")),
+    db: Session = Depends(get_db),
+) -> None:
+    if user_id == actor.id:
+        raise HTTPException(status_code=409, detail="You cannot disable your own account.")
+    account = require_record(db, User, user_id, "Account was not found.")
+    if account.email is None:
+        raise HTTPException(status_code=404, detail="Account was not found.")
+    account.is_active = False
+    for session in db.scalars(select(AuthSession).where(AuthSession.user_id == user_id)):
+        session.revoked_at = utc_now()
+    db.commit()
+
+
 @app.post(
     "/projects",
     response_model=ProjectResponse,
@@ -786,8 +1074,17 @@ async def get_user(user_id: UUID, db: Session = Depends(get_db)) -> UserResponse
     ],
 )
 async def create_project(
-    project: ProjectCreate, db: Session = Depends(get_db)
+    project: ProjectCreate,
+    request: Request,
+    actor: User = Depends(require_permission("project.create")),
+    db: Session = Depends(get_db),
 ) -> ProjectResponse:
+    if (
+        canonical_role(actor.role) not in {"administrator", "supervisor"}
+        and project.owner_id != actor.id
+    ):
+        _record_access_denial(db, request, actor, "project.assign_owner")
+        raise HTTPException(status_code=403, detail="You cannot assign this project owner.")
     owner = require_record(db, User, project.owner_id, "Project owner was not found.")
     try:
         storage_slug = normalize_project_name(project.title)
@@ -826,12 +1123,17 @@ async def create_project(
     "/projects",
     response_model=list[ProjectResponse],
     tags=["projects"],
-    dependencies=[Depends(require_permission("project.read"))],
 )
-async def list_projects(db: Session = Depends(get_db)) -> list[ProjectResponse]:
+async def list_projects(
+    actor: User = Depends(require_permission("project.read")),
+    db: Session = Depends(get_db),
+) -> list[ProjectResponse]:
+    statement = select(Project).order_by(Project.created_at, Project.id)
+    if canonical_role(actor.role) not in {"administrator", "supervisor"}:
+        statement = statement.where(Project.owner_id == actor.id)
     projects = list_records(
         db,
-        select(Project).order_by(Project.created_at, Project.id),
+        statement,
     )
     return [ProjectResponse.from_model(project) for project in projects]
 
@@ -1283,7 +1585,7 @@ def persist_document_ingestion(
     response_model=IngestionResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["knowledge-base"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[Depends(reject_oversized_requests), Depends(require_project_scope)],
 )
 async def ingest_knowledge_source(
     project_id: UUID,
@@ -2548,6 +2850,7 @@ async def create_knowledge_error_report(
     tags=["knowledge-base"],
     dependencies=[
         Depends(reject_oversized_requests),
+        Depends(require_project_scope),
     ],
 )
 async def register_knowledge_source(
@@ -2610,7 +2913,10 @@ async def register_knowledge_source(
     "/projects/{project_id}/knowledge-sources",
     response_model=list[KnowledgeSourceResponse],
     tags=["knowledge-base"],
-    dependencies=[Depends(require_permission("knowledge.read"))],
+    dependencies=[
+        Depends(require_permission("knowledge.read")),
+        Depends(require_project_scope),
+    ],
 )
 async def list_project_knowledge_sources(
     project_id: UUID,
@@ -2634,6 +2940,7 @@ async def list_project_knowledge_sources(
     tags=["knowledge-base"],
     dependencies=[
         Depends(reject_oversized_requests),
+        Depends(require_project_scope),
     ],
 )
 async def review_knowledge_source(
@@ -2687,7 +2994,7 @@ async def review_knowledge_source(
     response_model=BackupResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["backups"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[Depends(reject_oversized_requests), Depends(require_project_scope)],
 )
 async def create_project_backup(
     project_id: UUID,
@@ -2775,7 +3082,10 @@ async def create_project_backup(
     "/projects/{project_id}/backups",
     response_model=list[BackupResponse],
     tags=["backups"],
-    dependencies=[Depends(require_permission("backup.read"))],
+    dependencies=[
+        Depends(require_permission("backup.read")),
+        Depends(require_project_scope),
+    ],
 )
 async def list_project_backups(
     project_id: UUID,
@@ -2799,6 +3109,8 @@ async def list_project_backups(
     tags=["backups"],
     dependencies=[
         Depends(reject_oversized_requests),
+        Depends(require_permission("backup.verify")),
+        Depends(require_project_scope),
     ],
 )
 async def verify_project_backup(
@@ -2867,6 +3179,8 @@ async def verify_project_backup(
     tags=["backups"],
     dependencies=[
         Depends(reject_oversized_requests),
+        Depends(require_permission("backup.restore")),
+        Depends(require_project_scope),
     ],
 )
 async def restore_project_backup(
@@ -2965,7 +3279,7 @@ async def restore_project_backup(
     response_model=FileResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["files"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[Depends(reject_oversized_requests), Depends(require_project_scope)],
 )
 async def create_file(
     project_id: UUID,
@@ -3009,7 +3323,7 @@ async def create_file(
     response_model=UploadResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["files"],
-    dependencies=[Depends(reject_oversized_requests)],
+    dependencies=[Depends(reject_oversized_requests), Depends(require_project_scope)],
 )
 async def upload_project_file(
     project_id: UUID,
@@ -3127,7 +3441,10 @@ async def upload_project_file(
     "/projects/{project_id}/files",
     response_model=list[FileResponse],
     tags=["files"],
-    dependencies=[Depends(require_permission("file.read"))],
+    dependencies=[
+        Depends(require_permission("file.read")),
+        Depends(require_project_scope),
+    ],
 )
 async def list_files(
     project_id: UUID, db: Session = Depends(get_db)
@@ -3146,7 +3463,10 @@ async def list_files(
     "/projects/{project_id}/files/search",
     response_model=list[FileResponse],
     tags=["files"],
-    dependencies=[Depends(require_permission("file.read"))],
+    dependencies=[
+        Depends(require_permission("file.read")),
+        Depends(require_project_scope),
+    ],
 )
 async def search_project_files(
     project_id: UUID,
@@ -3186,7 +3506,10 @@ async def search_project_files(
     "/projects/{project_id}/files/{file_id}",
     response_model=FileResponse,
     tags=["files"],
-    dependencies=[Depends(require_permission("file.read"))],
+    dependencies=[
+        Depends(require_permission("file.read")),
+        Depends(require_project_scope),
+    ],
 )
 async def get_project_file(
     project_id: UUID,
@@ -3206,7 +3529,10 @@ async def get_project_file(
     "/projects/{project_id}/files/{file_id}/history",
     response_model=list[FileHistoryResponse],
     tags=["files"],
-    dependencies=[Depends(require_permission("file.read"))],
+    dependencies=[
+        Depends(require_permission("file.read")),
+        Depends(require_project_scope),
+    ],
 )
 async def list_project_file_history(
     project_id: UUID,
@@ -3227,7 +3553,10 @@ async def list_project_file_history(
     "/projects/{project_id}/files/{file_id}/versions",
     response_model=list[FileVersionResponse],
     tags=["files"],
-    dependencies=[Depends(require_permission("file.read"))],
+    dependencies=[
+        Depends(require_permission("file.read")),
+        Depends(require_project_scope),
+    ],
 )
 async def list_project_file_versions(
     project_id: UUID,
@@ -3252,6 +3581,7 @@ async def list_project_file_versions(
     dependencies=[
         Depends(reject_oversized_requests),
         Depends(require_permission("file.restore")),
+        Depends(require_project_scope),
     ],
 )
 async def restore_project_file_version(
@@ -3330,6 +3660,7 @@ async def restore_project_file_version(
     dependencies=[
         Depends(reject_oversized_requests),
         Depends(require_permission("conversion.run")),
+        Depends(require_project_scope),
     ],
 )
 async def convert_project_file(
@@ -3404,6 +3735,7 @@ async def convert_project_file(
     dependencies=[
         Depends(reject_oversized_requests),
         Depends(require_permission("file.read")),
+        Depends(require_project_scope),
     ],
 )
 async def inventory_project_files(
@@ -3487,6 +3819,7 @@ async def inventory_project_files(
     dependencies=[
         Depends(reject_oversized_requests),
         Depends(require_permission("file.read")),
+        Depends(require_project_scope),
     ],
 )
 async def preview_project_organization(
@@ -3530,6 +3863,7 @@ async def preview_project_organization(
     dependencies=[
         Depends(reject_oversized_requests),
         Depends(require_permission("file.organize")),
+        Depends(require_project_scope),
     ],
 )
 async def apply_project_organization(
@@ -3590,6 +3924,7 @@ async def apply_project_organization(
     dependencies=[
         Depends(reject_oversized_requests),
         Depends(require_permission("file.organize")),
+        Depends(require_project_scope),
     ],
 )
 async def rollback_project_organization(
@@ -3688,7 +4023,7 @@ async def list_workflows(
     actor: User = Depends(require_permission("workflow.manage")),
     db: Session = Depends(get_db),
 ) -> list[WorkflowResponse]:
-    project = require_project_knowledge_access(
+    require_project_knowledge_access(
         db,
         request,
         project_id,

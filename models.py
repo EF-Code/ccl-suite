@@ -1,9 +1,4 @@
-"""Normalized SQLAlchemy models for the CCL Suite foundation.
-
-The schema stores opaque references and operational metadata.  It deliberately
-does not model passwords, access tokens, file contents, request bodies, or
-free-form personal profiles.
-"""
+"""Normalized SQLAlchemy models for the CCL Suite foundation."""
 
 from __future__ import annotations
 
@@ -37,17 +32,15 @@ def utc_now() -> datetime:
 
 
 class User(Base):
-    """Minimal application identity record.
-
-    ``external_ref`` is an opaque identifier supplied by a trusted identity
-    boundary.  Passwords, tokens, email addresses, and profile data remain
-    outside this database.
-    """
+    """Application identity; legacy prototype identities remain inactive."""
 
     __tablename__ = "users"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     external_ref: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    email: Mapped[str | None] = mapped_column(String(254), unique=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="member")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
@@ -117,6 +110,54 @@ class User(Base):
         back_populates="actor",
         foreign_keys=lambda: [ResearchReviewEvent.actor_id],
     )
+
+
+class Invitation(Base):
+    """Single-use invitation issued by an administrator."""
+
+    __tablename__ = "invitations"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(254), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    invited_by_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class AuthSession(Base):
+    """Revocable server-side browser session; raw tokens are never stored."""
+
+    __tablename__ = "auth_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    csrf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class AuthThrottle(Base):
+    """Bound login attempts without storing raw email addresses or IPs."""
+
+    __tablename__ = "auth_throttles"
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_started: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Project(Base):

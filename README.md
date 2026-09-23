@@ -10,34 +10,35 @@
  ```bash
 git clone https://github.com/EF-Code/ccl-suite.git
 ```
-- Create a virtual environment
+- Use a Python virtual environment and install dependencies (the commands below
+  use `~/.venv`):
 ```bash
 cd ccl-suite
-python3 -m venv .venv
-```
-- Install dependencies
-```bash
-.venv/bin/python -m pip install -r requirements.txt
+~/.venv/bin/python -m pip install -r requirements.txt
 ```
 
 - Start the API:
 
 ```bash
-.venv/bin/python -m uvicorn main:app --reload
+~/.venv/bin/python -m alembic upgrade head
+~/.venv/bin/python scripts/bootstrap_admin.py --email admin@example.com
+~/.venv/bin/python -m uvicorn main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for interactive API documentation.
-Open `http://127.0.0.1:8000/` for the local operations dashboard prototype.
+Open `http://127.0.0.1:8000/` to sign in to the operations dashboard. The
+bootstrap command prompts for the first administrator's password.
 
 ## API endpoints
 
 - `GET /health` returns the service status.
 - `GET /permissions` returns the administrator, supervisor, staff, and intern
   role-permission matrix.
-- `POST /users` provisions an opaque development user reference. It is disabled
-  when `CCL_ENVIRONMENT` is not `development`.
-- `GET /users/{user_id}` returns one development user by opaque ID and is
-  disabled outside development. It does not expose a user-list endpoint.
+- `POST /auth/login`, `GET /auth/me`, and `POST /auth/logout` manage an
+  authenticated session.
+- Administrators create, list, and revoke one-time account invitations under
+  `/auth/invitations`; invitees accept them at `/auth/invitations/accept`.
+- Administrators can list and disable accounts under `/auth/users`.
 - `POST /projects` creates a database-backed project from a title, description,
   and existing user `owner_id`.
 - `GET /projects` lists projects persisted in the database.
@@ -138,30 +139,47 @@ available for the normal ingestion workflow.
 The [representative media operations corpus](samples/knowledge/representative-media-company/README.md)
 provides a clearly labelled, sanitized end-to-end acceptance set.
 
-Protected routes accept the authenticated user ID in the `X-User-ID` header.
-Development requests without the header use the first provisioned user for
-the local prototype; non-development deployments require the header. Denied
-decisions are recorded as `access.denied` security events. Mutation actor
-fields are bound to the authenticated user; supplied `uploaded_by_id`,
+Protected routes require an active server-side session. An `X-User-ID` header
+does not authenticate a production or development request. Login sets a
+`HttpOnly`, `SameSite=Strict` session cookie and a CSRF cookie; state-changing
+requests send the latter in `X-CSRF-Token`. Logout and administrator account
+disable revoke sessions. Denied decisions are recorded as `access.denied`
+security events. Mutation actor fields are bound to the authenticated actor;
+supplied `uploaded_by_id`,
 `created_by_id`, `requested_by_id`, `approved_by_id`, and security-event
 `actor_id` values must match that user.
 
-Request bodies are limited to 1 MiB. The API returns `404` when the supplied
-`owner_id` does not identify an existing user. User creation and authentication
-are separate concerns; the user route is only a local development provisioning
-helper and is not an authentication mechanism.
+There is no public sign-up. Bootstrap the first administrator once, then have
+that administrator create invitations in the Setup view. Each link appears
+once, expires, and is accepted once. Share it privately; no automatic email
+delivery is configured. Invite tokens are carried in the URL fragment so
+they are not sent in the initial page request. Existing pre-migration demo
+users remain in the database but are inactive until explicitly replaced with
+invited accounts; their project/file data is not erased. Set `CCL_PUBLIC_URL`
+to the browser-facing origin for correct invitation links.
+
+For a remote deployment, use HTTPS, set `CCL_ENVIRONMENT=production` (for
+Secure cookies), set `CCL_PUBLIC_URL` to the HTTPS origin, and terminate TLS at
+a trusted reverse proxy. The default Compose ports bind to loopback only.
+There is not yet a self-service password-reset flow; an administrator must
+handle lost credentials through an operational recovery procedure.
+
+Request bodies are limited to 1 MiB. A new project's owner must be the
+authenticated account unless the actor has administrative or supervisory
+privileges. The legacy development user routes are unavailable outside the
+isolated test suite.
 
 ## Database setup
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://localhost/ccl_suite'
-.venv/bin/python -m alembic upgrade head
+~/.venv/bin/python -m alembic upgrade head
 ```
 
 To roll the local schema back to its empty state:
 
 ```bash
-.venv/bin/python -m alembic downgrade base
+~/.venv/bin/python -m alembic downgrade base
 ```
 
 ## Docker development environment
@@ -177,6 +195,18 @@ docker compose up --build -d
 The API container waits for PostgreSQL, applies the Alembic migration, and then
 starts Uvicorn. The API is available at `http://127.0.0.1:8000` and its
 interactive documentation is at `/docs`.
+
+Create the first administrator in the running API container. This prompts for
+a password and refuses to create a second bootstrap administrator:
+
+```bash
+docker compose exec api python scripts/bootstrap_admin.py --email you@example.com
+```
+
+Sign in at the dashboard, then use Setup to invite teammates by email and
+role. The invitation link must be copied and shared privately. Configure
+`CCL_PUBLIC_URL` in `.env` if users open the site at a different origin, then
+recreate the API container. Do not send invitation links to untrusted parties.
 
 Check container health and startup logs with:
 
@@ -208,33 +238,26 @@ set `TEST_DATABASE_URL` to the same local database, then run the opt-in test:
 
 ```bash
 export TEST_DATABASE_URL='postgresql+psycopg://ccl_suite:LOCAL_PASSWORD@localhost:5432/ccl_suite'
-.venv/bin/python -m pytest -m integration
+~/.venv/bin/python -m pytest -m integration
 ```
 
 Without `TEST_DATABASE_URL`, the integration test is skipped and the default
 suite remains self-contained.
 
-After startup, provision a local development user and use its returned `id` as
-the `owner_id` when creating a project:
-
-```bash
-curl -X POST http://127.0.0.1:8000/users \
-  -H 'Content-Type: application/json' \
-  -d '{"external_ref":"local-owner"}'
-```
+The dashboard uses the signed-in account as the owner when creating a project.
 
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest
+~/.venv/bin/python -m pytest
 ```
 
 To measure branch coverage locally:
 
 ```bash
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m coverage run -m pytest
-.venv/bin/python -m coverage report -m
+~/.venv/bin/python -m pip install -r requirements-dev.txt
+~/.venv/bin/python -m coverage run -m pytest
+~/.venv/bin/python -m coverage report -m
 ```
 
 The dashboard workflow smoke test is opt-in because it needs a running local
@@ -242,16 +265,18 @@ API and a Chromium-compatible browser. Install the browser once, start the API
 with an isolated development database and project root, then run:
 
 ```bash
-.venv/bin/python -m pip install -r requirements-browser.txt
-.venv/bin/python -m playwright install chromium
+~/.venv/bin/python -m pip install -r requirements-browser.txt
+~/.venv/bin/python -m playwright install chromium
 RUN_BROWSER_TESTS=1 \
   DASHBOARD_BASE_URL=http://127.0.0.1:8000 \
-  .venv/bin/python -m pytest -m browser tests/test_dashboard_browser.py
+  DASHBOARD_TEST_EMAIL=you@example.com \
+  DASHBOARD_TEST_PASSWORD='your-isolated-test-password' \
+  ~/.venv/bin/python -m pytest -m browser tests/test_dashboard_browser.py
 ```
 
-The test follows the browser flow from the health check through owner and
-project creation, folder generation, inventory scanning, organisation preview
-and apply, and journal rollback. It skips during the normal suite unless
+Use an isolated disposable database for this opt-in browser suite: it creates
+projects and files. The test follows login, project creation, folder generation,
+inventory, and guarded operations. It skips during the normal suite unless
 `RUN_BROWSER_TESTS=1` is set.
 
 ## Folder Standards
@@ -347,15 +372,15 @@ Rollback also refuses to move a file whose recorded hash has changed.
 
 ## Operations dashboard
 
-The browser prototype at `http://127.0.0.1:8000/` exposes the current local
-operations in one screen: health checks, development owner and project setup,
+The authenticated dashboard at `http://127.0.0.1:8000/` exposes the current
+operations in one screen: health checks, account invitations and project setup,
 folder generation, inventory scanning, controlled conversion, and organiser
 preview/apply/rollback. Select a project in the project table to populate the
 inventory, conversion, and organisation forms.
 
-The dashboard is intentionally a local development interface. It does not add
-authentication, and it only exposes operations already implemented by the API
-and safe command-line modules.
+The dashboard authenticates with server-side sessions and exposes operations
+already implemented by the API and safe command-line modules. The default
+Compose configuration is intentionally loopback-only.
 
 ## Controlled file conversion
 

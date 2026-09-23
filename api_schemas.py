@@ -55,6 +55,50 @@ class UserResponse(BaseModel):
     updated_at: datetime
 
 
+class AuthUserResponse(BaseModel):
+    id: UUID
+    email: str
+    role: str
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class InvitationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    email: str = Field(min_length=3, max_length=254)
+    role: str = Field(default="staff", min_length=1, max_length=32)
+
+
+class InvitationResponse(BaseModel):
+    id: UUID
+    email: str
+    role: str
+    expires_at: datetime
+    invite_url: str
+
+
+class InvitationSummary(BaseModel):
+    id: UUID
+    email: str
+    role: str
+    expires_at: datetime
+    accepted_at: datetime | None
+    revoked_at: datetime | None
+
+
+class InvitationAccept(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=32, max_length=256)
+    password: str = Field(min_length=12, max_length=1024)
+
+
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 

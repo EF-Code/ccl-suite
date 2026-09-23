@@ -29,7 +29,6 @@ from models import (
     KnowledgeErrorReport,
     KnowledgeFeedback,
     KnowledgeSource,
-    Project,
     SecurityEvent,
     User,
 )
@@ -57,9 +56,10 @@ app.dependency_overrides[get_db] = override_get_db
 
 
 @pytest.fixture(autouse=True)
-def isolated_database() -> Generator[None, None, None]:
+def isolated_database(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     global TEST_OWNER_ID
 
+    monkeypatch.setattr("main.ENVIRONMENT", "testing")
     Base.metadata.drop_all(TEST_ENGINE)
     Base.metadata.create_all(TEST_ENGINE)
 
@@ -114,21 +114,9 @@ def test_dashboard_ui_exposes_guided_workflow_and_protected_actions() -> None:
     assert 'id="confirm-accept"' in response.text
 
 
-def test_serves_web_prototype_assets() -> None:
-    response = request("GET", "/static/app.js")
-
-    assert response.status_code == 200
-    assert "application/javascript" in response.headers["content-type"]
-    assert "refreshHealth" in response.text
-    assert "backup-create" in response.text
-
-
-def test_serves_stylesheet_asset() -> None:
-    response = request("GET", "/static/styles.css")
-
-    assert response.status_code == 200
-    assert "text/css" in response.headers["content-type"]
-    assert ".dashboard-grid" in response.text
+def test_obsolete_prototype_assets_are_not_served() -> None:
+    assert request("GET", "/static/app.js").status_code == 404
+    assert request("GET", "/static/styles.css").status_code == 404
 
 
 def test_database_lookup_failure_is_translated_to_503() -> None:
@@ -617,9 +605,13 @@ def test_knowledge_source_review_requires_privileged_role_and_rejection_reason()
 
 
 def test_rejects_unknown_project_owner() -> None:
+    supervisor = request(
+        "POST", "/users", json={"external_ref": "owner-lookup-supervisor", "role": "supervisor"}
+    )
     response = request(
         "POST",
         "/projects",
+        headers={"X-User-ID": supervisor.json()["id"]},
         json={
             "title": "Unowned",
             "owner_id": str(uuid4()),
@@ -658,6 +650,22 @@ def test_rejects_unknown_project_fields() -> None:
 
 def test_rejects_oversized_request_body() -> None:
     response = request("POST", "/projects", content=b"x" * (MAX_REQUEST_BODY_BYTES + 1))
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Request body is too large."}
+
+
+def test_rejects_oversized_stream_without_content_length() -> None:
+    async def body() -> AsyncIterator[bytes]:
+        yield b"x" * MAX_REQUEST_BODY_BYTES
+        yield b"x"
+
+    response = request(
+        "POST",
+        "/projects",
+        content=body(),
+        headers={"content-type": "application/json"},
+    )
 
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body is too large."}
@@ -771,6 +779,63 @@ def test_intern_can_read_but_cannot_create_projects() -> None:
     assert any(event["event_code"] == "access.denied" for event in events.json())
 
 
+def test_project_scoped_file_and_backup_routes_hide_other_owners(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Private Project")
+    project_root = projects_root / str(project["storage_slug"])
+    project_root.mkdir()
+    outsider = request(
+        "POST", "/users", json={"external_ref": "project-outsider", "role": "member"}
+    )
+    supervisor = request(
+        "POST", "/users", json={"external_ref": "project-supervisor", "role": "supervisor"}
+    )
+    outsider_headers = {"X-User-ID": outsider.json()["id"]}
+    supervisor_headers = {"X-User-ID": supervisor.json()["id"]}
+
+    assert request("GET", "/projects", headers=outsider_headers).json() == []
+    supervisor_projects = request("GET", "/projects", headers=supervisor_headers)
+    assert [item["id"] for item in supervisor_projects.json()] == [project["id"]]
+
+    for method, path in (
+        ("GET", f"/projects/{project['id']}/files"),
+        ("GET", f"/projects/{project['id']}/files/search"),
+        ("GET", f"/projects/{project['id']}/backups"),
+        ("GET", f"/projects/{project['id']}/knowledge-sources"),
+        ("POST", f"/projects/{project['id']}/inventory"),
+    ):
+        response = request(method, path, headers=outsider_headers)
+        assert response.status_code == 404, (method, path, response.text)
+
+    file_metadata = request(
+        "POST",
+        f"/projects/{project['id']}/files",
+        headers=outsider_headers,
+        json={
+            "storage_key": "incoming/spoofed.txt",
+            "media_type": "text/plain",
+            "size_bytes": 4,
+            "checksum_sha256": "a" * 64,
+        },
+    )
+    uploaded = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/incoming/spoofed.txt",
+        content=b"test",
+        headers={"content-type": "text/plain", **outsider_headers},
+    )
+    assert file_metadata.status_code == 404
+    assert uploaded.status_code == 404
+    assert request(
+        "GET", f"/projects/{project['id']}/files", headers=supervisor_headers
+    ).status_code == 200
+    assert not (project_root / "incoming" / "spoofed.txt").exists()
+
+
 def test_protected_routes_require_identity_outside_development(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -779,7 +844,7 @@ def test_protected_routes_require_identity_outside_development(
     response = request("GET", "/projects")
 
     assert response.status_code == 401
-    assert response.json() == {"detail": "An authenticated user is required."}
+    assert response.json() == {"detail": "Sign in is required."}
 
 
 def test_get_user_returns_not_found_for_unknown_id() -> None:
@@ -869,13 +934,13 @@ def test_mutating_actor_fields_cannot_be_spoofed() -> None:
     file_response = request(
         "POST",
         f"/projects/{project['id']}/files",
-        headers=other_headers,
+        headers={"X-User-ID": TEST_OWNER_ID},
         json={
             "storage_key": "incoming/spoofed.txt",
             "media_type": "text/plain",
             "size_bytes": 4,
             "checksum_sha256": "A" * 64,
-            "uploaded_by_id": TEST_OWNER_ID,
+            "uploaded_by_id": other_id,
         },
     )
     workflow_response = request(
@@ -1199,6 +1264,32 @@ def test_secure_upload_rejects_oversized_body(
 
     assert response.status_code == 413
     assert not (projects_root / "endpoint-project" / "incoming" / "large.txt").exists()
+
+
+def test_secure_upload_rejects_oversized_stream_without_content_length(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project()
+    project_root = projects_root / "endpoint-project"
+    project_root.mkdir()
+
+    async def body() -> AsyncIterator[bytes]:
+        yield b"x" * MAX_REQUEST_BODY_BYTES
+        yield b"x"
+
+    response = request(
+        "PUT",
+        f"/projects/{project['id']}/uploads/incoming/large.txt",
+        content=body(),
+        headers={"content-type": "text/plain"},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Request body is too large."}
+    assert not (project_root / "incoming" / "large.txt").exists()
 
 
 def test_secure_upload_cleans_file_when_metadata_save_fails(
@@ -2170,11 +2261,15 @@ def _create_ingested_source(
     incoming.mkdir(parents=True, exist_ok=True)
     (incoming / filename).write_text(content, encoding="utf-8")
 
-    inventory = request("POST", f"/projects/{project['id']}/inventory")
+    operator_headers = {"X-User-ID": supervisor_id}
+    inventory = request(
+        "POST", f"/projects/{project['id']}/inventory", headers=operator_headers
+    )
     assert inventory.status_code == 201
     file_search = request(
         "GET",
         f"/projects/{project['id']}/files/search?query={filename}&status=active",
+        headers=operator_headers,
     )
     assert file_search.status_code == 200
     file_records = file_search.json()
@@ -2184,6 +2279,7 @@ def _create_ingested_source(
     registered = request(
         "POST",
         f"/projects/{project['id']}/knowledge-sources",
+        headers=operator_headers,
         json={
             "file_id": file_record["id"],
             "owner_id": owner_id or TEST_OWNER_ID,
@@ -2344,6 +2440,7 @@ def test_knowledge_feedback_and_error_reports_are_scoped_and_bounded() -> None:
     other_project = request(
         "POST",
         "/projects",
+        headers={"X-User-ID": other_user.json()["id"]},
         json={"title": "Other Interaction Project", "owner_id": other_user.json()["id"]},
     )
     assert other_project.status_code == 201
@@ -2580,6 +2677,7 @@ def test_semantic_search_blocks_non_owner_staff_and_records_denial(
     created_project = request(
         "POST",
         "/projects",
+        headers={"X-User-ID": other_owner_id},
         json={"title": "Other Owner Search Project", "owner_id": other_owner_id},
     )
     assert created_project.status_code == 201
@@ -2688,6 +2786,7 @@ def test_global_operator_source_filter_cannot_cross_project_boundary(
     other_project_response = request(
         "POST",
         "/projects",
+        headers={"X-User-ID": other_owner.json()["id"]},
         json={"title": "Other Knowledge Project", "owner_id": other_owner.json()["id"]},
     )
     assert other_project_response.status_code == 201
@@ -2737,9 +2836,13 @@ def test_intern_knowledge_request_is_denied_and_audited_before_project_access() 
         json={"external_ref": f"knowledge-intern-{uuid4().hex}", "role": "intern"},
     )
     assert intern.status_code == 201
+    supervisor = request(
+        "POST", "/users", json={"external_ref": "intern-project-supervisor", "role": "supervisor"}
+    )
     project = request(
         "POST",
         "/projects",
+        headers={"X-User-ID": supervisor.json()["id"]},
         json={"title": "Intern Knowledge Project", "owner_id": intern.json()["id"]},
     )
     assert project.status_code == 201
@@ -2774,6 +2877,7 @@ def test_denied_knowledge_routes_short_circuit_before_retrieval(
     project = request(
         "POST",
         "/projects",
+        headers={"X-User-ID": other_owner.json()["id"]},
         json={"title": "Short Circuit Project", "owner_id": other_owner.json()["id"]},
     )
     assert project.status_code == 201
@@ -3137,6 +3241,7 @@ def test_knowledge_answer_preserves_project_access_and_request_bounds(
     created_project = request(
         "POST",
         "/projects",
+        headers={"X-User-ID": other_owner_id},
         json={"title": "Protected Answer Project", "owner_id": other_owner_id},
     )
     assert created_project.status_code == 201
@@ -3968,6 +4073,7 @@ def test_specialist_handoff_cannot_cross_project_access_boundary() -> None:
     other_project = request(
         "POST",
         "/projects",
+        headers={"X-User-ID": other_owner_id},
         json={"title": "Other owner project", "owner_id": other_owner_id},
     )
     assert other_project.status_code == 201

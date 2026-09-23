@@ -1,12 +1,18 @@
-// Central API helpers - mirrors main.py contracts, no backend changes required
+// Same-origin API client. Session cookies are HttpOnly and never held in JavaScript.
 export const API_BASE = ""; // same origin
 export const WORKFLOW_TRACE_LIMIT = 50;
 
+let currentUserId = "";
 export function getOwnerId(): string {
-  return localStorage.getItem("ccl-owner-id") || "";
+  return currentUserId;
 }
 export function setOwnerId(id: string) {
-  localStorage.setItem("ccl-owner-id", id);
+  currentUserId = id;
+}
+
+function csrfToken(): string {
+  const cookie = document.cookie.split("; ").find((item) => item.startsWith("ccl_csrf="));
+  return cookie ? decodeURIComponent(cookie.split("=").slice(1).join("=")) : "";
 }
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -14,22 +20,34 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string> || {}),
   };
-  const ownerId = getOwnerId();
-  if (ownerId && !headers["X-User-ID"] && !headers["x-user-id"]) {
-    headers["X-User-ID"] = ownerId;
+  const method = (options.method || "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method) && csrfToken()) {
+    headers["X-CSRF-Token"] = csrfToken();
   }
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
+    credentials: "same-origin",
   });
   const ct = res.headers.get("content-type") || "";
-  const payload = ct.includes("application/json") ? await res.json() : await res.text();
+  const payload = res.status === 204 || res.status === 205
+    ? null
+    : ct.includes("application/json") ? await res.json() : await res.text();
   if (!res.ok) {
     const detail = typeof payload === "object" && payload !== null ? (payload as any).detail : payload;
     throw new Error(detail || `Request failed (${res.status})`);
   }
   return payload as T;
 }
+
+export type AuthUser = { id: string; email: string; role: string };
+export type InvitationResult = {
+  id: string;
+  email: string;
+  role: string;
+  expires_at: string;
+  invite_url: string;
+};
 
 export type Project = {
   id: string;

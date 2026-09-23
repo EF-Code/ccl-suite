@@ -28,6 +28,9 @@ from models import (
 
 REQUIRED_TABLES = {
     "users",
+    "invitations",
+    "auth_sessions",
+    "auth_throttles",
     "projects",
     "files",
     "file_history",
@@ -213,7 +216,6 @@ def test_sensitive_payload_columns_are_not_stored() -> None:
     }
     forbidden_columns = {
         "password",
-        "password_hash",
         "access_token",
         "refresh_token",
         "request_body",
@@ -223,3 +225,5 @@ def test_sensitive_payload_columns_are_not_stored() -> None:
     }
 
     assert stored_columns.isdisjoint(forbidden_columns)
+    assert "password_hash" in Base.metadata.tables["users"].columns
+    assert "token_hash" in Base.metadata.tables["auth_sessions"].columns
