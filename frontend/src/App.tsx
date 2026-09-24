@@ -243,7 +243,9 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       if (btn) { btn.disabled=true; btn.textContent="Creating…"; btn.setAttribute("aria-busy","true") }
       const invite = await apiRequest<InvitationResult>("/auth/invitations", { method: "POST", body: JSON.stringify(body) })
       setOwnerResult(invite.invite_url)
-      showMessage(`Invitation created for ${invite.email}. Share the link through a trusted channel.`)
+      showMessage(invite.email_sent
+        ? `Invitation email sent to ${invite.email}. Open Mailpit to view it.`
+        : `Invitation created for ${invite.email}. Copy the link below to share it.`)
       form.reset()
     } catch (err: any) {
       showMessage(err.message, "error")
@@ -1235,13 +1237,13 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
                 <p className="text-xs text-muted-foreground">{account.role} · projects you create are linked to this account.</p>
                 {account.role === "administrator" && <>
                   <Separator />
-                  <p id="owner-form-help" className="text-xs text-muted-foreground">Invite a teammate. The link appears once; share it through a trusted channel.</p>
+                  <p id="owner-form-help" className="text-xs text-muted-foreground">Invite a teammate. In the Docker demo, email is captured in Mailpit. A one-time link is also shown below.</p>
                   <form id="user-form" onSubmit={handleInviteMember} className="grid gap-3" aria-describedby="owner-form-help">
                     <div className="grid gap-1.5"><Label htmlFor="invite-email" className="text-xs">Email address</Label><Input id="invite-email" name="email" type="email" required maxLength={254} /></div>
                     <div className="grid gap-1.5"><Label htmlFor="invite-role" className="text-xs">Role</Label><select id="invite-role" name="role" defaultValue="staff" className="h-10 rounded-md border border-input bg-background px-3 text-sm"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="intern">Intern</option><option value="administrator">Administrator</option></select></div>
                     <Button type="submit">Create invitation</Button>
                   </form>
-                  {ownerResult && <div id="user-result" className="quiet-result grid gap-2 text-xs" role="status" aria-live="polite"><span>Share this invitation link:</span><Input aria-label="Invitation link" value={ownerResult} readOnly onFocus={(event) => event.currentTarget.select()} /><Button type="button" size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(ownerResult).then(() => showMessage("Invitation link copied.")).catch(() => showMessage("Select and copy the link manually.", "error"))}>Copy link</Button></div>}
+                  {ownerResult && <div id="user-result" className="quiet-result grid gap-2 text-xs" role="status" aria-live="polite"><span>One-time invitation link:</span><Input aria-label="Invitation link" value={ownerResult} readOnly onFocus={(event) => event.currentTarget.select()} /><Button type="button" size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(ownerResult).then(() => showMessage("Invitation link copied.")).catch(() => showMessage("Select and copy the link manually.", "error"))}>Copy link</Button></div>}
                 </>}
               </CardContent>
             </Card>

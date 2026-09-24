@@ -47,6 +47,7 @@ export type InvitationResult = {
   role: string;
   expires_at: string;
   invite_url: string;
+  email_sent: boolean;
 };
 
 export type Project = {

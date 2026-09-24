@@ -150,11 +150,10 @@ supplied `uploaded_by_id`,
 `actor_id` values must match that user.
 
 There is no public sign-up. Bootstrap the first administrator once, then have
-that administrator create invitations in the Setup view. Each link appears
-once, expires, and is accepted once. Share it privately; no automatic email
-delivery is configured. Invite tokens are carried in the URL fragment so
-they are not sent in the initial page request. Existing pre-migration demo
-users remain in the database but are inactive until explicitly replaced with
+that administrator create invitations in the Setup view. Each link expires
+after three days and is accepted once. Invite tokens are carried in the URL
+fragment so they are not sent in the initial page request. Existing
+pre-migration demo users remain in the database but are inactive until explicitly replaced with
 invited accounts; their project/file data is not erased. Set `CCL_PUBLIC_URL`
 to the browser-facing origin for correct invitation links.
 
@@ -194,7 +193,13 @@ docker compose up --build -d
 
 The API container waits for PostgreSQL, applies the Alembic migration, and then
 starts Uvicorn. The API is available at `http://127.0.0.1:8000` and its
-interactive documentation is at `/docs`.
+interactive documentation is at `/docs`. The local Mailpit inbox is at
+`http://127.0.0.1:8025`.
+
+In the Compose demo, invitation emails are captured by Mailpit and are not
+delivered to real recipients. Its inbox is bound to localhost; SMTP is only
+available to services on the Compose network. Mailpit stores messages in
+memory, so its inbox clears when the container is recreated.
 
 Create the first administrator in the running API container. This prompts for
 a password and refuses to create a second bootstrap administrator:
@@ -204,9 +209,12 @@ docker compose exec api python scripts/bootstrap_admin.py --email you@example.co
 ```
 
 Sign in at the dashboard, then use Setup to invite teammates by email and
-role. The invitation link must be copied and shared privately. Configure
-`CCL_PUBLIC_URL` in `.env` if users open the site at a different origin, then
-recreate the API container. Do not send invitation links to untrusted parties.
+role. Open Mailpit to inspect the captured message, or copy the one-time link
+from the dashboard. Configure `CCL_PUBLIC_URL` in `.env` if users open the
+site at a different origin, then recreate the API container. For a real mail
+provider, set `CCL_SMTP_HOST`, `CCL_SMTP_PORT`, `CCL_SMTP_STARTTLS`,
+`CCL_SMTP_USERNAME`, `CCL_SMTP_PASSWORD`, and `CCL_MAIL_FROM_ADDRESS` in `.env`.
+Keep provider credentials out of source control.
 
 Check container health and startup logs with:
 

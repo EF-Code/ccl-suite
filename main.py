@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from agent_orchestration import (
@@ -193,6 +194,7 @@ from file_organizer import (
 from folder_generator import create_project_folder, normalize_project_name
 from knowledge_access import evaluate_project_knowledge_access
 from knowledge_sources import build_approved_knowledge_sources_statement
+from mail_delivery import EmailDeliveryError, send_invitation_email
 from knowledge_answer import (
     ANSWER_ENGINE,
     GroundedAnswer,
@@ -954,12 +956,29 @@ async def create_invitation(
     db.commit()
     db.refresh(invitation)
     base_url = os.getenv("CCL_PUBLIC_URL", "http://127.0.0.1:8000").rstrip("/")
+    invite_url = f"{base_url}/#invite={token}"
+    try:
+        email_sent = await run_in_threadpool(
+            send_invitation_email,
+            invitation.email,
+            invitation.role,
+            invite_url,
+            invitation.expires_at,
+        )
+    except EmailDeliveryError as exc:
+        invitation.revoked_at = utc_now()
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invitation email could not be sent. Check the email service and try again.",
+        ) from exc
     return InvitationResponse(
         id=invitation.id,
         email=invitation.email,
         role=invitation.role,
         expires_at=invitation.expires_at,
-        invite_url=f"{base_url}/#invite={token}",
+        invite_url=invite_url,
+        email_sent=email_sent,
     )
 
 

@@ -81,6 +81,7 @@ class InvitationResponse(BaseModel):
     role: str
     expires_at: datetime
     invite_url: str
+    email_sent: bool
 
 
 class InvitationSummary(BaseModel):

@@ -15,12 +15,23 @@ services:
       timeout: 5s
       retries: 10
 
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    ports:
+      - "127.0.0.1:8025:8025"
+
   api:
     build: .
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ccl_suite}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ccl_suite}
       CCL_ENVIRONMENT: ${CCL_ENVIRONMENT:-development}
       CCL_PUBLIC_URL: ${CCL_PUBLIC_URL:-http://127.0.0.1:8000}
+      CCL_SMTP_HOST: ${CCL_SMTP_HOST:-mailpit}
+      CCL_SMTP_PORT: ${CCL_SMTP_PORT:-1025}
+      CCL_SMTP_STARTTLS: ${CCL_SMTP_STARTTLS:-false}
+      CCL_SMTP_USERNAME: ${CCL_SMTP_USERNAME:-}
+      CCL_SMTP_PASSWORD: ${CCL_SMTP_PASSWORD:-}
+      CCL_MAIL_FROM_ADDRESS: ${CCL_MAIL_FROM_ADDRESS:-no-reply@example.test}
       CCL_PROJECT_ROOT: /app/projects
       CCL_BACKUP_ROOT: /app/backups
     volumes:
@@ -29,6 +40,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
