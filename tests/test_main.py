@@ -3907,6 +3907,124 @@ def test_workflow_tools_are_traceable_and_bounded() -> None:
     assert listed.json()[0]["trace_id"] == payload["trace_id"]
 
 
+def test_workflow_tools_connect_project_services_and_keep_traces_safe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+
+    project = create_project("Workflow Connected Services")
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": f"workflow-supervisor-{uuid4().hex}", "role": "supervisor"},
+    )
+    assert supervisor.status_code == 201
+    supervisor_id = str(supervisor.json()["id"])
+
+    _create_ingested_source(
+        project,
+        projects_root,
+        supervisor_id,
+        "restore-sop.md",
+        "# Restore procedure\n\nVerify the checksum before restoring files. Preserve each source file unchanged.",
+        title="Restore Verification SOP",
+        source_type="sop",
+        sensitivity="internal",
+    )
+
+    other_project = create_project("Separate Workflow Knowledge")
+    other_source, _ = _create_ingested_source(
+        other_project,
+        projects_root,
+        supervisor_id,
+        "foreign.md",
+        "# Clip workflow\n\nThe quartz lantern workflow reviews selected clips before delivery.",
+        title="Separate Clip Workflow",
+        source_type="project_rule",
+        sensitivity="internal",
+    )
+
+    workflow = create_workflow(str(project["id"]))
+    knowledge = request(
+        "POST",
+        f"/workflows/{workflow['id']}/tools",
+        json={"tool": "knowledge.search", "query": "verify checksum before restoring files"},
+    )
+    assert knowledge.status_code == 200
+    knowledge_payload = knowledge.json()
+    assert knowledge_payload["status"] == "succeeded"
+    assert knowledge_payload["result"]["project_id"] == project["id"]
+    assert knowledge_payload["result"]["result_count"] == 1
+    assert knowledge_payload["result"]["results"][0]["title"] == "Restore Verification SOP"
+    assert knowledge_payload["output_summary"] == "search_results:1"
+
+    scoped_search = request(
+        "POST",
+        f"/workflows/{workflow['id']}/tools",
+        json={"tool": "knowledge.search", "query": "quartz lantern workflow"},
+    )
+    assert scoped_search.status_code == 200
+    assert scoped_search.json()["result"]["project_id"] == project["id"]
+    assert all(
+        result["project_id"] == project["id"]
+        and result["source_id"] != other_source["id"]
+        for result in scoped_search.json()["result"]["results"]
+    )
+
+    extracted = request(
+        "POST",
+        f"/projects/{project['id']}/research/claims/extract",
+        json={
+            "source_title": "Studio delivery checklist",
+            "source_reference": "local://studio-delivery-checklist",
+            "source_date": "2026-09-24",
+            "scope": {"market": "Nigeria"},
+            "source_text": "Editors check captions and audio levels before a video is approved for publication.",
+        },
+    )
+    assert extracted.status_code == 200
+    submitted = request(
+        "POST",
+        f"/projects/{project['id']}/research/reviews",
+        json={"claims": extracted.json()["claims"], "target_scope": {"market": "Nigeria"}},
+    )
+    assert submitted.status_code == 201
+
+    research = request(
+        "POST",
+        f"/workflows/{workflow['id']}/tools",
+        json={"tool": "research.summary"},
+    )
+    assert research.status_code == 200
+    research_payload = research.json()
+    assert research_payload["status"] == "succeeded"
+    assert research_payload["result"]["review_count"] == 1
+    assert research_payload["result"]["reviews_by_status"]["needs_review"] == 1
+    assert research_payload["output_summary"] == "reviews:1"
+
+    invalid_search = request(
+        "POST",
+        f"/workflows/{workflow['id']}/tools",
+        json={"tool": "knowledge.search", "query": "!!!", "max_attempts": 3},
+    )
+    assert invalid_search.status_code == 200
+    assert invalid_search.json()["status"] == "failed"
+    assert invalid_search.json()["error_code"] == "http_422"
+    assert invalid_search.json()["attempt_count"] == 1
+    assert invalid_search.json()["max_attempts"] == 3
+
+    traces = request("GET", f"/workflows/{workflow['id']}/tools")
+    assert traces.status_code == 200
+    assert len(traces.json()) == 4
+    serialized_traces = str(traces.json())
+    assert "verify checksum before restoring files" not in serialized_traces
+    assert "quartz lantern workflow" not in serialized_traces
+    assert "Editors check captions" not in serialized_traces
+    assert all(trace["result"] == {} for trace in traces.json())
+
+
 def test_workflow_trace_listings_share_a_safe_limit() -> None:
     project = create_project("Workflow trace limit project")
     workflow = create_workflow(str(project["id"]))

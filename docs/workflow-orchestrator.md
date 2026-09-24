@@ -47,8 +47,10 @@ to cross the project boundary.
   the linked approval is approved.
 
 Workflow creation and approval requests require `workflow.manage`.
-Approval decisions require `approval.decide`. Optional actor fields are bound
-to the authenticated `X-User-ID`; a caller cannot submit another user's ID.
+Approval decisions require `approval.decide`. Protected routes resolve the
+actor from the active server-side session; optional actor fields must match
+that authenticated user. `X-User-ID` is accepted only by isolated tests and
+does not authenticate a deployed request.
 
 ## Intake and state rules
 

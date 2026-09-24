@@ -4328,12 +4328,23 @@ async def run_workflow_tool_endpoint(
         except HTTPException as exc:
             error_code = f"http_{exc.status_code}"
             output_summary = "Tool returned a bounded application error."
+            # Client-side and other permanent application errors will not
+            # improve when repeated. Retry only server-side failures.
+            if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
+                break
         except (SQLAlchemyError, ValueError) as exc:
             error_code = type(exc).__name__.lower()
             output_summary = "Tool failed without persisting source content."
+            # Invalid local inputs are deterministic; database failures may
+            # be transient and are eligible for another bounded attempt.
+            if isinstance(exc, ValueError):
+                break
         except Exception:
             error_code = "tool_execution_failed"
             output_summary = "Tool failed without persisting source content."
+            # Unexpected programming/runtime failures are not presumed
+            # transient, so do not amplify them with repeated execution.
+            break
 
     run = WorkflowToolRun(
         project_id=project.id,
