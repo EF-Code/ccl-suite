@@ -225,6 +225,20 @@ def validate_agent_result(agent: str, result: Mapping[str, object]) -> dict[str,
     summary = result.get("summary")
     if not isinstance(summary, str) or not summary.strip() or len(summary) > 500:
         raise ValueError("Agent result summary is malformed.")
+    if scan_prompt_injection(summary):
+        raise ValueError("Agent result summary contains unsafe instruction patterns.")
+    if _SECRET_ASSIGNMENT.search(summary):
+        raise ValueError("Agent result summary contains credential-like material.")
+
+    definition = AGENT_DEFINITION_BY_NAME[agent]
+    tool = result.get("tool")
+    if tool is not None and (
+        not isinstance(tool, str) or tool not in definition.allowed_tools
+    ):
+        raise ValueError("Agent result names a tool outside its permission boundary.")
+    if len(definition.allowed_tools) == 1 and tool != definition.allowed_tools[0]:
+        raise ValueError("Agent result must identify its permitted tool.")
+
     metrics = result.get("metrics")
     if not isinstance(metrics, dict) or len(metrics) > MAX_AGENT_OUTPUT_KEYS:
         raise ValueError("Agent result metrics are malformed.")
@@ -232,13 +246,36 @@ def validate_agent_result(agent: str, result: Mapping[str, object]) -> dict[str,
         if not isinstance(key, str) or len(key) > 64:
             raise ValueError("Agent result metric names are malformed.")
         if isinstance(value, (dict, list, tuple)):
-            raise ValueError("Agent result metrics must be scalar values.")
+            raise TypeError("Agent result metrics must be scalar values.")
         if isinstance(value, float) and not math.isfinite(value):
             raise ValueError("Agent result metrics must contain finite numbers.")
         if not isinstance(value, (str, int, float, bool)) and value is not None:
             raise ValueError("Agent result metrics contain an unsupported value.")
-        if any(secret_word in key.lower() for secret_word in ("secret", "token", "password", "credential")):
+        if any(
+            secret_word in key.lower()
+            for secret_word in ("secret", "token", "password", "credential")
+        ):
             raise ValueError("Agent result cannot contain secret-bearing metrics.")
+
+    metric_types = _AGENT_METRIC_TYPES[agent]
+    if set(metrics) != set(metric_types):
+        raise ValueError("Agent result metrics do not match the specialist schema.")
+    for key, expected_type in metric_types.items():
+        value = metrics[key]
+        if expected_type is bool:
+            if type(value) is not bool:
+                raise ValueError("Agent result boolean metrics are malformed.")
+        elif expected_type is int:
+            if type(value) is not int or not 0 <= value <= MAX_AGENT_METRIC_VALUE:
+                raise ValueError(
+                    "Agent result count metrics must be bounded nonnegative integers."
+                )
+        elif expected_type is str and (
+            type(value) is not str
+            or key != "workflow_state"
+            or value not in _WORKFLOW_STATE_VALUES
+        ):
+            raise ValueError("Agent result state metric is not allow-listed.")
     return dict(result)
 
 

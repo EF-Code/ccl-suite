@@ -99,7 +99,11 @@ def test_agent_result_rejects_unstructured_or_secret_bearing_output() -> None:
             "agent": "intake",
             "status": "completed",
             "summary": "Intake checked.",
-            "metrics": {"missing_field_count": 0},
+            "metrics": {
+                "intake_complete": True,
+                "missing_field_count": 0,
+                "output_count": 0,
+            },
         },
     )
     assert valid["agent"] == "intake"
@@ -115,7 +119,7 @@ def test_agent_result_rejects_unstructured_or_secret_bearing_output() -> None:
             },
         )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError, match="scalar values"):
         validate_agent_result(
             "intake",
             {
