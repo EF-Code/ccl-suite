@@ -4143,6 +4143,18 @@ def test_specialist_guardrails_trace_blocked_injection_and_bad_delegation() -> N
         json={"target_agent": "unregistered"},
     )
     assert malformed.status_code == 422
+    invalid_operation = request(
+        "POST",
+        f"/workflows/{workflow['id']}/handoffs",
+        json={"target_agent": "delete"},
+    )
+    assert invalid_operation.status_code == 422
+    invalid_workflow_id = request(
+        "POST",
+        "/workflows/not-a-uuid/handoffs",
+        json={"target_agent": "intake"},
+    )
+    assert invalid_workflow_id.status_code == 422
 
     injection = request(
         "POST",
