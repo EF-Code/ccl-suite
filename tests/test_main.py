@@ -4372,6 +4372,44 @@ def test_specialist_handoff_fails_closed_on_unauthorized_tool_output(
     )
 
 
+def test_specialist_handoff_fails_closed_on_incomplete_metric_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = create_project("Incomplete Specialist Metrics")
+    workflow = create_workflow(str(project["id"]))
+
+    def incomplete_result(
+        _db: object, _project: object, _workflow: object, agent: str
+    ) -> dict[str, object]:
+        return {
+            "agent": agent,
+            "status": "completed",
+            "summary": "Research review completed.",
+            "metrics": {
+                "review_count": 0,
+                "needs_review": 0,
+                "changes_requested": 0,
+                "verified": 0,
+            },
+            "tool": "research.summary",
+        }
+
+    monkeypatch.setattr("main.build_specialist_result", incomplete_result)
+    response = request(
+        "POST",
+        f"/workflows/{workflow['id']}/handoffs",
+        json={"target_agent": "research"},
+    )
+
+    assert response.status_code == 201
+    trace = response.json()
+    assert trace["status"] == "failed"
+    assert trace["result"] == {}
+    assert trace["output_summary"] == (
+        "Specialist failed without exposing project contents."
+    )
+
+
 def test_specialist_handoff_cannot_cross_project_access_boundary() -> None:
     other_user = request(
         "POST",
