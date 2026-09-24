@@ -38,8 +38,51 @@ AGENT_HANDOFF_STATUSES: Final[tuple[str, ...]] = ("completed", "blocked", "faile
 MAX_AGENT_INPUT_CHARACTERS: Final[int] = 500
 MAX_AGENT_OUTPUT_KEYS: Final[int] = 12
 MAX_AGENT_TRACE_RESULTS: Final[int] = 50
+MAX_AGENT_METRIC_VALUE: Final[int] = 1_000_000
 AGENT_RESULT_KEYS: Final[frozenset[str]] = frozenset(
     {"agent", "status", "summary", "metrics", "tool"}
+)
+_WINDOWS_ABSOLUTE_PATH: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z]:/")
+_APPROVAL_BYPASS: Final[re.Pattern[str]] = re.compile(
+    r"(?:\b(?:bypass|skip|disable|ignore|override|without)\b.{0,80}\b"
+    r"(?:human\s+)?(?:approval|review(?:er)?|approval\s+gate)\b|"
+    r"\b(?:approval|human\s+review|reviewer)\b.{0,80}\b"
+    r"(?:bypass|skip|disable|ignore|override)\b)",
+    re.IGNORECASE,
+)
+_SECRET_ASSIGNMENT: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:password|passwd|secret|api[ _-]?key|access[ _-]?token|credential)"
+    r"\b\s*[:=]\s*\S{4,}",
+    re.IGNORECASE,
+)
+_AGENT_METRIC_TYPES: Final[dict[str, dict[str, type]]] = {
+    "intake": {
+        "intake_complete": bool,
+        "missing_field_count": int,
+        "output_count": int,
+    },
+    "research": {
+        "review_count": int,
+        "needs_review": int,
+        "changes_requested": int,
+        "verified": int,
+        "approved": int,
+    },
+    "knowledge": {
+        "source_count": int,
+        "approved_source_count": int,
+        "pending_source_count": int,
+        "rejected_source_count": int,
+    },
+    "quality_control": {
+        "workflow_state": str,
+        "pending_approval_count": int,
+        "pending_action_count": int,
+        "failed_tool_count": int,
+    },
+}
+_WORKFLOW_STATE_VALUES: Final[frozenset[str]] = frozenset(
+    {"ready", "in_progress", "review", "changes_required", "approved", "archived"}
 )
 
 
@@ -137,19 +180,23 @@ def validate_agent_input(input_ref: str | None) -> str | None:
         raise ValueError("Agent input contains an unsafe path character.")
     if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
         raise ValueError("Agent input contains an unsafe control character.")
-    if normalized.startswith("/") or any(
-        segment in {".", ".."} for segment in normalized.split("/")
+    if (
+        normalized.startswith("/")
+        or _WINDOWS_ABSOLUTE_PATH.match(normalized)
+        or any(segment in {".", ".."} for segment in normalized.split("/"))
     ):
         raise ValueError("Agent input must not contain an absolute or traversal path.")
 
     findings = scan_prompt_injection(normalized)
     if findings:
         raise AgentInputBlockedError(findings[0].rule_id)
+    if _APPROVAL_BYPASS.search(normalized):
+        raise AgentInputBlockedError("approval-bypass")
     return normalized
 
 
 def input_fingerprint(input_ref: str | None) -> str:
-    """Return a non-reversible trace fingerprint instead of storing raw input."""
+    """Return a SHA-256 trace digest without persisting raw context."""
 
     value = (input_ref or "").encode("utf-8")
     return sha256(value).hexdigest()
