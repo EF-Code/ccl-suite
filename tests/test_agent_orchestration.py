@@ -284,3 +284,21 @@ def test_intake_metrics_require_exact_boolean_and_integer_types(
                 "metrics": metrics,
             },
         )
+
+
+def test_quality_control_workflow_state_is_allow_listed() -> None:
+    with pytest.raises(ValueError, match="state metric is not allow-listed"):
+        validate_agent_result(
+            "quality_control",
+            {
+                "agent": "quality_control",
+                "status": "completed",
+                "summary": "Quality-control checks completed.",
+                "metrics": {
+                    "workflow_state": "published",
+                    "pending_approval_count": 0,
+                    "pending_action_count": 0,
+                    "failed_tool_count": 0,
+                },
+            },
+        )
