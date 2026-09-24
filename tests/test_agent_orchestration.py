@@ -321,3 +321,22 @@ def test_research_result_requires_every_role_metric() -> None:
                 "tool": "research.summary",
             },
         )
+
+
+def test_single_tool_specialist_must_identify_its_tool() -> None:
+    with pytest.raises(ValueError, match="must identify its permitted tool"):
+        validate_agent_result(
+            "research",
+            {
+                "agent": "research",
+                "status": "completed",
+                "summary": "Research review completed.",
+                "metrics": {
+                    "review_count": 0,
+                    "needs_review": 0,
+                    "changes_requested": 0,
+                    "verified": 0,
+                    "approved": 0,
+                },
+            },
+        )
