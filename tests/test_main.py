@@ -23,6 +23,7 @@ from main import (
     require_record,
 )
 from models import (
+    AgentHandoff,
     DocumentChunk,
     File,
     IngestionRun,
@@ -4083,6 +4084,17 @@ def test_specialist_agents_return_project_scoped_results_and_traces() -> None:
     assert payload["trace_id"]
     assert payload["result"]["metrics"]["output_count"] == 0
     assert "bounded project brief" not in payload["input_summary"]
+    with TestingSessionLocal() as session:
+        stored = session.scalar(
+            select(AgentHandoff).where(AgentHandoff.trace_id == payload["trace_id"])
+        )
+        assert stored is not None
+        assert (
+            stored.input_fingerprint
+            == hashlib.sha256(b"Check the bounded project brief.").hexdigest()
+        )
+        assert "bounded project brief" not in stored.input_summary
+        assert "bounded project brief" not in stored.output_summary
 
     chained = request(
         "POST",
