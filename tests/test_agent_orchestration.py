@@ -302,3 +302,22 @@ def test_quality_control_workflow_state_is_allow_listed() -> None:
                 },
             },
         )
+
+
+def test_research_result_requires_every_role_metric() -> None:
+    with pytest.raises(ValueError, match="specialist schema"):
+        validate_agent_result(
+            "research",
+            {
+                "agent": "research",
+                "status": "completed",
+                "summary": "Research review completed.",
+                "metrics": {
+                    "review_count": 0,
+                    "needs_review": 0,
+                    "changes_requested": 0,
+                    "verified": 0,
+                },
+                "tool": "research.summary",
+            },
+        )
