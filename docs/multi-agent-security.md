@@ -80,6 +80,10 @@ Security events use `agent.handoff.completed`, `agent.handoff.blocked`, and
 `agent.handoff.failed` codes. This links the operational audit stream to the
 workflow-level trace without duplicating source content.
 
+See the [Agent Security Test Report](agent-security-test-report.md) for the
+executed injection, approval-bypass, malformed-output, trace-privacy, and
+cross-project regression cases and their verification limits.
+
 ## Operator response
 
 When a handoff is blocked, review the workflow trace and matching security
