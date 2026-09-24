@@ -28,6 +28,14 @@ def test_specialists_have_distinct_responsibilities_and_bounded_tools() -> None:
         for definition in AGENT_DEFINITIONS
         for tool in definition.allowed_tools
     )
+    assert {
+        definition.agent: definition.allowed_tools for definition in AGENT_DEFINITIONS
+    } == {
+        "intake": (),
+        "research": ("research.summary",),
+        "knowledge": ("knowledge.search",),
+        "quality_control": ("files.summary", "research.summary"),
+    }
 
 
 def test_delegation_edges_are_allow_listed() -> None:
