@@ -58,6 +58,8 @@ _PROMPT_INJECTION_RULES: Final[tuple[_PromptInjectionRule, ...]] = (
         "secret_exfiltration",
         re.compile(
             r"(?:^|[.!?;:\n])\s*"
+            r"(?:(?:please|kindly)\s+|(?:can|could|would)\s+you\s+(?:please\s+)?|"
+            r"(?:i\s+need|i\s+want)\s+you\s+to\s+)?"
             r"(?:reveal|disclose|dump|print|exfiltrate|share|show|return)\b"
             r".{0,120}\b(?:system\s+prompt|developer\s+message|secrets?|"
             r"credentials?|passwords?|api\s+keys?|access\s+tokens?|"
