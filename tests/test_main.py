@@ -4333,6 +4333,45 @@ def test_specialist_handoff_fails_closed_on_credential_bearing_output(
         assert credential not in stored.output_summary
 
 
+def test_specialist_handoff_fails_closed_on_unauthorized_tool_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = create_project("Unauthorized Specialist Tool")
+    workflow = create_workflow(str(project["id"]))
+
+    def unauthorized_result(
+        _db: object, _project: object, _workflow: object, agent: str
+    ) -> dict[str, object]:
+        return {
+            "agent": agent,
+            "status": "completed",
+            "summary": "Research review completed.",
+            "metrics": {
+                "review_count": 0,
+                "needs_review": 0,
+                "changes_requested": 0,
+                "verified": 0,
+                "approved": 0,
+            },
+            "tool": "files.summary",
+        }
+
+    monkeypatch.setattr("main.build_specialist_result", unauthorized_result)
+    response = request(
+        "POST",
+        f"/workflows/{workflow['id']}/handoffs",
+        json={"target_agent": "research"},
+    )
+
+    assert response.status_code == 201
+    trace = response.json()
+    assert trace["status"] == "failed"
+    assert trace["result"] == {}
+    assert trace["output_summary"] == (
+        "Specialist failed without exposing project contents."
+    )
+
+
 def test_specialist_handoff_cannot_cross_project_access_boundary() -> None:
     other_user = request(
         "POST",
