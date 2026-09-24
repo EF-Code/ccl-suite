@@ -210,7 +210,9 @@ def input_summary(input_ref: str | None) -> str:
     return f"input_supplied:true sha256_prefix:{input_fingerprint(input_ref)[:16]}"
 
 
-def validate_agent_result(agent: str, result: Mapping[str, object]) -> dict[str, object]:
+def validate_agent_result(
+    agent: str, result: Mapping[str, object]
+) -> dict[str, object]:
     """Validate the structured result boundary before it is persisted."""
 
     unexpected_keys = set(result) - AGENT_RESULT_KEYS
@@ -283,12 +285,12 @@ __all__ = [
     "AGENT_ACTOR_NAMES",
     "AGENT_DEFINITIONS",
     "AGENT_HANDOFF_STATUSES",
-    "AGENT_RESULT_KEYS",
     "AGENT_NAMES",
+    "AGENT_RESULT_KEYS",
+    "MAX_AGENT_TRACE_RESULTS",
     "AgentDefinition",
     "AgentInputBlockedError",
     "AgentName",
-    "MAX_AGENT_TRACE_RESULTS",
     "can_delegate",
     "get_agent_definition",
     "handoff_event_code",

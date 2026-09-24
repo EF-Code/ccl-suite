@@ -34,7 +34,6 @@ from models import (
     User,
 )
 
-
 TEST_ENGINE = create_engine(
     "sqlite+pysqlite:///:memory:",
     connect_args={"check_same_thread": False},
