@@ -255,3 +255,32 @@ def test_agent_result_rejects_unstructured_or_secret_bearing_output() -> None:
                 },
             },
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("missing_field_count", True, "bounded nonnegative integers"),
+        ("intake_complete", 1, "boolean metrics are malformed"),
+    ],
+)
+def test_intake_metrics_require_exact_boolean_and_integer_types(
+    field: str, value: object, error: str
+) -> None:
+    metrics: dict[str, object] = {
+        "intake_complete": True,
+        "missing_field_count": 0,
+        "output_count": 0,
+    }
+    metrics[field] = value
+
+    with pytest.raises(ValueError, match=error):
+        validate_agent_result(
+            "intake",
+            {
+                "agent": "intake",
+                "status": "completed",
+                "summary": "Intake checked.",
+                "metrics": metrics,
+            },
+        )
