@@ -68,10 +68,11 @@ read or written, so an actor cannot use a handoff endpoint to cross projects.
 | Threat case | Guardrail | Observable result |
 | --- | --- | --- |
 | Instruction override or secret-extraction prompt | Reuse the knowledge injection scanner before execution. | Handoff is recorded as `blocked` with a rule code; raw input is absent. |
-| Absolute or traversal path | Reject absolute paths, `.`/`..` segments, backslashes, and NUL characters. | Handoff is recorded as `blocked` with `invalid_input`. |
+| Absolute or traversal path | Reject Unix and Windows absolute paths, `.`/`..` segments, backslashes, and control characters. | Handoff is recorded as `blocked` with `invalid_input`. |
+| Human-approval bypass | Block instructions to bypass or skip human review before a specialist runs. | Handoff is `blocked`; the linked high-impact action remains `pending_approval`. |
 | Delegation outside the approved graph | Validate source/target against the responsibility matrix. | Handoff is recorded as `blocked` with `delegation_not_allowlisted`. |
 | Archived workflow reuse | Reject new specialist work after archival. | Handoff is recorded as `blocked` with `workflow_archived`. |
-| Malformed or secret-bearing specialist output | Validate result shape and scalar metrics before persistence. | Run is marked `failed` without persisting the unsafe result. |
+| Malformed or secret-bearing specialist output | Validate role-specific tool and metric schemas, summary text, and bounded scalar values before persistence. | Run is marked `failed` without persisting the unsafe result. |
 | Cross-project workflow reference | Apply the existing project access policy first. | Endpoint returns the same project-not-found response used by other protected workflow routes. |
 | Unnecessary sensitive trace data | Persist IDs, fingerprints, summaries, and counts only. | Security events contain the workflow and trace reference, not request contents. |
 
