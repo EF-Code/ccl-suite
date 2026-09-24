@@ -43,16 +43,20 @@ flowchart LR
 
 `POST /workflows/{workflow_id}/handoffs` accepts a source agent, a target
 specialist, and optional bounded context. The context is treated as untrusted
-input. It is checked for blank values, length, absolute/traversal paths, and
-known instruction-shaped injection patterns before the specialist runs.
+input. It is checked for blank values, length, Unix and Windows absolute paths,
+traversal, control characters, known instruction-shaped injection patterns,
+and attempts to bypass human approval before the specialist runs.
 
-Every attempt receives a unique trace ID. The database stores only a SHA-256
-fingerprint and a safe presence summary for the input; it does not store the
-raw handoff text. Successful results must contain the requested agent, a
-completed status, a short summary, and scalar metrics. Nested payloads and
-secret-bearing metric names are rejected. Unknown result fields, non-finite
-numbers, and control characters in the bounded context are rejected as well,
-so a trace cannot become a hidden multiline instruction channel.
+Every attempt receives a unique trace ID. The database stores only a plain
+SHA-256 digest and a safe presence summary for the input; it does not store the
+raw handoff text. The digest is not encryption or a substitute for secret
+handling, so callers must not submit credentials as handoff context.
+Successful results must match the requested specialist's
+metric schema and permitted tool boundary. Counts and enumerated states are
+type-checked and bounded. Summaries are checked for instruction-shaped content
+and credential assignments; nested payloads, secret-bearing metric names,
+unknown fields, and non-finite numbers are rejected. Unsafe output is marked
+failed and is not included in the persisted result.
 
 `GET /workflows/{workflow_id}/handoffs` returns the bounded trace history. Its
 optional `limit` is capped at 50 and the newest traces are returned first. The
