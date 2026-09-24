@@ -9,14 +9,14 @@ safe summary.
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
-import math
 from typing import Final, Literal
 
 from knowledge_security import scan_prompt_injection
-
 
 AgentName = Literal["intake", "research", "knowledge", "quality_control"]
 AgentActorName = Literal[

@@ -7,10 +7,10 @@ never included in exceptions, audit records, or evaluation output.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from typing import Final, Literal, Pattern
-
+from dataclasses import dataclass
+from re import Pattern
+from typing import Final, Literal
 
 PromptInjectionCategory = Literal[
     "instruction_override",
