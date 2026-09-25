@@ -24,14 +24,18 @@ from main import (
 )
 from models import (
     AgentHandoff,
+    Approval,
     DocumentChunk,
     File,
     IngestionRun,
     KnowledgeErrorReport,
     KnowledgeFeedback,
     KnowledgeSource,
+    Project,
     SecurityEvent,
     User,
+    Workflow,
+    utc_now,
 )
 
 TEST_ENGINE = create_engine(
@@ -2257,6 +2261,115 @@ def test_security_event_can_omit_actor() -> None:
 
     assert response.status_code == 201
     assert response.json()["actor_id"] == TEST_OWNER_ID
+
+
+def test_security_dashboard_aggregates_events_and_respects_account_scope() -> None:
+    with TestingSessionLocal() as session:
+        owner = session.get(User, UUID(TEST_OWNER_ID))
+        assert owner is not None
+        own_project = Project(
+            owner=owner,
+            name="Visible project",
+            storage_slug="dashboard-visible-project",
+        )
+        other_owner = User(external_ref="dashboard-private-user", role="staff")
+        supervisor = User(external_ref="dashboard-supervisor", role="supervisor")
+        intern = User(external_ref="dashboard-intern", role="intern")
+        other_project = Project(
+            owner=other_owner,
+            name="Private project",
+            storage_slug="dashboard-private-project",
+        )
+        own_workflow = Workflow(project=own_project, name="Review", state="review")
+        pending_approval = Approval(workflow=own_workflow, requested_by=owner, status="pending")
+        session.add_all(
+            [
+                own_project,
+                other_owner,
+                supervisor,
+                intern,
+                other_project,
+                own_workflow,
+                pending_approval,
+                SecurityEvent(
+                    actor=owner,
+                    event_code="dashboard.test.success",
+                    outcome="success",
+                    occurred_at=utc_now(),
+                ),
+                SecurityEvent(
+                    actor=owner,
+                    event_code="dashboard.test.denied",
+                    outcome="denied",
+                    occurred_at=utc_now(),
+                ),
+                SecurityEvent(
+                    actor=other_owner,
+                    event_code="dashboard.private.event",
+                    outcome="failure",
+                    occurred_at=utc_now(),
+                ),
+            ]
+        )
+        session.commit()
+        supervisor_id = str(supervisor.id)
+        intern_id = str(intern.id)
+
+    response = request("GET", "/security-dashboard?window_days=7")
+    payload = response.json()
+
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert payload["scope"] == "account"
+    assert payload["event_counts"] == {"total": 2, "success": 1, "failure": 0, "denied": 1}
+    assert payload["project_metrics"]["projects_total"] == 1
+    assert payload["project_metrics"]["workflows_total"] == 1
+    assert payload["project_metrics"]["workflows_open"] == 1
+    assert payload["project_metrics"]["pending_approvals"] == 1
+    assert {event["event_code"] for event in payload["recent_events"]} == {
+        "dashboard.test.success",
+        "dashboard.test.denied",
+    }
+    own_raw_response = request("GET", "/security-events")
+    own_raw_events = own_raw_response.json()
+    assert own_raw_response.headers["cache-control"] == "no-store"
+    assert {event["event_code"] for event in own_raw_events} == {
+        "dashboard.test.success",
+        "dashboard.test.denied",
+    }
+    assert request(
+        "GET",
+        "/security-dashboard?window_days=7",
+        headers={"X-User-ID": intern_id},
+    ).status_code == 403
+    assert request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": intern_id},
+    ).status_code == 403
+
+    organization_response = request(
+        "GET",
+        "/security-dashboard?window_days=7",
+        headers={"X-User-ID": supervisor_id},
+    )
+    organization_payload = organization_response.json()
+    assert organization_response.status_code == 200
+    assert organization_payload["scope"] == "organization"
+    assert organization_payload["event_counts"]["total"] == 5
+    assert organization_payload["project_metrics"]["projects_total"] == 2
+    organization_events = request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": supervisor_id},
+    ).json()
+    assert len(organization_events) == 5
+
+
+def test_security_dashboard_rejects_unbounded_periods() -> None:
+    response = request("GET", "/security-dashboard?window_days=14")
+
+    assert response.status_code == 422
 
 
 def _create_ingested_source(
