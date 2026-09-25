@@ -173,6 +173,7 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     } == {
         "ix_security_events_actor_occurred_at",
         "ix_security_events_code_occurred_at",
+        "ix_security_events_occurred_at",
     }
     assert "ix_knowledge_feedback_project_created_at" in {
         index.name for index in KnowledgeFeedback.__table__.indexes
