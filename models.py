@@ -1131,6 +1131,7 @@ class SecurityEvent(Base):
     __table_args__ = (
         Index("ix_security_events_actor_occurred_at", "actor_id", "occurred_at"),
         Index("ix_security_events_code_occurred_at", "event_code", "occurred_at"),
+        Index("ix_security_events_occurred_at", "occurred_at"),
         CheckConstraint(
             "outcome IN ('success', 'failure', 'denied')",
             name="ck_security_events_outcome",
