@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
 import { OverviewDashboard } from "@/components/overview-dashboard"
+import { SecurityDashboard } from "@/components/security-dashboard"
 import { WorkflowOrchestrator } from "@/components/workflow-orchestrator"
 import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
 import {
@@ -25,7 +26,7 @@ import {
 // Helpers
 function escapeForTest(v: string) { return v }
 function compactId(v?: string) { return v ? `${v.slice(0, 13)}…` : "—" }
-type WorkspaceView = "overview" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup"
+type WorkspaceView = "overview" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
 
 function researchScopeFromForm(formData: FormData, prefix: "source" | "target"): ResearchScope {
   const readText = (field: string) => {
@@ -1034,7 +1035,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setVal("#research-project-id", project.id)
   }
 
-  const navigation: Array<{ view: WorkspaceView; label: string; icon: typeof Gauge }> = [
+  const navigationItems: Array<{ view: WorkspaceView; label: string; icon: typeof Gauge }> = [
     { view: "overview", label: "Overview", icon: Gauge },
     { view: "operations", label: "Operations", icon: Gauge },
     { view: "files", label: "Files", icon: Files },
@@ -1043,7 +1044,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     { view: "workflows", label: "Workflows", icon: GitBranch },
     { view: "recovery", label: "Recovery", icon: ArchiveRestore },
     { view: "setup", label: "Setup", icon: FolderCog },
+    { view: "security", label: "Security", icon: ShieldCheck },
   ]
+  const permissionRole = account.role === "member" ? "staff" : account.role === "reviewer" ? "supervisor" : account.role
+  const canReadSecurity = Boolean(permissions?.[permissionRole]?.includes("security.read"))
+  const navigation = navigationItems.filter(({ view }) => view !== "security" || canReadSecurity)
 
   const viewCopy: Record<WorkspaceView, { title: string; description: string }> = {
     overview: { title: "Overview", description: "See project health, workflow progress, evidence readiness, and the next decision." },
@@ -1054,6 +1059,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     workflows: { title: "Workflow orchestrator", description: "Move the active project through definitions, approval requests, and recorded decisions." },
     recovery: { title: "Recovery", description: "Create, verify, and restore checksummed project backups." },
     setup: { title: "Workspace setup", description: "Provision an owner, register a project, and prepare local storage." },
+    security: { title: "Security overview", description: "Review audit activity, agent outcomes, and project controls within your access scope." },
   }
 
   const openView = (view: WorkspaceView) => {
@@ -1133,7 +1139,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       </header>
 
       <main id="main-content" className="app-main" data-view={activeView}>
-        <header className={activeView === "operations" || activeView === "overview" ? "sr-only" : "workspace-heading"}>
+        <header className={activeView === "operations" || activeView === "overview" || activeView === "security" ? "sr-only" : "workspace-heading"}>
           <div><h1 id="page-title">{viewCopy[activeView].title}</h1><p>{viewCopy[activeView].description}</p></div>
           {activeView === "setup" && <Button id="workspace-projects-refresh" variant="outline" size="sm" onClick={() => refreshProjects()}><RefreshCw className="h-3.5 w-3.5" />Refresh projects</Button>}
         </header>
@@ -1917,6 +1923,8 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             onDecisionCodeChange={(approvalId, value) => setApprovalDecisionCodes((current) => ({ ...current, [approvalId]: value }))}
           />
         </section>
+
+        {activeView === "security" && canReadSecurity && <SecurityDashboard />}
 
       </main>
 
