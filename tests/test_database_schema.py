@@ -1,3 +1,7 @@
+from pathlib import Path
+
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import configure_mappers
 
@@ -207,6 +211,15 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     review_claim_fk = next(iter(ResearchReviewClaim.__table__.c.review_id.foreign_keys))
     assert review_project_fk.ondelete == "CASCADE"
     assert review_claim_fk.ondelete == "CASCADE"
+
+
+def test_alembic_revision_ids_fit_version_column_limit() -> None:
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    revisions = ScriptDirectory.from_config(config).walk_revisions()
+
+    too_long = [revision.revision for revision in revisions if len(revision.revision) > 32]
+
+    assert too_long == []
 
 
 def test_sensitive_payload_columns_are_not_stored() -> None:
