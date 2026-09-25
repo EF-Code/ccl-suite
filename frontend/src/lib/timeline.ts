@@ -99,7 +99,7 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     title: "Multi-Agent Security",
     purpose: "Coordinate specialist agents with least-privilege tools, guardrails, threat tests, and traceable handoffs",
     weeks: "Agent security delivery · 28 Sep - 2 Oct",
-    status: "current",
+    status: "complete",
     backendReady: true,
     frontendCoverage: "full",
     endpoints: [
@@ -116,13 +116,13 @@ export const SIWES_TIMELINE: TimelineModule[] = [
     title: "Security Dashboard",
     purpose: "Monitor project status, agent actions, failures and incidents",
     weeks: "Security delivery · 5-22 Oct",
-    status: "planned",
+    status: "current",
     backendReady: true,
-    frontendCoverage: "partial",
-    endpoints: ["GET /security-events", "POST /security-events", "GET /projects status"],
-    uiComponents: ["Security Events", "Project Metrics (preview)", "Weekly Reports"],
+    frontendCoverage: "full",
+    endpoints: ["GET /security-dashboard?window_days=7|30|90", "GET /security-events"],
+    uiComponents: ["Scoped Security Metrics", "Activity Trends", "Recent Events", "Project Controls", "CSV Reports"],
   },
 ];
 
 export const CURRENT_WEEK = "Current capability";
-export const CURRENT_PHASE = "Multi-Agent Security · Guardrails & Traceability";
+export const CURRENT_PHASE = "Security Dashboard · Monitoring & Reporting";
