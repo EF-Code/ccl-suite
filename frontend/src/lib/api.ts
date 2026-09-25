@@ -412,3 +412,41 @@ export type KnowledgeErrorCategory =
   | "wrong_source"
   | "technical_error"
   | "other";
+
+export type SecurityEvent = {
+  id: string;
+  actor_id: string | null;
+  event_code: string;
+  outcome: "success" | "failure" | "denied";
+  resource_type: string | null;
+  resource_ref: string | null;
+  request_ref: string | null;
+  occurred_at: string;
+};
+
+export type SecurityDashboardOutcomeCounts = {
+  total: number;
+  success: number;
+  failure: number;
+  denied: number;
+};
+
+export type SecurityDashboard = {
+  scope: "account" | "organization";
+  window_days: 7 | 30 | 90;
+  period_start: string;
+  generated_at: string;
+  event_counts: SecurityDashboardOutcomeCounts;
+  activity_by_day: Array<SecurityDashboardOutcomeCounts & { date: string }>;
+  event_codes: Array<{ event_code: string; count: number }>;
+  project_metrics: {
+    projects_total: number;
+    projects_active: number;
+    workflows_total: number;
+    workflows_open: number;
+    pending_approvals: number;
+    agent_handoffs: number;
+    unsuccessful_agent_handoffs: number;
+  };
+  recent_events: SecurityEvent[];
+};
