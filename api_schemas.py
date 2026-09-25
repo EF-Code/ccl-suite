@@ -1254,6 +1254,44 @@ class SecurityEventResponse(BaseModel):
     occurred_at: datetime
 
 
+class SecurityDashboardOutcomeCounts(BaseModel):
+    total: int
+    success: int
+    failure: int
+    denied: int
+
+
+class SecurityDashboardDailyCount(SecurityDashboardOutcomeCounts):
+    date: date
+
+
+class SecurityDashboardEventCodeCount(BaseModel):
+    event_code: str
+    count: int
+
+
+class SecurityDashboardProjectMetrics(BaseModel):
+    projects_total: int
+    projects_active: int
+    workflows_total: int
+    workflows_open: int
+    pending_approvals: int
+    agent_handoffs: int
+    unsuccessful_agent_handoffs: int
+
+
+class SecurityDashboardResponse(BaseModel):
+    scope: Literal["account", "organization"]
+    window_days: Literal[7, 30, 90]
+    period_start: datetime
+    generated_at: datetime
+    event_counts: SecurityDashboardOutcomeCounts
+    activity_by_day: list[SecurityDashboardDailyCount]
+    event_codes: list[SecurityDashboardEventCodeCount]
+    project_metrics: SecurityDashboardProjectMetrics
+    recent_events: list[SecurityEventResponse]
+
+
 __all__ = [
     "AgentDefinitionResponse",
     "AgentHandoffCreate",
@@ -1309,6 +1347,11 @@ __all__ = [
     "ProjectResponse",
     "SecurityEventCreate",
     "SecurityEventResponse",
+    "SecurityDashboardOutcomeCounts",
+    "SecurityDashboardDailyCount",
+    "SecurityDashboardEventCodeCount",
+    "SecurityDashboardProjectMetrics",
+    "SecurityDashboardResponse",
     "UserCreate",
     "UserResponse",
     "UploadResponse",
