@@ -4987,16 +4987,19 @@ async def get_security_dashboard(
     "/security-events",
     response_model=list[SecurityEventResponse],
     tags=["security-events"],
-    dependencies=[Depends(require_permission("security.read"))],
 )
 async def list_security_events(
+    response: Response,
     limit: int = Query(default=100, ge=1, le=1000),
+    actor: User = Depends(require_permission("security.read")),
     db: Session = Depends(get_db),
 ) -> list[SecurityEventResponse]:
+    response.headers["Cache-Control"] = "no-store"
+    statement = select(SecurityEvent)
+    if canonical_role(actor.role) not in {"administrator", "supervisor"}:
+        statement = statement.where(SecurityEvent.actor_id == actor.id)
     events = list_records(
         db,
-        select(SecurityEvent)
-        .order_by(SecurityEvent.occurred_at.desc(), SecurityEvent.id)
-        .limit(limit),
+        statement.order_by(SecurityEvent.occurred_at.desc(), SecurityEvent.id).limit(limit),
     )
     return [SecurityEventResponse.model_validate(event) for event in events]
