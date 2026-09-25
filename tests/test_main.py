@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 from collections.abc import AsyncIterator, Generator
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -2370,6 +2371,39 @@ def test_security_dashboard_rejects_unbounded_periods() -> None:
     response = request("GET", "/security-dashboard?window_days=14")
 
     assert response.status_code == 422
+
+
+def test_security_dashboard_excludes_events_outside_selected_window() -> None:
+    now = utc_now()
+    with TestingSessionLocal() as session:
+        owner = session.get(User, UUID(TEST_OWNER_ID))
+        assert owner is not None
+        session.add_all(
+            [
+                SecurityEvent(
+                    actor=owner,
+                    event_code="dashboard.window.current",
+                    outcome="success",
+                    occurred_at=now,
+                ),
+                SecurityEvent(
+                    actor=owner,
+                    event_code="dashboard.window.expired",
+                    outcome="failure",
+                    occurred_at=now - timedelta(days=8),
+                ),
+            ]
+        )
+        session.commit()
+
+    response = request("GET", "/security-dashboard?window_days=7")
+    payload = response.json()
+
+    assert response.status_code == 200, response.text
+    assert payload["event_counts"]["total"] == 1
+    assert [event["event_code"] for event in payload["recent_events"]] == [
+        "dashboard.window.current"
+    ]
 
 
 def _create_ingested_source(
