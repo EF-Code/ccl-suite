@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import os
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, TypeVar
 from uuid import UUID, uuid4
@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -110,6 +110,7 @@ from api_schemas import (
     ResearchReviewEventResponse,
     ResearchReviewResponse,
     ResearchVerificationRequest,
+    SecurityDashboardResponse,
     SemanticSearchRequest,
     SemanticSearchResponse,
     SemanticSearchResult,
@@ -4827,6 +4828,159 @@ async def create_security_event(
         "Security event",
     )
     return SecurityEventResponse.model_validate(created_event)
+
+
+@app.get(
+    "/security-dashboard",
+    response_model=SecurityDashboardResponse,
+    tags=["security-events"],
+)
+async def get_security_dashboard(
+    response: Response,
+    window_days: int = Query(default=7, ge=7, le=90),
+    actor: User = Depends(require_permission("security.read")),
+    db: Session = Depends(get_db),
+) -> SecurityDashboardResponse:
+    """Return bounded security and project metrics within the actor's data scope."""
+
+    if window_days not in {7, 30, 90}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="window_days must be 7, 30, or 90.",
+        )
+    response.headers["Cache-Control"] = "no-store"
+    now = utc_now()
+    period_start = now - timedelta(days=window_days)
+    organization_scope = canonical_role(actor.role) in {"administrator", "supervisor"}
+    event_conditions = [
+        SecurityEvent.occurred_at >= period_start,
+        SecurityEvent.occurred_at <= now,
+    ]
+    project_conditions = []
+    if not organization_scope:
+        event_conditions.append(SecurityEvent.actor_id == actor.id)
+        project_conditions.append(Project.owner_id == actor.id)
+
+    def outcome_count(outcome: str):
+        return func.coalesce(
+            func.sum(case((SecurityEvent.outcome == outcome, 1), else_=0)),
+            0,
+        )
+
+    totals = db.execute(
+        select(
+            func.count(SecurityEvent.id),
+            outcome_count("success"),
+            outcome_count("failure"),
+            outcome_count("denied"),
+        ).where(*event_conditions)
+    ).one()
+
+    day_expression = func.date(SecurityEvent.occurred_at)
+    daily_rows = db.execute(
+        select(
+            day_expression,
+            func.count(SecurityEvent.id),
+            outcome_count("success"),
+            outcome_count("failure"),
+            outcome_count("denied"),
+        )
+        .where(*event_conditions)
+        .group_by(day_expression)
+        .order_by(day_expression)
+    ).all()
+    code_rows = db.execute(
+        select(SecurityEvent.event_code, func.count(SecurityEvent.id))
+        .where(*event_conditions)
+        .group_by(SecurityEvent.event_code)
+        .order_by(func.count(SecurityEvent.id).desc(), SecurityEvent.event_code.asc())
+        .limit(20)
+    ).all()
+    recent_events = list_records(
+        db,
+        select(SecurityEvent)
+        .where(*event_conditions)
+        .order_by(SecurityEvent.occurred_at.desc(), SecurityEvent.id)
+        .limit(25),
+    )
+
+    project_counts = db.execute(
+        select(
+            func.count(Project.id),
+            func.coalesce(func.sum(case((Project.status == "active", 1), else_=0)), 0),
+        ).where(*project_conditions)
+    ).one()
+    workflow_counts = db.execute(
+        select(
+            func.count(Workflow.id),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Workflow.state.in_(("in_progress", "review", "changes_required")), 1),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+        )
+        .join(Project, Workflow.project_id == Project.id)
+        .where(*project_conditions)
+    ).one()
+    pending_approvals = db.scalar(
+        select(func.count(Approval.id))
+        .join(Workflow, Approval.workflow_id == Workflow.id)
+        .join(Project, Workflow.project_id == Project.id)
+        .where(Approval.status == "pending", *project_conditions)
+    ) or 0
+    handoff_counts = db.execute(
+        select(
+            func.count(AgentHandoff.id),
+            func.coalesce(
+                func.sum(case((AgentHandoff.status.in_(("blocked", "failed")), 1), else_=0)),
+                0,
+            ),
+        )
+        .join(Project, AgentHandoff.project_id == Project.id)
+        .where(
+            AgentHandoff.created_at >= period_start,
+            AgentHandoff.created_at <= now,
+            *project_conditions,
+        )
+    ).one()
+
+    return SecurityDashboardResponse(
+        scope="organization" if organization_scope else "account",
+        window_days=window_days,
+        period_start=period_start,
+        generated_at=now,
+        event_counts={
+            "total": totals[0],
+            "success": totals[1],
+            "failure": totals[2],
+            "denied": totals[3],
+        },
+        activity_by_day=[
+            {
+                "date": row[0],
+                "total": row[1],
+                "success": row[2],
+                "failure": row[3],
+                "denied": row[4],
+            }
+            for row in daily_rows
+        ],
+        event_codes=[{"event_code": row[0], "count": row[1]} for row in code_rows],
+        project_metrics={
+            "projects_total": project_counts[0],
+            "projects_active": project_counts[1],
+            "workflows_total": workflow_counts[0],
+            "workflows_open": workflow_counts[1],
+            "pending_approvals": pending_approvals,
+            "agent_handoffs": handoff_counts[0],
+            "unsuccessful_agent_handoffs": handoff_counts[1],
+        },
+        recent_events=[SecurityEventResponse.model_validate(event) for event in recent_events],
+    )
 
 
 @app.get(
