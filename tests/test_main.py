@@ -307,7 +307,11 @@ def test_knowledge_source_registers_pending_and_approved_sources_are_queryable()
             ).all()
         ) == []
 
-    events = request("GET", "/security-events").json()
+    events = request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    ).json()
     source_events = [
         event for event in events if event["resource_ref"] == source.json()["id"]
     ]
@@ -444,7 +448,11 @@ def test_approved_knowledge_source_ingestion_persists_chunks(
         assert chunks[0].source_id == UUID(registered.json()["id"])
         assert chunks[0].content == payload["chunks"][0]["content"]
 
-    events = request("GET", "/security-events").json()
+    events = request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    ).json()
     assert any(
         event["event_code"] == "knowledge_source.ingested"
         and event["resource_ref"] == registered.json()["id"]
@@ -771,7 +779,16 @@ def test_intern_can_read_but_cannot_create_projects() -> None:
         headers={"X-User-ID": intern_id},
         json={"title": "Denied project", "owner_id": TEST_OWNER_ID},
     )
-    events = request("GET", "/security-events")
+    supervisor = request(
+        "POST",
+        "/users",
+        json={"external_ref": "intern-test-supervisor", "role": "supervisor"},
+    )
+    events = request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    )
 
     assert intern.status_code == 201
     assert listed.status_code == 200
@@ -2383,7 +2400,11 @@ def test_ingestion_blocks_prompt_injection_and_keeps_audit_bounded(
             select(KnowledgeSource).where(KnowledgeSource.id == UUID(source_id))
         ) is not None
 
-    events = request("GET", "/security-events").json()
+    events = request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    ).json()
     blocked = [
         event
         for event in events
@@ -2717,7 +2738,11 @@ def test_semantic_search_blocks_non_owner_staff_and_records_denial(
     assert denied.json() == {"detail": "Project was not found."}
     assert allowed.status_code == 200
     assert allowed.json()["result_count"] == 1
-    events = request("GET", "/security-events").json()
+    events = request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    ).json()
     assert any(
         event["event_code"] == "access.denied"
         and event["actor_id"] == TEST_OWNER_ID
@@ -2856,7 +2881,11 @@ def test_intern_knowledge_request_is_denied_and_audited_before_project_access() 
 
     assert response.status_code == 403
     assert response.json() == {"detail": "You do not have permission to perform this action."}
-    events = request("GET", "/security-events").json()
+    events = request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    ).json()
     assert any(
         event["event_code"] == "access.denied"
         and event["actor_id"] == intern.json()["id"]
@@ -3216,7 +3245,11 @@ def test_representative_media_corpus_answers_and_denials_end_to_end(
     )
     assert denied.status_code == 404
     assert denied.json() == {"detail": "Project was not found."}
-    events = request("GET", "/security-events").json()
+    events = request(
+        "GET",
+        "/security-events",
+        headers={"X-User-ID": supervisor.json()["id"]},
+    ).json()
     assert any(
         event["event_code"] == "access.denied"
         and event["actor_id"] == other_user.json()["id"]
