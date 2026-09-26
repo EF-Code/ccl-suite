@@ -21,6 +21,7 @@ from models import (  # noqa: F401
     KnowledgeErrorReport,
     KnowledgeFeedback,
     KnowledgeSource,
+    OperationalAlert,
     Project,
     ResearchReview,
     ResearchReviewClaim,
