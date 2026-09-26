@@ -580,6 +580,13 @@ def test_dashboard_overview_surfaces_active_project_control(dashboard_page: Page
 
     page = dashboard_page
     page.goto(BASE_URL, wait_until="networkidle")
+    overview = page.locator("#overview-dashboard")
+    expect(overview).to_be_visible()
+    empty_health = overview.locator(".overview-health-card")
+    expect(empty_health).to_contain_text("System health")
+    expect(empty_health).to_contain_text("Service ready")
+    expect(empty_health).to_contain_text("Select a project to see its approval and file metrics.")
+    expect(empty_health).not_to_contain_text("100%")
     open_workspace(page, "Setup")
 
     suffix = uuid4().hex[:10]
@@ -593,9 +600,10 @@ def test_dashboard_overview_surfaces_active_project_control(dashboard_page: Page
     project_row.get_by_role("button", name="Use project").click()
 
     open_workspace(page, "Overview")
-    overview = page.locator("#overview-dashboard")
     expect(overview).to_be_visible()
     expect(overview.locator("#overview-title")).to_have_text("Keep every project moving.")
     expect(overview.locator(".overview-project-card")).to_contain_text(project_title)
+    expect(overview.locator(".overview-health-card")).to_contain_text("System health")
+    expect(overview.locator(".overview-health-card")).not_to_contain_text("100%")
     expect(overview.locator(".overview-workflow-card")).to_contain_text("Project delivery path")
     expect(overview.locator(".overview-actions-card")).to_contain_text("Move the work forward")
