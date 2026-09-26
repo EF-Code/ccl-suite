@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hmac
+import csv
+import io
+import json
 import os
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal, TypeVar
 from uuid import UUID, uuid4
@@ -11,7 +14,7 @@ from uuid import UUID, uuid4
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -43,6 +46,7 @@ from auth import (
     verify_password,
 )
 from api_schemas import (
+    AlertEvaluationResponse,
     ApprovalCreate,
     ApprovalDecisionRequest,
     ApprovalResponse,
@@ -90,6 +94,7 @@ from api_schemas import (
     OrganizationPlanResponse,
     OrganizationRollbackCreate,
     OrganizationRollbackResponse,
+    OperationalAlertResponse,
     PermissionMatrixResponse,
     ProjectCreate,
     ProjectResponse,
@@ -127,6 +132,7 @@ from api_schemas import (
     WorkflowToolRequest,
     WorkflowToolRunResponse,
     WorkflowResponse,
+    WeeklyOperationsReportResponse,
 )
 from config import ENVIRONMENT
 from database import get_db
@@ -242,6 +248,7 @@ from models import (
     KnowledgeErrorReport,
     KnowledgeFeedback,
     KnowledgeSource,
+    OperationalAlert,
     Project,
     ResearchReview,
     ResearchReviewClaim,
@@ -253,6 +260,7 @@ from models import (
     WorkflowToolRun,
     utc_now,
 )
+from operations_monitoring import build_weekly_operations_metrics, evaluate_operational_alerts
 from workflow_orchestration import (
     MAX_TOOL_ATTEMPTS,
     MAX_WORKFLOW_TRACE_RESULTS,
@@ -5003,3 +5011,224 @@ async def list_security_events(
         statement.order_by(SecurityEvent.occurred_at.desc(), SecurityEvent.id).limit(limit),
     )
     return [SecurityEventResponse.model_validate(event) for event in events]
+
+
+@app.post(
+    "/operations/alerts/evaluate",
+    response_model=AlertEvaluationResponse,
+    tags=["operations"],
+)
+async def evaluate_alerts(
+    response: Response,
+    actor: User = Depends(require_permission("security.alerts.evaluate")),
+    db: Session = Depends(get_db),
+) -> AlertEvaluationResponse:
+    """Run the deterministic alert rules on demand; this is not a background job."""
+
+    organization_scope = canonical_role(actor.role) in {"administrator", "supervisor"}
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        result = evaluate_operational_alerts(db, actor, organization_scope)
+    except IntegrityError:
+        db.rollback()
+        logger.warning("Operational alert evaluation hit a concurrent uniqueness conflict.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Alert evaluation conflicted with another request; retry it.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Operational alert evaluation failed because of a database error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    return AlertEvaluationResponse(**result)
+
+
+@app.get(
+    "/operations/alerts",
+    response_model=list[OperationalAlertResponse],
+    tags=["operations"],
+)
+async def list_operational_alerts(
+    response: Response,
+    status_filter: Literal["open", "acknowledged", "resolved"] | None = Query(
+        default=None, alias="status"
+    ),
+    limit: int = Query(default=100, ge=1, le=500),
+    actor: User = Depends(require_permission("security.read")),
+    db: Session = Depends(get_db),
+) -> list[OperationalAlertResponse]:
+    response.headers["Cache-Control"] = "no-store"
+    statement = select(OperationalAlert)
+    if status_filter is not None:
+        statement = statement.where(OperationalAlert.status == status_filter)
+    if canonical_role(actor.role) not in {"administrator", "supervisor"}:
+        statement = statement.where(
+            or_(
+                OperationalAlert.actor_id == actor.id,
+                OperationalAlert.project_id.in_(
+                    select(Project.id).where(Project.owner_id == actor.id)
+                ),
+            )
+        )
+    statement = statement.order_by(
+        case(
+            (OperationalAlert.severity == "critical", 0),
+            (OperationalAlert.severity == "high", 1),
+            else_=2,
+        ),
+        OperationalAlert.created_at.desc(),
+        OperationalAlert.id,
+    ).limit(limit)
+    alerts = list_records(db, statement)
+    return [OperationalAlertResponse.model_validate(alert) for alert in alerts]
+
+
+def _record_alert_action(
+    db: Session,
+    actor: User,
+    alert: OperationalAlert,
+    event_code: str,
+) -> OperationalAlertResponse:
+    db.add(
+        SecurityEvent(
+            actor_id=actor.id,
+            event_code=event_code,
+            outcome="success",
+            resource_type="operational_alert",
+            resource_ref=str(alert.id),
+            occurred_at=utc_now(),
+        )
+    )
+    saved_alert = persist_record(db, alert, "Operational alert")
+    return OperationalAlertResponse.model_validate(saved_alert)
+
+
+@app.post(
+    "/operations/alerts/{alert_id}/acknowledge",
+    response_model=OperationalAlertResponse,
+    tags=["operations"],
+)
+async def acknowledge_operational_alert(
+    alert_id: UUID,
+    actor: User = Depends(require_permission("security.alerts.manage")),
+    db: Session = Depends(get_db),
+) -> OperationalAlertResponse:
+    alert = require_record(db, OperationalAlert, alert_id, "Operational alert was not found.")
+    if alert.status == "resolved":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A resolved alert cannot be acknowledged.",
+        )
+    if alert.status == "acknowledged":
+        return OperationalAlertResponse.model_validate(alert)
+    alert.status = "acknowledged"
+    alert.acknowledged_at = utc_now()
+    alert.acknowledged_by_id = actor.id
+    alert.updated_at = alert.acknowledged_at
+    return _record_alert_action(db, actor, alert, "security.alert.acknowledged")
+
+
+@app.post(
+    "/operations/alerts/{alert_id}/resolve",
+    response_model=OperationalAlertResponse,
+    tags=["operations"],
+)
+async def resolve_operational_alert(
+    alert_id: UUID,
+    actor: User = Depends(require_permission("security.alerts.manage")),
+    db: Session = Depends(get_db),
+) -> OperationalAlertResponse:
+    alert = require_record(db, OperationalAlert, alert_id, "Operational alert was not found.")
+    if alert.status == "resolved":
+        return OperationalAlertResponse.model_validate(alert)
+    alert.status = "resolved"
+    alert.resolved_at = utc_now()
+    alert.resolved_by_id = actor.id
+    alert.updated_at = alert.resolved_at
+    return _record_alert_action(db, actor, alert, "security.alert.resolved")
+
+
+@app.get(
+    "/operations/weekly-report",
+    response_model=WeeklyOperationsReportResponse,
+    tags=["operations"],
+)
+async def get_weekly_operations_report(
+    response: Response,
+    week_start: date | None = None,
+    report_format: Literal["json", "csv"] = Query(default="json", alias="format"),
+    actor: User = Depends(require_permission("security.read")),
+    db: Session = Depends(get_db),
+) -> WeeklyOperationsReportResponse | Response:
+    """Return the prior complete UTC week, or an explicitly selected complete week."""
+
+    generated_at = utc_now()
+    current_monday = generated_at.date() - timedelta(days=generated_at.weekday())
+    if week_start is None:
+        week_start = current_monday - timedelta(days=7)
+    if week_start.weekday() != 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="week_start must be a Monday (UTC).",
+        )
+    if week_start >= current_monday:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Only completed UTC weeks can be reported.",
+        )
+
+    organization_scope = canonical_role(actor.role) in {"administrator", "supervisor"}
+    metrics = build_weekly_operations_metrics(
+        db,
+        actor,
+        organization_scope,
+        week_start,
+        now=generated_at,
+    )
+    report = WeeklyOperationsReportResponse(
+        scope="organization" if organization_scope else "account",
+        period_start=week_start,
+        period_end=week_start + timedelta(days=6),
+        generated_at=generated_at,
+        note=(
+            "Counts come from persisted application records, not estimated work hours or AI-written "
+            "narrative. Fields ending in '_now' and current-state snapshots reflect report generation; "
+            "handoff completion duration covers handoffs completed within the reporting week. "
+            "All reporting windows use UTC."
+        ),
+        metrics=metrics,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    if report_format == "json":
+        return report
+
+    flattened = report.model_dump(mode="json")
+    rows: list[tuple[str, object]] = [
+        ("scope", flattened["scope"]),
+        ("period_start_utc", flattened["period_start"]),
+        ("period_end_utc_inclusive", flattened["period_end"]),
+        ("generated_at_utc", flattened["generated_at"]),
+        ("data_basis", flattened["data_basis"]),
+        ("note", flattened["note"]),
+    ]
+    rows.extend(flattened["metrics"].items())
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(("metric", "value"))
+    for key, value in rows:
+        if isinstance(value, dict):
+            value = json.dumps(value, sort_keys=True)
+        if isinstance(value, str) and value[:1] in {"=", "+", "-", "@", "\t", "\r"}:
+            value = "'" + value
+        writer.writerow((key, value))
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="weekly-operations-{week_start.isoformat()}.csv"',
+        },
+    )
