@@ -9,9 +9,10 @@ from sqlalchemy import delete, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from auth import hash_password
 from database import get_db
 from main import app
-from models import Project, User
+from models import AuthSession, Project, User
 
 
 pytestmark = pytest.mark.integration
@@ -45,8 +46,16 @@ def test_project_endpoint_round_trip_against_postgresql(postgres_engine) -> None
         expire_on_commit=False,
     )
 
+    email = f"integration-{uuid4().hex}@example.test"
+    password = "Postgres-Integration-Password-26!"
     with session_factory() as session:
-        owner = User(external_ref=f"integration-{uuid4().hex}")
+        owner = User(
+            external_ref=f"integration-{uuid4().hex}",
+            email=email,
+            password_hash=hash_password(password),
+            is_active=True,
+            role="administrator",
+        )
         session.add(owner)
         session.commit()
         owner_id = str(owner.id)
@@ -62,25 +71,39 @@ def test_project_endpoint_round_trip_against_postgresql(postgres_engine) -> None
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://integration"
             ) as client:
+                login = await client.post(
+                    "/auth/login",
+                    json={"email": email, "password": password},
+                )
+                assert login.status_code == 200, login.text
+                csrf_token = client.cookies.get("ccl_csrf")
+                assert csrf_token
                 created = await client.post(
                     "/projects",
                     json={"title": "PostgreSQL project", "owner_id": owner_id},
+                    headers={"X-CSRF-Token": csrf_token},
                 )
                 listed = await client.get("/projects")
                 return created, listed
         finally:
             app.dependency_overrides.pop(get_db, None)
 
-    created, listed = asyncio.run(send_requests())
-    assert created.status_code == 201
-    assert listed.status_code == 200
-    project_id = UUID(created.json()["id"])
+    project_id: UUID | None = None
+    try:
+        created, listed = asyncio.run(send_requests())
+        if created.status_code == 201:
+            project_id = UUID(created.json()["id"])
+        assert created.status_code == 201, created.text
+        assert listed.status_code == 200
 
-    with session_factory() as session:
-        stored_project = session.get(Project, project_id)
-        assert stored_project is not None
-        assert stored_project.owner_id == UUID(owner_id)
-
-        session.execute(delete(Project).where(Project.id == project_id))
-        session.execute(delete(User).where(User.id == UUID(owner_id)))
-        session.commit()
+        with session_factory() as session:
+            stored_project = session.get(Project, project_id)
+            assert stored_project is not None
+            assert stored_project.owner_id == UUID(owner_id)
+    finally:
+        with session_factory() as session:
+            if project_id is not None:
+                session.execute(delete(Project).where(Project.id == project_id))
+            session.execute(delete(AuthSession).where(AuthSession.user_id == UUID(owner_id)))
+            session.execute(delete(User).where(User.id == UUID(owner_id)))
+            session.commit()
