@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 from collections.abc import AsyncIterator, Generator
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -32,10 +32,12 @@ from models import (
     KnowledgeErrorReport,
     KnowledgeFeedback,
     KnowledgeSource,
+    OperationalAlert,
     Project,
     SecurityEvent,
     User,
     Workflow,
+    WorkflowAction,
     utc_now,
 )
 
@@ -105,6 +107,8 @@ def test_serves_operations_web_prototype() -> None:
     assert "CCL AI Suite" in response.text
     assert "Controlled conversion" in response.text
     assert "Backup and restore" in response.text
+    assert "Operational alerts" in response.text
+    assert "Weekly operations report" in response.text
 
 
 def test_dashboard_ui_exposes_guided_workflow_and_protected_actions() -> None:
@@ -743,12 +747,17 @@ def test_permission_matrix_endpoint_lists_roles() -> None:
     response = request("GET", "/permissions")
 
     assert response.status_code == 200
-    assert set(response.json()["roles"]) == {
+    roles = response.json()["roles"]
+    assert set(roles) == {
         "administrator",
         "supervisor",
         "staff",
         "intern",
     }
+    assert "security.alerts.evaluate" in roles["staff"]
+    assert "security.alerts.evaluate" not in roles["intern"]
+    assert "security.alerts.manage" in roles["supervisor"]
+    assert "security.alerts.manage" not in roles["staff"]
 
 
 def test_upload_policy_endpoint_describes_allowlist() -> None:
@@ -2404,6 +2413,421 @@ def test_security_dashboard_excludes_events_outside_selected_window() -> None:
     assert [event["event_code"] for event in payload["recent_events"]] == [
         "dashboard.window.current"
     ]
+
+
+def test_operational_alerts_dedupe_scope_and_auto_resolve_overdue_approvals() -> None:
+    now = utc_now()
+    with TestingSessionLocal() as session:
+        owner = session.get(User, UUID(TEST_OWNER_ID))
+        assert owner is not None
+        outside = User(external_ref="monitoring-outside-user", role="staff")
+        supervisor = User(external_ref="monitoring-supervisor", role="supervisor")
+        project = Project(
+            owner=owner,
+            name="Alert scope project",
+            storage_slug=f"alert-scope-{uuid4().hex[:12]}",
+        )
+        workflow = Workflow(project=project, name="Alert scope workflow")
+        approval = Approval(
+            workflow=workflow,
+            requested_by=owner,
+            status="pending",
+            requested_at=now - timedelta(hours=30),
+        )
+        own_failures = [
+            SecurityEvent(
+                actor=owner,
+                event_code="auth.login",
+                outcome="failure",
+                occurred_at=now - timedelta(minutes=4 - index),
+            )
+            for index in range(5)
+        ]
+        outside_failures = [
+            SecurityEvent(
+                actor=outside,
+                event_code="auth.login",
+                outcome="denied",
+                occurred_at=now - timedelta(minutes=4 - index),
+            )
+            for index in range(5)
+        ]
+        session.add_all([outside, supervisor, project, workflow, approval, *own_failures, *outside_failures])
+        session.flush()
+        handoff = AgentHandoff(
+            project_id=project.id,
+            workflow_id=workflow.id,
+            requested_by_id=owner.id,
+            trace_id=uuid4().hex,
+            source_agent="orchestrator",
+            target_agent="research",
+            status="blocked",
+            blocked_reason="input_rule:secret-exfiltration",
+            input_summary="Input blocked by a safety rule.",
+            output_summary="Handoff blocked before specialist execution.",
+            created_at=now - timedelta(minutes=2),
+        )
+        session.add(handoff)
+        session.commit()
+        approval_id = approval.id
+        supervisor_id = supervisor.id
+
+    owner_headers = {"X-User-ID": TEST_OWNER_ID}
+    first = request("POST", "/operations/alerts/evaluate", headers=owner_headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["created"] == 3
+    assert first.json()["active_alerts"] == 3
+
+    alert_rows = request("GET", "/operations/alerts", headers=owner_headers)
+    assert alert_rows.status_code == 200
+    assert len(alert_rows.json()) == 3
+    assert {alert["rule_code"] for alert in alert_rows.json()} == {
+        "security.repeated_failures",
+        "security.high_risk_handoff",
+        "workflow.overdue_approval",
+    }
+    assert next(alert for alert in alert_rows.json() if alert["rule_code"] == "security.high_risk_handoff")["severity"] == "critical"
+
+    with TestingSessionLocal() as session:
+        owner = session.get(User, UUID(TEST_OWNER_ID))
+        assert owner is not None
+        current_event_time = utc_now()
+        session.add_all(
+            [
+                SecurityEvent(
+                    actor=owner,
+                    event_code="auth.login",
+                    outcome="failure",
+                    occurred_at=current_event_time,
+                )
+                for _ in range(5)
+            ]
+        )
+        session.commit()
+    repeated = request("POST", "/operations/alerts/evaluate", headers=owner_headers)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] == 0
+    assert repeated.json()["active_alerts"] == 3
+    repeated_alert = next(
+        alert
+        for alert in request("GET", "/operations/alerts", headers=owner_headers).json()
+        if alert["rule_code"] == "security.repeated_failures"
+    )
+    assert repeated_alert["observed_count"] == 10
+    assert "10 failed or denied attempts" in repeated_alert["summary"]
+
+    with TestingSessionLocal() as session:
+        approval = session.get(Approval, approval_id)
+        assert approval is not None
+        approval.status = "approved"
+        approval.decided_at = utc_now()
+        session.commit()
+    cleared = request("POST", "/operations/alerts/evaluate", headers=owner_headers)
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["auto_resolved"] == 1
+    assert cleared.json()["active_alerts"] == 2
+
+    organization_headers = {"X-User-ID": str(supervisor_id)}
+    organization_check = request("POST", "/operations/alerts/evaluate", headers=organization_headers)
+    assert organization_check.status_code == 200, organization_check.text
+    assert organization_check.json()["scope"] == "organization"
+    assert organization_check.json()["created"] == 1
+    organization_alerts = request("GET", "/operations/alerts", headers=organization_headers)
+    assert organization_alerts.status_code == 200
+    assert len(organization_alerts.json()) == 4
+
+
+def test_alert_acknowledgement_and_resolution_are_permission_gated_and_audited() -> None:
+    now = utc_now()
+    with TestingSessionLocal() as session:
+        owner = session.get(User, UUID(TEST_OWNER_ID))
+        assert owner is not None
+        supervisor = User(external_ref="alert-triage-supervisor", role="supervisor")
+        alert = OperationalAlert(
+            fingerprint=hashlib.sha256(b"alert-triage-test").hexdigest(),
+            rule_code="security.repeated_failures",
+            severity="warning",
+            status="open",
+            title="Repeated failed or denied activity",
+            summary="Five failed events occurred within the rule window.",
+            actor_id=owner.id,
+            resource_type="security_event_code",
+            resource_ref="auth.login",
+            observed_count=5,
+            escalation_level=0,
+            first_seen_at=now,
+            last_seen_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add_all([supervisor, alert])
+        session.commit()
+        supervisor_id = supervisor.id
+        alert_id = alert.id
+
+    alert_path = f"/operations/alerts/{alert_id}"
+    denied = request(
+        "POST",
+        f"{alert_path}/acknowledge",
+        headers={"X-User-ID": TEST_OWNER_ID},
+    )
+    assert denied.status_code == 403
+
+    manager_headers = {"X-User-ID": str(supervisor_id)}
+    acknowledged = request("POST", f"{alert_path}/acknowledge", headers=manager_headers)
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert acknowledged.json()["status"] == "acknowledged"
+    assert request("POST", f"{alert_path}/acknowledge", headers=manager_headers).status_code == 200
+
+    resolved = request("POST", f"{alert_path}/resolve", headers=manager_headers)
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "resolved"
+    assert request("POST", f"{alert_path}/resolve", headers=manager_headers).status_code == 200
+    assert request("POST", f"{alert_path}/acknowledge", headers=manager_headers).status_code == 409
+
+    with TestingSessionLocal() as session:
+        audit_codes = list(
+            session.scalars(
+                select(SecurityEvent.event_code).where(
+                    SecurityEvent.resource_ref == str(alert_id),
+                    SecurityEvent.event_code.in_(
+                        ("security.alert.acknowledged", "security.alert.resolved")
+                    ),
+                )
+            )
+        )
+    assert sorted(audit_codes) == ["security.alert.acknowledged", "security.alert.resolved"]
+
+
+def test_alert_escalates_by_unacknowledged_age_and_reopens_on_new_evidence() -> None:
+    now = utc_now()
+    with TestingSessionLocal() as session:
+        owner = session.get(User, UUID(TEST_OWNER_ID))
+        assert owner is not None
+        supervisor = User(external_ref="alert-escalation-supervisor", role="supervisor")
+        alert = OperationalAlert(
+            fingerprint=hashlib.sha256(
+                f"security.repeated_failures|{owner.id}|auth.login".encode()
+            ).hexdigest(),
+            rule_code="security.repeated_failures",
+            severity="warning",
+            status="open",
+            title="Repeated failed or denied activity",
+            summary="Five failed events occurred within the rule window.",
+            actor_id=owner.id,
+            resource_type="security_event_code",
+            resource_ref="auth.login",
+            observed_count=5,
+            escalation_level=0,
+            first_seen_at=now - timedelta(hours=25),
+            last_seen_at=now - timedelta(hours=25),
+            created_at=now - timedelta(hours=25),
+            updated_at=now - timedelta(hours=25),
+        )
+        session.add_all([supervisor, alert])
+        session.commit()
+        alert_id = alert.id
+        supervisor_id = supervisor.id
+
+    owner_headers = {"X-User-ID": TEST_OWNER_ID}
+    first_escalation = request("POST", "/operations/alerts/evaluate", headers=owner_headers)
+    assert first_escalation.status_code == 200, first_escalation.text
+    assert first_escalation.json()["escalated"] == 1
+    with TestingSessionLocal() as session:
+        alert = session.get(OperationalAlert, alert_id)
+        assert alert is not None
+        assert alert.escalation_level == 1
+        assert alert.severity == "high"
+        alert.first_seen_at = utc_now() - timedelta(hours=73)
+        session.commit()
+
+    second_escalation = request("POST", "/operations/alerts/evaluate", headers=owner_headers)
+    assert second_escalation.status_code == 200, second_escalation.text
+    assert second_escalation.json()["escalated"] == 1
+    with TestingSessionLocal() as session:
+        alert = session.get(OperationalAlert, alert_id)
+        assert alert is not None
+        assert alert.escalation_level == 2
+        assert alert.severity == "critical"
+
+    manager_headers = {"X-User-ID": str(supervisor_id)}
+    assert request("POST", f"/operations/alerts/{alert_id}/acknowledge", headers=manager_headers).status_code == 200
+    assert request("POST", f"/operations/alerts/{alert_id}/resolve", headers=manager_headers).status_code == 200
+
+    evidence_time = utc_now()
+    with TestingSessionLocal() as session:
+        owner = session.get(User, UUID(TEST_OWNER_ID))
+        assert owner is not None
+        session.add_all(
+            [
+                SecurityEvent(
+                    actor=owner,
+                    event_code="auth.login",
+                    outcome="failure",
+                    occurred_at=evidence_time,
+                )
+                for index in range(5)
+            ]
+        )
+        session.commit()
+
+    reopened = request("POST", "/operations/alerts/evaluate", headers=owner_headers)
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["reopened"] == 1, reopened.json()
+    with TestingSessionLocal() as session:
+        alert = session.get(OperationalAlert, alert_id)
+        assert alert is not None
+        assert alert.status == "open"
+        assert alert.escalation_level == 0
+        assert alert.resolved_at is None
+
+
+def test_weekly_operations_report_is_scoped_and_csv_export_is_available() -> None:
+    now = utc_now()
+    current_monday = now.date() - timedelta(days=now.weekday())
+    week_start = current_monday - timedelta(days=7)
+    start_at = datetime.combine(week_start, datetime.min.time(), tzinfo=timezone.utc)
+    event_time = start_at + timedelta(days=2, hours=10)
+    with TestingSessionLocal() as session:
+        owner = session.get(User, UUID(TEST_OWNER_ID))
+        assert owner is not None
+        other = User(external_ref="weekly-report-other", role="staff")
+        project = Project(
+            owner=owner,
+            name="Weekly report project",
+            storage_slug=f"weekly-report-{uuid4().hex[:12]}",
+            created_at=event_time,
+        )
+        other_project = Project(
+            owner=other,
+            name="Private weekly report project",
+            storage_slug=f"weekly-private-{uuid4().hex[:12]}",
+            created_at=event_time,
+        )
+        workflow = Workflow(
+            project=project,
+            name="Weekly report workflow",
+            state="review",
+            created_at=event_time,
+        )
+        approval = Approval(
+            workflow=workflow,
+            requested_by=owner,
+            status="pending",
+            requested_at=event_time,
+        )
+        session.add_all(
+            [
+                other,
+                project,
+                other_project,
+                workflow,
+                approval,
+                SecurityEvent(actor=owner, event_code="weekly.success", outcome="success", occurred_at=event_time),
+                SecurityEvent(actor=other, event_code="weekly.private", outcome="denied", occurred_at=event_time),
+            ]
+        )
+        session.flush()
+        report_alert = OperationalAlert(
+            fingerprint=hashlib.sha256(b"weekly-report-alert").hexdigest(),
+            rule_code="workflow.overdue_approval",
+            severity="warning",
+            status="acknowledged",
+            title="Approval is overdue",
+            summary="A workflow approval has remained pending for at least 24 hours.",
+            project_id=project.id,
+            actor_id=owner.id,
+            resource_type="approval",
+            resource_ref=str(approval.id),
+            observed_count=1,
+            escalation_level=0,
+            first_seen_at=event_time,
+            last_seen_at=event_time,
+            acknowledged_at=event_time,
+            acknowledged_by_id=owner.id,
+            created_at=event_time,
+            updated_at=event_time,
+        )
+        pending_action = WorkflowAction(
+            project_id=project.id,
+            workflow_id=workflow.id,
+            requested_by_id=owner.id,
+            action_code="publish",
+            target_ref="weekly-report-test-target",
+            reason="Awaiting reviewer approval.",
+            status="pending_approval",
+            created_at=event_time,
+        )
+        session.add_all([report_alert, pending_action])
+        completed_handoff = AgentHandoff(
+            project_id=project.id,
+            workflow_id=workflow.id,
+            requested_by_id=owner.id,
+            trace_id=uuid4().hex,
+            source_agent="orchestrator",
+            target_agent="research",
+            status="completed",
+            input_summary="Bounded test input.",
+            output_summary="Handoff completed.",
+            created_at=event_time,
+            completed_at=event_time + timedelta(minutes=2),
+        )
+        session.add(completed_handoff)
+        session.commit()
+
+    headers = {"X-User-ID": TEST_OWNER_ID}
+    report_path = f"/operations/weekly-report?week_start={week_start.isoformat()}"
+    response = request("GET", report_path, headers=headers)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    metrics = payload["metrics"]
+    assert payload["scope"] == "account"
+    assert payload["period_start"] == week_start.isoformat()
+    assert payload["period_end"] == (week_start + timedelta(days=6)).isoformat()
+    assert "persisted application records" in payload["note"]
+    assert "AI-written" in payload["note"]
+    assert metrics["projects_created_in_period"] == 1
+    assert metrics["active_projects_at_generation"] == 1
+    assert metrics["workflows_created_in_period"] == 1
+    assert metrics["workflows_by_state_now"]["review"] == 1
+    assert metrics["workflow_actions_created_in_period"] == 1
+    assert metrics["workflow_actions_pending_now"] == 1
+    assert metrics["workflow_actions_by_status_now"]["pending_approval"] == 1
+    assert metrics["approvals_requested_in_period"] == 1
+    assert metrics["approvals_pending_now"] == 1
+    assert metrics["approvals_overdue_now"] == 1
+    assert metrics["security_events_in_period"] == 1
+    assert metrics["security_successes_in_period"] == 1
+    assert metrics["security_denials_in_period"] == 0
+    assert metrics["handoffs_started_in_period"] == 1
+    assert metrics["handoffs_completed_in_period"] == 1
+    assert metrics["mean_handoff_completion_seconds"] == 120
+    assert metrics["alerts_opened_in_period"] == 1
+    assert metrics["alerts_open_now"] == 0
+    assert metrics["alerts_acknowledged_now"] == 1
+
+    csv_response = request("GET", f"{report_path}&format=csv", headers=headers)
+    assert csv_response.status_code == 200
+    assert "text/csv" in csv_response.headers["content-type"]
+    assert 'attachment; filename="weekly-operations-' in csv_response.headers["content-disposition"]
+    assert "projects_created_in_period,1" in csv_response.text
+    assert "workflows_by_state_now" in csv_response.text
+
+    non_monday = request(
+        "GET",
+        "/operations/weekly-report?week_start=2026-09-22",
+        headers=headers,
+    )
+    assert non_monday.status_code == 422
+    current_week = request(
+        "GET",
+        f"/operations/weekly-report?week_start={current_monday.isoformat()}",
+        headers=headers,
+    )
+    assert current_week.status_code == 422
+    default_week = request("GET", "/operations/weekly-report", headers=headers)
+    assert default_week.status_code == 200
+    assert default_week.json()["period_start"] == week_start.isoformat()
 
 
 def _create_ingested_source(
