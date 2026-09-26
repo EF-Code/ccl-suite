@@ -1292,6 +1292,86 @@ class SecurityDashboardResponse(BaseModel):
     recent_events: list[SecurityEventResponse]
 
 
+class OperationalAlertResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    rule_code: Literal[
+        "security.high_risk_handoff",
+        "security.repeated_failures",
+        "workflow.overdue_approval",
+    ]
+    severity: Literal["warning", "high", "critical"]
+    status: Literal["open", "acknowledged", "resolved"]
+    title: str
+    summary: str
+    project_id: UUID | None
+    actor_id: UUID | None
+    resource_type: str | None
+    resource_ref: str | None
+    observed_count: int
+    escalation_level: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    escalated_at: datetime | None
+    acknowledged_at: datetime | None
+    acknowledged_by_id: UUID | None
+    resolved_at: datetime | None
+    resolved_by_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AlertEvaluationResponse(BaseModel):
+    evaluated_at: datetime
+    scope: Literal["account", "organization"]
+    created: int
+    reopened: int
+    escalated: int
+    auto_resolved: int
+    active_alerts: int
+    note: str
+
+
+class WeeklyOperationsMetrics(BaseModel):
+    projects_created_in_period: int
+    active_projects_at_generation: int
+    workflows_created_in_period: int
+    workflows_by_state_now: dict[str, int]
+    workflow_actions_created_in_period: int
+    workflow_actions_executed_in_period: int
+    workflow_actions_pending_now: int
+    workflow_actions_by_status_now: dict[str, int]
+    approvals_requested_in_period: int
+    approvals_decided_in_period: int
+    approvals_pending_now: int
+    approvals_overdue_now: int
+    security_events_in_period: int
+    security_successes_in_period: int
+    security_failures_in_period: int
+    security_denials_in_period: int
+    high_risk_agent_blocks_in_period: int
+    handoffs_started_in_period: int
+    handoffs_completed_in_period: int
+    handoffs_failed_in_period: int
+    handoffs_blocked_in_period: int
+    mean_handoff_completion_seconds: float | None
+    alerts_opened_in_period: int
+    alerts_open_now: int
+    alerts_acknowledged_now: int
+    alerts_escalated_open_now: int
+
+
+class WeeklyOperationsReportResponse(BaseModel):
+    scope: Literal["account", "organization"]
+    period_start: date
+    period_end: date
+    generated_at: datetime
+    data_basis: Literal["persisted_application_records"] = "persisted_application_records"
+    note: str
+    metrics: WeeklyOperationsMetrics
+
+
 __all__ = [
     "AgentDefinitionResponse",
     "AgentHandoffCreate",
@@ -1352,6 +1432,10 @@ __all__ = [
     "SecurityDashboardEventCodeCount",
     "SecurityDashboardProjectMetrics",
     "SecurityDashboardResponse",
+    "OperationalAlertResponse",
+    "AlertEvaluationResponse",
+    "WeeklyOperationsMetrics",
+    "WeeklyOperationsReportResponse",
     "UserCreate",
     "UserResponse",
     "UploadResponse",
