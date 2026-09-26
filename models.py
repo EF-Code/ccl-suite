@@ -1157,6 +1157,66 @@ class SecurityEvent(Base):
     )
 
 
+class OperationalAlert(Base):
+    """Deduplicated, auditable alert raised by a deterministic monitoring rule."""
+
+    __tablename__ = "operational_alerts"
+    __table_args__ = (
+        Index("ix_operational_alerts_status_severity", "status", "severity"),
+        Index("ix_operational_alerts_project_status", "project_id", "status"),
+        CheckConstraint(
+            "rule_code IN ('security.high_risk_handoff', 'security.repeated_failures', "
+            "'workflow.overdue_approval')",
+            name="ck_operational_alerts_rule_code",
+        ),
+        CheckConstraint(
+            "severity IN ('warning', 'high', 'critical')",
+            name="ck_operational_alerts_severity",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'acknowledged', 'resolved')",
+            name="ck_operational_alerts_status",
+        ),
+        CheckConstraint("escalation_level BETWEEN 0 AND 2", name="ck_operational_alerts_escalation"),
+        CheckConstraint("observed_count > 0", name="ck_operational_alerts_observed_count"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    rule_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
+    )
+    actor_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    resource_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resource_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    observed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    escalation_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledged_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
 __all__ = [
     "AgentHandoff",
     "Approval",
@@ -1169,6 +1229,7 @@ __all__ = [
     "KnowledgeErrorReport",
     "KnowledgeFeedback",
     "KnowledgeSource",
+    "OperationalAlert",
     "Project",
     "ResearchReview",
     "ResearchReviewClaim",
