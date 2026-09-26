@@ -450,3 +450,77 @@ export type SecurityDashboard = {
   };
   recent_events: SecurityEvent[];
 };
+
+export type OperationalAlert = {
+  id: string;
+  rule_code: "security.high_risk_handoff" | "security.repeated_failures" | "workflow.overdue_approval";
+  severity: "warning" | "high" | "critical";
+  status: "open" | "acknowledged" | "resolved";
+  title: string;
+  summary: string;
+  project_id: string | null;
+  actor_id: string | null;
+  resource_type: string | null;
+  resource_ref: string | null;
+  observed_count: number;
+  escalation_level: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  escalated_at: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by_id: string | null;
+  resolved_at: string | null;
+  resolved_by_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AlertEvaluation = {
+  evaluated_at: string;
+  scope: "account" | "organization";
+  created: number;
+  reopened: number;
+  escalated: number;
+  auto_resolved: number;
+  active_alerts: number;
+  note: string;
+};
+
+export type WeeklyOperationsMetrics = {
+  projects_created_in_period: number;
+  active_projects_at_generation: number;
+  workflows_created_in_period: number;
+  workflows_by_state_now: Record<string, number>;
+  workflow_actions_created_in_period: number;
+  workflow_actions_executed_in_period: number;
+  workflow_actions_pending_now: number;
+  workflow_actions_by_status_now: Record<string, number>;
+  approvals_requested_in_period: number;
+  approvals_decided_in_period: number;
+  approvals_pending_now: number;
+  approvals_overdue_now: number;
+  security_events_in_period: number;
+  security_successes_in_period: number;
+  security_failures_in_period: number;
+  security_denials_in_period: number;
+  high_risk_agent_blocks_in_period: number;
+  handoffs_started_in_period: number;
+  handoffs_completed_in_period: number;
+  handoffs_failed_in_period: number;
+  handoffs_blocked_in_period: number;
+  mean_handoff_completion_seconds: number | null;
+  alerts_opened_in_period: number;
+  alerts_open_now: number;
+  alerts_acknowledged_now: number;
+  alerts_escalated_open_now: number;
+};
+
+export type WeeklyOperationsReport = {
+  scope: "account" | "organization";
+  period_start: string;
+  period_end: string;
+  generated_at: string;
+  data_basis: "persisted_application_records";
+  note: string;
+  metrics: WeeklyOperationsMetrics;
+};
