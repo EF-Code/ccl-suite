@@ -169,11 +169,8 @@
   .overview-project-meta > span { @apply inline-flex items-center gap-1.5; }
   .overview-health-card { @apply min-h-[11.25rem]; }
   .overview-health-content { @apply flex items-center gap-5 p-5 pt-1; }
-  .overview-health-ring { @apply relative grid h-[6.6rem] w-[6.6rem] shrink-0 place-items-center rounded-full; background: conic-gradient(#149a98 0 100%, #dbe7eb 100%); }
-  .overview-health-ring.is-warning { background: conic-gradient(#ef9c45 0 46%, #dbe7eb 46% 100%); }
-  .overview-health-ring::before { content: ""; @apply absolute h-[5.25rem] w-[5.25rem] rounded-full bg-white; }
-  .overview-health-ring strong { @apply relative z-10 text-[1.28rem] font-semibold tracking-[-0.04em] text-[#18324d]; }
-  .overview-health-ring small { @apply text-xs font-medium; }
+  .overview-health-indicator { @apply grid h-[5.6rem] w-[5.6rem] shrink-0 place-items-center rounded-full border border-[#b7e5de] bg-[#effaf7] text-[#087875]; }
+  .overview-health-indicator.is-warning { @apply border-amber-200 bg-amber-50 text-amber-700; }
   .overview-health-legend { @apply grid gap-2 text-[0.68rem] text-[#617588]; }
   .overview-health-legend span { @apply inline-flex items-center gap-2 whitespace-nowrap; }
   .overview-dot { @apply h-2 w-2 rounded-full; }

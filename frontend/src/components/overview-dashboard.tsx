@@ -137,15 +137,27 @@ export function OverviewDashboard({
 
         <Card className="overview-card overview-health-card">
           <CardHeader className="overview-card-header">
-            <div><p className="overview-label">Project health</p><CardTitle>{health.ok ? "Operational" : "Needs attention"}</CardTitle></div>
+            <div><p className="overview-label">System health</p><CardTitle>{health.ok ? "Service ready" : "Service unavailable"}</CardTitle></div>
             <ShieldCheck className={`h-5 w-5 ${health.ok ? "text-teal-600" : "text-amber-600"}`} />
           </CardHeader>
           <CardContent className="overview-health-content">
-            <div className={`overview-health-ring ${health.ok ? "is-healthy" : "is-warning"}`}><strong>{health.ok ? "100" : "0"}<small>%</small></strong></div>
+            <div
+              className={`overview-health-indicator ${health.ok ? "is-healthy" : "is-warning"}`}
+              role="img"
+              aria-label={health.ok ? "API is reachable" : "API is unavailable"}
+            >
+              {health.ok ? <Check className="h-7 w-7" aria-hidden="true" /> : <CircleAlert className="h-7 w-7" aria-hidden="true" />}
+            </div>
             <div className="overview-health-legend">
-              <span><i className="overview-dot overview-dot--good" />System ready</span>
-              <span><i className="overview-dot overview-dot--attention" />{pendingApprovals.length} pending approval{pendingApprovals.length === 1 ? "" : "s"}</span>
-              <span><i className="overview-dot overview-dot--neutral" />{files.length} active file{files.length === 1 ? "" : "s"}</span>
+              <span><i className={`overview-dot ${health.ok ? "overview-dot--good" : "overview-dot--attention"}`} />{health.ok ? "API reachable" : "API unavailable"}</span>
+              {project ? (
+                <>
+                  <span><i className="overview-dot overview-dot--attention" />{pendingApprovals.length} pending approval{pendingApprovals.length === 1 ? "" : "s"}</span>
+                  <span><i className="overview-dot overview-dot--neutral" />{files.length} active file{files.length === 1 ? "" : "s"}</span>
+                </>
+              ) : (
+                <p className="overview-muted-copy">Select a project to see its approval and file metrics.</p>
+              )}
             </div>
           </CardContent>
         </Card>
