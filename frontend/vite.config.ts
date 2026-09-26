@@ -6,13 +6,17 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   build: {
     // The API serves one self-contained static HTML artifact; inline the
     // bundled Geist fonts so it does not depend on an unserved /assets path.
     assetsInlineLimit: 100_000,
+    // Keep the single-file app artifact warning-free at its measured size:
+    // 525 kB minified (about 147 kB gzip). Splitting runtime chunks would
+    // require changing the API's static-asset serving contract.
+    chunkSizeWarningLimit: 550,
   },
   server: {
     port: 5173,
