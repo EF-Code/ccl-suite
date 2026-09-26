@@ -18,6 +18,7 @@ from models import (
     KnowledgeErrorReport,
     KnowledgeFeedback,
     KnowledgeSource,
+    OperationalAlert,
     Project,
     ResearchReview,
     ResearchReviewClaim,
@@ -28,7 +29,6 @@ from models import (
     WorkflowAction,
     WorkflowToolRun,
 )
-
 
 REQUIRED_TABLES = {
     "users",
@@ -46,6 +46,7 @@ REQUIRED_TABLES = {
     "workflow_actions",
     "workflow_tool_runs",
     "security_events",
+    "operational_alerts",
     "knowledge_sources",
     "ingestion_runs",
     "document_chunks",
@@ -178,6 +179,21 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
         "ix_security_events_actor_occurred_at",
         "ix_security_events_code_occurred_at",
         "ix_security_events_occurred_at",
+    }
+    assert {
+        index.name for index in OperationalAlert.__table__.indexes
+    } == {
+        "ix_operational_alerts_status_severity",
+        "ix_operational_alerts_project_status",
+    }
+    assert OperationalAlert.__table__.c.fingerprint.unique is True
+    assert {
+        constraint.name for constraint in OperationalAlert.__table__.constraints
+    } >= {
+        "ck_operational_alerts_rule_code",
+        "ck_operational_alerts_status",
+        "ck_operational_alerts_severity",
+        "ck_operational_alerts_escalation",
     }
     assert "ix_knowledge_feedback_project_created_at" in {
         index.name for index in KnowledgeFeedback.__table__.indexes
