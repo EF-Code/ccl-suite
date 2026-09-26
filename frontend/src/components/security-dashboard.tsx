@@ -7,14 +7,22 @@ import { Button } from "@/components/ui/button"
 import { MetricCard } from "@/components/security-dashboard-metrics"
 import { EventCodesPanel, ProjectControlsPanel, RecentEventsPanel, SecurityActivityPanel } from "@/components/security-dashboard-sections"
 import { downloadSecurityReport, formatDate, formatNumber, SECURITY_DASHBOARD_WINDOWS } from "@/components/security-dashboard-utils"
-import { apiRequest, type SecurityDashboard } from "@/lib/api"
+import { OperationalAlertsPanel, WeeklyOperationsReportPanel } from "@/components/security-operations-panels"
+import { apiRequest, type AlertEvaluation, type OperationalAlert, type SecurityDashboard, type WeeklyOperationsReport } from "@/lib/api"
 
-export function SecurityDashboard() {
+export function SecurityDashboard({ canEvaluateAlerts, canManageAlerts }: { canEvaluateAlerts: boolean; canManageAlerts: boolean }) {
   const [windowDays, setWindowDays] = useState<7 | 30 | 90>(7)
   const [refreshSequence, setRefreshSequence] = useState(0)
   const [dashboard, setDashboard] = useState<SecurityDashboard | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [alerts, setAlerts] = useState<OperationalAlert[]>([])
+  const [weeklyReport, setWeeklyReport] = useState<WeeklyOperationsReport | null>(null)
+  const [operationsLoading, setOperationsLoading] = useState(true)
+  const [alertsError, setAlertsError] = useState("")
+  const [reportError, setReportError] = useState("")
+  const [alertNotice, setAlertNotice] = useState("")
+  const [evaluatingAlerts, setEvaluatingAlerts] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -37,10 +45,67 @@ export function SecurityDashboard() {
     return () => { active = false }
   }, [windowDays, refreshSequence])
 
+  useEffect(() => {
+    let active = true
+    const alertsRequest = apiRequest<OperationalAlert[]>("/operations/alerts?limit=100")
+      .then((rows) => {
+        if (active) {
+          setAlerts(rows)
+          setAlertsError("")
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) setAlertsError((cause as Error).message || "The alert register could not be loaded.")
+      })
+    const reportRequest = apiRequest<WeeklyOperationsReport>("/operations/weekly-report")
+      .then((report) => {
+        if (active) {
+          setWeeklyReport(report)
+          setReportError("")
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) setReportError((cause as Error).message || "The weekly report could not be loaded.")
+      })
+    void Promise.all([alertsRequest, reportRequest]).finally(() => {
+      if (active) setOperationsLoading(false)
+    })
+    return () => { active = false }
+  }, [refreshSequence])
+
   const refresh = () => {
     setLoading(true)
+    setOperationsLoading(true)
     setError("")
+    setAlertsError("")
+    setReportError("")
     setRefreshSequence((value) => value + 1)
+  }
+
+  const evaluateAlerts = async () => {
+    setEvaluatingAlerts(true)
+    setAlertsError("")
+    setAlertNotice("")
+    try {
+      const evaluation = await apiRequest<AlertEvaluation>("/operations/alerts/evaluate", { method: "POST" })
+      const rows = await apiRequest<OperationalAlert[]>("/operations/alerts?limit=100")
+      setAlerts(rows)
+      setAlertNotice(`Rule check complete: ${evaluation.created} new, ${evaluation.reopened} reopened, ${evaluation.escalated} escalated, ${evaluation.auto_resolved} auto-resolved.`)
+    } catch (cause) {
+      setAlertsError(cause instanceof Error ? cause.message : "Alert evaluation failed.")
+    } finally {
+      setEvaluatingAlerts(false)
+    }
+  }
+
+  const triageAlert = async (alertId: string, action: "acknowledge" | "resolve") => {
+    setAlertsError("")
+    try {
+      const updated = await apiRequest<OperationalAlert>(`/operations/alerts/${alertId}/${action}`, { method: "POST" })
+      setAlerts((current) => current.map((alert) => alert.id === alertId ? updated : alert))
+    } catch (cause) {
+      setAlertsError(cause instanceof Error ? cause.message : "The alert could not be updated.")
+    }
   }
 
   if (loading && !dashboard) {
@@ -105,6 +170,20 @@ export function SecurityDashboard() {
         <RecentEventsPanel dashboard={dashboard} />
         <EventCodesPanel dashboard={dashboard} />
       </div>
+
+      <OperationalAlertsPanel
+        alerts={alerts}
+        loading={operationsLoading}
+        evaluating={evaluatingAlerts}
+        canEvaluate={canEvaluateAlerts}
+        canManage={canManageAlerts}
+        error={alertsError}
+        notice={alertNotice}
+        onEvaluate={() => void evaluateAlerts()}
+        onAction={(alertId, action) => void triageAlert(alertId, action)}
+      />
+
+      <WeeklyOperationsReportPanel report={weeklyReport} loading={operationsLoading} error={reportError} />
 
       <p className="sr-only" aria-live="polite">Report generated {formatDate(dashboard.generated_at)}.</p>
     </section>
