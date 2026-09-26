@@ -149,7 +149,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         const found = data.find(p=>p.id===selectedId)
         if (found) setSelectedProject(found)
       }
-    } catch (e: any) {
+    } catch {
       setProjects([])
     }
   }, [selectedId])
@@ -218,20 +218,64 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     }
   }, [])
 
-  useEffect(()=>{ refreshHealth(); apiRequest<any>("/permissions").then(d=>setPermissions(d.roles)).catch(()=>{}); apiRequest<any>("/upload-policy").then(setUploadPolicy).catch(()=>{}); }, [refreshHealth])
-  useEffect(()=>{
-    const oid = getOwnerId()
-    if (oid) refreshProjects()
-    else setProjects([])
-  }, [refreshProjects])
-  useEffect(()=>{
-    if (selectedId) {
-      refreshFiles(selectedId)
-      refreshKnowledgeSources(selectedId)
-      refreshResearchReviews(selectedId)
-      refreshWorkflows(selectedId)
+  useEffect(() => {
+    let active = true
+    async function loadDashboardConfiguration() {
+      const [healthResult, permissionsResult, uploadPolicyResult] = await Promise.allSettled([
+        apiRequest<{ status: string }>("/health"),
+        apiRequest<{ roles: Record<string, string[]> }>("/permissions"),
+        apiRequest("/upload-policy"),
+      ])
+      if (!active) return
+
+      if (healthResult.status === "fulfilled") {
+        const ok = healthResult.value.status === "ok"
+        setHealth({ ok, text: ok ? "Service is ready" : "Service check failed", detail: `GET /health · ${healthResult.value.status}` })
+        setHealthBadge(ok ? "API online" : "API unavailable")
+      } else {
+        setHealth({ ok: false, text: "Service check failed", detail: healthResult.reason instanceof Error ? healthResult.reason.message : "Health check failed." })
+        setHealthBadge("API unavailable")
+      }
+      if (permissionsResult.status === "fulfilled") setPermissions(permissionsResult.value.roles)
+      if (uploadPolicyResult.status === "fulfilled") setUploadPolicy(uploadPolicyResult.value)
     }
-  }, [selectedId, refreshFiles, refreshKnowledgeSources, refreshResearchReviews, refreshWorkflows])
+
+    void loadDashboardConfiguration()
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    async function loadProjectsForSession() {
+      if (!getOwnerId()) return
+      try {
+        const data = await apiRequest<Project[]>("/projects")
+        if (active) setProjects(data)
+      } catch {
+        if (active) setProjects([])
+      }
+    }
+
+    void loadProjectsForSession()
+    return () => { active = false }
+  }, [])
+
+  const loadSelectedProjectData = useCallback((projectId: string) => {
+    setFiles([])
+    setKnowledgeSources([])
+    setResearchReview(null)
+    setWorkflows([])
+    setWorkflowApprovals({})
+    setWorkflowToolRuns({})
+    setWorkflowActions({})
+    setAgentDefinitions([])
+    setAgentHandoffs({})
+    setWorkflowError("")
+    void refreshFiles(projectId)
+    void refreshKnowledgeSources(projectId)
+    void refreshResearchReviews(projectId)
+    void refreshWorkflows(projectId)
+  }, [refreshFiles, refreshKnowledgeSources, refreshResearchReviews, refreshWorkflows])
 
   // Actions
   async function handleInviteMember(e: React.FormEvent<HTMLFormElement>) {
@@ -270,7 +314,20 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     }
     try {
       const proj: any = await apiRequest("/projects", { method: "POST", body: JSON.stringify(body) })
-      setSelectedId(proj.id); setSelectedProject(proj); setAnswerResponse(null); setAnswerError(""); setFeedbackRating(null); setErrorReportSent(false); setResearchClaims([]); setResearchResult(""); setResearchError(""); setResearchScopeResponse(null); setResearchRegister(null); setResearchReview(null); setWorkflows([]); setWorkflowApprovals({}); setWorkflowToolRuns({}); setWorkflowActions({}); setAgentDefinitions([]); setAgentHandoffs({}); setWorkflowError(""); setApprovalDecisionCodes({})
+      setSelectedId(proj.id)
+      setSelectedProject(proj)
+      setAnswerResponse(null)
+      setAnswerError("")
+      setFeedbackRating(null)
+      setErrorReportSent(false)
+      setResearchClaims([])
+      setResearchResult("")
+      setResearchError("")
+      setResearchScopeResponse(null)
+      setResearchRegister(null)
+      setResearchReview(null)
+      setApprovalDecisionCodes({})
+      loadSelectedProjectData(proj.id)
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
@@ -1033,6 +1090,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setVal("#knowledge-project-id", project.id)
     setVal("#knowledge-owner-id", project.owner_id || "")
     setVal("#research-project-id", project.id)
+    loadSelectedProjectData(project.id)
   }
 
   const navigationItems: Array<{ view: WorkspaceView; label: string; icon: typeof Gauge }> = [
@@ -1048,6 +1106,8 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   ]
   const permissionRole = account.role === "member" ? "staff" : account.role === "reviewer" ? "supervisor" : account.role
   const canReadSecurity = Boolean(permissions?.[permissionRole]?.includes("security.read"))
+  const canEvaluateSecurityAlerts = Boolean(permissions?.[permissionRole]?.includes("security.alerts.evaluate"))
+  const canManageSecurityAlerts = Boolean(permissions?.[permissionRole]?.includes("security.alerts.manage"))
   const navigation = navigationItems.filter(({ view }) => view !== "security" || canReadSecurity)
 
   const viewCopy: Record<WorkspaceView, { title: string; description: string }> = {
@@ -1924,7 +1984,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
           />
         </section>
 
-        {activeView === "security" && canReadSecurity && <SecurityDashboard />}
+        {activeView === "security" && canReadSecurity && <SecurityDashboard canEvaluateAlerts={canEvaluateSecurityAlerts} canManageAlerts={canManageSecurityAlerts} />}
 
       </main>
 
