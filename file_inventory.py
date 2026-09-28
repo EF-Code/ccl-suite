@@ -18,7 +18,8 @@ DEFAULT_CHUNK_SIZE = 1024 * 1024
 DEFAULT_PROJECT_ROOT = Path(os.getenv("CCL_PROJECT_ROOT", "projects"))
 DEFAULT_JSON_NAME = "manifest.json"
 DEFAULT_CSV_NAME = "manifest.csv"
-INTERNAL_DIRECTORY_NAMES = frozenset({".ccl-versions"})
+INTERNAL_DIRECTORY_NAMES = frozenset({".ccl-versions", ".ccl-journals"})
+INTERNAL_JOURNAL_NAMES = frozenset({"organization-journal.json", "quarantine-journal.json"})
 MIME_COMMAND = ("file", "--brief", "--mime-type")
 
 
@@ -57,6 +58,16 @@ def safe_relative_path(root: Path, path: Path) -> Path:
         return resolved.relative_to(root)
     except ValueError as exc:
         raise ValueError("Path escapes the approved root.") from exc
+
+
+def is_internal_write_path(relative_path: Path | str) -> bool:
+    """Keep client-created files away from version archives and rollback journals."""
+
+    parts = Path(relative_path).parts
+    return bool(parts) and (
+        parts[0] in INTERNAL_DIRECTORY_NAMES
+        or (len(parts) == 1 and parts[0] in INTERNAL_JOURNAL_NAMES)
+    )
 
 
 def iter_regular_files(root: Path) -> Iterable[Path]:

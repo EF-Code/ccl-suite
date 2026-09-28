@@ -57,6 +57,12 @@ def test_store_upload_rejects_unsafe_names_and_mime_types(tmp_path: Path) -> Non
         validate_upload_metadata("../outside.txt", "text/plain")
     with pytest.raises(UploadValidationError):
         validate_upload_metadata("incoming/report.json", "text/plain")
+    with pytest.raises(UploadValidationError):
+        validate_upload_metadata("organization-journal.json", "application/json")
+    with pytest.raises(UploadValidationError):
+        validate_upload_metadata(".ccl-versions/forged.json", "application/json")
+    with pytest.raises(UploadValidationError):
+        validate_upload_metadata(".ccl-journals/forged.json", "application/json")
 
 
 def test_upload_metadata_accepts_allowed_mime_parameters() -> None:

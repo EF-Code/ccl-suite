@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterable
 
-from file_inventory import resolve_approved_root, safe_relative_path
+from file_inventory import is_internal_write_path, resolve_approved_root, safe_relative_path
 from file_records import validate_storage_key
 
 MAX_UPLOAD_BYTES = 1_048_576
@@ -105,6 +105,8 @@ def validate_upload_metadata(storage_key: str, content_type: str | None) -> tupl
     """Validate destination name and declared MIME type against allowlists."""
 
     normalized_key, extension = validate_upload_name(storage_key)
+    if is_internal_write_path(normalized_key):
+        raise UploadValidationError("Upload path is reserved for internal project data.")
     media_type = normalize_media_type(content_type)
     if media_type not in ALLOWED_UPLOAD_MEDIA_TYPES[extension]:
         raise UploadValidationError("Upload MIME type does not match its extension.")
