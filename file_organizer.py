@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import secrets
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -24,8 +26,9 @@ from file_inventory import (
 DEFAULT_SOURCE_DIR = "incoming"
 DEFAULT_TARGET_DIR = "working"
 DEFAULT_QUARANTINE_DIR = "quarantine"
-DEFAULT_JOURNAL_NAME = "organization-journal.json"
+INTERNAL_JOURNAL_DIRECTORY = ".ccl-journals"
 DEFAULT_PLAN_NAME = "organization-plan.json"
+MAX_ORGANIZATION_ACTIONS = 1000
 
 ActionStatus = Literal["planned", "conflict", "applied", "quarantined", "rolled_back"]
 FILE_CATEGORIES = {
@@ -117,6 +120,8 @@ def build_plan(
     actions: list[OrganizationAction] = []
     destinations: set[str] = set()
     for path in iter_regular_files(source):
+        if len(actions) >= MAX_ORGANIZATION_ACTIONS:
+            raise ValueError("Organization plan exceeds the action limit.")
         record = inventory_file(source, path)
         destination = destination_for(root, target_dir, record)
         source_rel = safe_relative_path(root, path).as_posix()
@@ -148,6 +153,13 @@ def plan_dict(plan: OrganizationPlan) -> dict[str, object]:
     """Return a JSON-ready representation of a plan."""
 
     return asdict(plan)
+
+
+def plan_digest(plan: OrganizationPlan) -> str:
+    """Bind an apply request to the previewed actions and file checksums."""
+
+    actions = [asdict(action) for action in plan.actions]
+    return hashlib.sha256(json.dumps(actions, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def write_plan(plan: OrganizationPlan, output: Path | None = None) -> Path:
@@ -188,14 +200,18 @@ def write_journal(
     """Persist applied operations inside the approved root."""
 
     root = resolve_approved_root(approved_root)
-    destination = (output or root / DEFAULT_JOURNAL_NAME).resolve(strict=False)
+    candidate = output or root / INTERNAL_JOURNAL_DIRECTORY / f"organization-{secrets.token_hex(16)}.json"
+    if candidate.is_symlink():
+        raise ValueError("Journal destination must not be a symlink.")
+    destination = candidate.resolve(strict=False)
     safe_relative_path(root, destination)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
     payload = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "entries": [asdict(entry) for entry in entries],
     }
-    destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    with destination.open("x", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, indent=2) + "\n")
     return destination
 
 
@@ -225,6 +241,9 @@ def apply_plan(
     """Apply only conflict-free actions and persist a rollback journal."""
 
     root = resolve_approved_root(plan.root)
+    journal_path = journal_path or root / INTERNAL_JOURNAL_DIRECTORY / f"organization-{secrets.token_hex(16)}.json"
+    if journal_path.exists() or journal_path.is_symlink():
+        raise FileExistsError("Journal destination already exists.")
     entries: list[JournalEntry] = []
     for action in plan.actions:
         if action.status != "planned":
@@ -247,6 +266,9 @@ def quarantine_conflicts(
     """Move conflict actions to quarantine without deleting originals."""
 
     root = resolve_approved_root(plan.root)
+    journal_path = journal_path or root / INTERNAL_JOURNAL_DIRECTORY / f"quarantine-{secrets.token_hex(16)}.json"
+    if journal_path.exists() or journal_path.is_symlink():
+        raise FileExistsError("Journal destination already exists.")
     entries: list[JournalEntry] = []
     for action in plan.actions:
         if action.status != "conflict":
@@ -265,26 +287,79 @@ def load_journal(path: Path) -> list[JournalEntry]:
     """Load and validate journal entries from JSON."""
 
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Journal must be a JSON object.")
     entries = payload.get("entries")
     if not isinstance(entries, list):
         raise ValueError("Journal must contain an entries list.")
-    return [JournalEntry(**entry) for entry in entries]
+    try:
+        return [JournalEntry(**entry) for entry in entries]
+    except (TypeError, KeyError) as exc:
+        raise ValueError("Journal contains an invalid entry.") from exc
 
 
-def rollback_journal(approved_root: Path | str, journal_path: Path) -> int:
+def rollback_journal(
+    approved_root: Path | str,
+    journal_path: Path,
+    source_dir: str = DEFAULT_SOURCE_DIR,
+    target_dir: str = DEFAULT_TARGET_DIR,
+) -> int:
     """Restore journaled files after verifying their recorded hashes."""
 
     root = resolve_approved_root(approved_root)
+    approved_child(root, source_dir)
+    approved_child(root, target_dir)
     restored = 0
-    for entry in reversed(load_journal(journal_path)):
+    entries = load_journal(journal_path)
+    if len(entries) > MAX_ORGANIZATION_ACTIONS:
+        raise ValueError("Journal has too many entries.")
+    pending_moves: list[tuple[Path, Path]] = []
+    seen_sources: set[str] = set()
+    seen_destinations: set[str] = set()
+    for entry in reversed(entries):
+        if not all(
+            isinstance(value, str)
+            for value in (entry.source, entry.destination, entry.sha256, entry.operation)
+        ):
+            raise ValueError("Journal entry fields must be strings.")
+        if entry.source in seen_sources or entry.destination in seen_destinations:
+            raise ValueError("Journal contains duplicate paths.")
+        seen_sources.add(entry.source)
+        seen_destinations.add(entry.destination)
+        if not re.fullmatch(r"[0-9a-f]{64}", entry.sha256):
+            raise ValueError("Journal entry has no valid checksum.")
+        source = Path(entry.source)
+        destination = Path(entry.destination)
+        if ".." in source.parts or ".." in destination.parts:
+            raise ValueError("Journal paths must not contain parent segments.")
+        if source.parts[:1] != (source_dir,):
+            raise ValueError("Journal source must be in the incoming directory.")
+        if entry.operation == "move":
+            category = FILE_CATEGORIES.get(source.suffix.lower(), "other")
+            expected = Path(target_dir) / category / normalize_filename(source.name)
+            if destination != expected:
+                raise ValueError("Journal move must target the expected working directory.")
+        elif entry.operation == "quarantine":
+            if (
+                destination.parts[:1] != (DEFAULT_QUARANTINE_DIR,)
+                or len(destination.parts) < 4
+                or destination.parts[2:] != source.parts
+            ):
+                raise ValueError("Journal quarantine target is invalid.")
+        else:
+            raise ValueError("Journal operation is invalid.")
         current = root / entry.destination
         original = root / entry.source
         safe_relative_path(root, current)
         safe_relative_path(root, original)
         if not current.is_file():
             raise FileNotFoundError(f"Journal target is missing: {entry.destination}")
-        if entry.sha256 and sha256_file(current) != entry.sha256:
+        if sha256_file(current) != entry.sha256:
             raise ValueError(f"Journal target hash changed: {entry.destination}")
+        if original.exists() or original.is_symlink():
+            raise FileExistsError(f"Destination already exists: {original}")
+        pending_moves.append((current, original))
+    for current, original in pending_moves:
         move_without_overwrite(current, original)
         restored += 1
     return restored
@@ -313,7 +388,7 @@ def main() -> int:
     try:
         root = resolve_approved_root(args.root)
         if args.rollback is not None:
-            restored = rollback_journal(root, args.rollback)
+            restored = rollback_journal(root, args.rollback, args.source, args.target)
             print(f"Rolled back {restored} operation(s).")
             return 0
         plan = build_plan(root, args.source, args.target)
@@ -326,8 +401,7 @@ def main() -> int:
             journal = apply_plan(plan, args.journal)
             print(f"Journal written to {journal.relative_to(root)}")
             if args.quarantine_conflicts:
-                quarantine_journal = root / "quarantine-journal.json"
-                quarantine_conflicts(plan, quarantine_journal)
+                quarantine_conflicts(plan)
                 print(f"Conflicts quarantined in {quarantine_journal.relative_to(root)}")
     except (OSError, ValueError) as exc:
         parser.error(str(exc))

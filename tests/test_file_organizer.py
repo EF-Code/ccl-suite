@@ -113,7 +113,7 @@ def test_interrupted_organizer_move_keeps_source_and_writes_no_journal(
 
     assert original.read_text(encoding="utf-8") == "keep me"
     assert not (root / "working" / "documents" / "notes.md").exists()
-    assert not (root / "organization-journal.json").exists()
+    assert not (root / ".ccl-journals" / "organization-journal.json").exists()
 
 
 def test_quarantine_moves_only_conflicts_without_deleting_them(tmp_path: Path) -> None:
@@ -148,6 +148,23 @@ def test_rollback_restores_applied_file_and_checks_hash(tmp_path: Path) -> None:
     assert rollback_journal(root, journal_path) == 1
     assert original.read_text(encoding="utf-8") == "keep me"
     assert not destination.exists()
+
+
+def test_each_apply_keeps_its_own_rollback_journal(tmp_path: Path) -> None:
+    root, incoming, _ = make_project(tmp_path)
+    first = incoming / "first.md"
+    first.write_text("first", encoding="utf-8")
+    first_journal = apply_plan(build_plan(root))
+
+    second = incoming / "second.md"
+    second.write_text("second", encoding="utf-8")
+    second_journal = apply_plan(build_plan(root))
+
+    assert first_journal != second_journal
+    assert first_journal.is_file() and second_journal.is_file()
+    assert rollback_journal(root, second_journal) == 1
+    assert rollback_journal(root, first_journal) == 1
+    assert first.is_file() and second.is_file()
 
 
 def test_rollback_rejects_changed_destination(tmp_path: Path) -> None:
@@ -240,14 +257,55 @@ def test_load_journal_rejects_non_list_entries(tmp_path: Path) -> None:
         load_journal(journal)
 
 
+def test_load_journal_rejects_malformed_entries(tmp_path: Path) -> None:
+    journal = tmp_path / "invalid.json"
+    journal.write_text('{"entries": [null]}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid entry"):
+        load_journal(journal)
+
+
 def test_rollback_rejects_missing_journal_target(tmp_path: Path) -> None:
     root, _, _ = make_project(tmp_path)
     journal = write_journal(
         root,
-        [JournalEntry("incoming/missing.md", "working/documents/missing.md", "", "move")],
+        [JournalEntry("incoming/missing.md", "working/documents/missing.md", "0" * 64, "move")],
     )
 
     with pytest.raises(FileNotFoundError, match="Journal target is missing"):
+        rollback_journal(root, journal)
+
+
+def test_rollback_rejects_forged_target_outside_organizer_dirs(tmp_path: Path) -> None:
+    root, _, _ = make_project(tmp_path)
+    journal = write_journal(
+        root,
+        [JournalEntry("incoming/secret.md", ".ccl-versions/secret.md", "0" * 64, "move")],
+    )
+
+    with pytest.raises(ValueError, match="working directory"):
+        rollback_journal(root, journal)
+
+
+def test_rollback_rejects_journal_without_checksum(tmp_path: Path) -> None:
+    root, _, _ = make_project(tmp_path)
+    journal = write_journal(
+        root,
+        [JournalEntry("incoming/report.md", "working/documents/report.md", "", "move")],
+    )
+
+    with pytest.raises(ValueError, match="valid checksum"):
+        rollback_journal(root, journal)
+
+
+def test_rollback_rejects_parent_segment_after_working_directory(tmp_path: Path) -> None:
+    root, _, _ = make_project(tmp_path)
+    journal = write_journal(
+        root,
+        [JournalEntry("incoming/report.md", "working/../.ccl-versions/report.md", "0" * 64, "move")],
+    )
+
+    with pytest.raises(ValueError, match="parent segments"):
         rollback_journal(root, journal)
 
 
