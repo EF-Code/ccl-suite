@@ -23,7 +23,7 @@ WORKFLOW_STATES: Final[tuple[str, ...]] = (
 WORKFLOW_STATE_TRANSITIONS: Final[dict[str, frozenset[str]]] = {
     "ready": frozenset({"in_progress", "review"}),
     "in_progress": frozenset({"review"}),
-    "review": frozenset({"changes_required", "approved"}),
+    "review": frozenset({"in_progress", "changes_required", "approved"}),
     "changes_required": frozenset({"in_progress", "review"}),
     "approved": frozenset({"review", "archived"}),
     "archived": frozenset(),
