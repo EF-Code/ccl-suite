@@ -26,7 +26,26 @@ import {
 // Helpers
 function escapeForTest(v: string) { return v }
 function compactId(v?: string) { return v ? `${v.slice(0, 13)}…` : "—" }
+function fileTypeFromPath(path: string) {
+  const filename = path.split("/").pop() || ""
+  const extension = filename.match(/\.([^.]+)$/)?.[1]
+  return extension?.toUpperCase() || "—"
+}
 type WorkspaceView = "overview" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
+type OrganizationPlanAction = {
+  source: string
+  destination: string
+  status: "planned" | "conflict" | "applied" | "quarantined" | "rolled_back"
+  reason: string
+  sha256: string | null
+}
+type OrganizationPlan = {
+  project_id: string
+  plan_path: string
+  created_at: string
+  actions: OrganizationPlanAction[]
+  plan_digest: string
+}
 
 function researchScopeFromForm(formData: FormData, prefix: "source" | "target"): ResearchScope {
   const readText = (field: string) => {
@@ -76,6 +95,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const [inventoryResult, setInventoryResult] = useState("")
   const [conversionResult, setConversionResult] = useState("")
   const [organizerResult, setOrganizerResult] = useState("")
+  const [organizerPlan, setOrganizerPlan] = useState<OrganizationPlan | null>(null)
   const [backupResult, setBackupResult] = useState("")
   const [knowledgeResult, setKnowledgeResult] = useState("")
   const [ingestResult, setIngestResult] = useState("")
@@ -261,6 +281,8 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   }, [])
 
   const loadSelectedProjectData = useCallback((projectId: string) => {
+    setOrganizerPlan(null)
+    setOrganizerResult("")
     setFiles([])
     setKnowledgeSources([])
     setResearchReview(null)
@@ -359,7 +381,9 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
 
   async function handleInventory(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const projectId = (document.querySelector<HTMLInputElement>("#inventory-project-id")?.value || "").trim()
+    const formData = new FormData(e.currentTarget)
+    const projectId = String(formData.get("project_id") || "").trim()
+    if (!projectId) return showMessage("Select a project before scanning its files.", "error")
     try {
       const data: any = await apiRequest(`/projects/${projectId}/inventory`, { method: "POST" })
       setInventoryResult(`Scanned ${data.files_scanned} file(s)\nDuplicate groups: ${data.duplicate_groups} (${data.duplicate_files} file(s))\nJSON: ${data.json_manifest}\nCSV: ${data.csv_manifest}`)
@@ -388,21 +412,24 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     const pid = (document.querySelector<HTMLInputElement>("#organizer-project-id")?.value || "").trim()
     if (!pid) return showMessage("Select a project before using the organiser.", "error")
     try {
-      const plan: any = await apiRequest(`/projects/${pid}/organization/plan`, { method: "POST" })
+      const plan = await apiRequest<OrganizationPlan>(`/projects/${pid}/organization/plan`, { method: "POST" })
       const actions = plan.actions.length ? plan.actions.map((a:any)=>`[${a.status}] ${a.source} → ${a.destination}`).join("\n") : "No files are waiting in incoming/."
+      setOrganizerPlan(plan)
       setOrganizerResult(`Plan: ${plan.plan_path}\n${actions}`)
       showMessage("Dry-run plan created. No files were moved.")
-    } catch (e: any) { setOrganizerResult(e.message); showMessage(e.message, "error") }
+    } catch (e: any) { setOrganizerPlan(null); setOrganizerResult(e.message); showMessage(e.message, "error") }
   }
   async function handleOrganizerApply() {
     const pid = (document.querySelector<HTMLInputElement>("#organizer-project-id")?.value || "").trim()
     if (!pid) return showMessage("Select a project before using the organiser.", "error")
+    if (!organizerPlan || organizerPlan.project_id !== pid) return showMessage("Preview this project's current organisation plan before applying it.", "error")
     const quarantine = (document.querySelector<HTMLInputElement>("#quarantine-conflicts")?.checked) || false
     const ok = await confirmAction("Apply the organisation plan?", `Eligible files in the active project will be moved into working/ folders. Conflicts will be protected${quarantine ? " and quarantined" : ""}, and a rollback journal will be saved.`, "Apply safe moves")
     if (!ok) return showMessage("Organisation apply cancelled.")
     try {
-      const data: any = await apiRequest(`/projects/${pid}/organization/apply`, { method: "POST", body: JSON.stringify({ quarantine_conflicts: quarantine }) })
+      const data: any = await apiRequest(`/projects/${pid}/organization/apply`, { method: "POST", body: JSON.stringify({ quarantine_conflicts: quarantine, expected_plan_digest: organizerPlan.plan_digest }) })
       const jp = document.querySelector<HTMLInputElement>("#journal-path"); if (jp) jp.value = data.journal_path
+      setOrganizerPlan(null)
       setOrganizerResult(`Applied ${data.applied_count} of ${data.action_count} action(s)\nConflicts: ${data.conflict_count}\nJournal: ${data.journal_path}` + (data.quarantine_journal_path ? `\nQuarantine journal: ${data.quarantine_journal_path}` : ""))
       showMessage("Safe organisation completed and the rollback journal was saved.")
     } catch (e: any) { setOrganizerResult(e.message); showMessage(e.message, "error") }
@@ -414,6 +441,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     if (!ok) return showMessage("Organisation rollback cancelled.")
     try {
       const data: any = await apiRequest(`/projects/${pid}/organization/rollback`, { method: "POST", body: JSON.stringify({ journal_path: journalPath }) })
+      setOrganizerPlan(null)
       setOrganizerResult(`Restored ${data.restored_count} file(s) from ${data.journal_path}.`)
       showMessage("Organisation rollback completed.")
     } catch (e: any) { setOrganizerResult(e.message); showMessage(e.message, "error") }
@@ -934,7 +962,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
           action_code: actionCode,
           target_ref: selectedProject?.storage_slug || selectedId,
           reason: `Operator requested ${actionCode} for the active project.`,
-          idempotency_key: `${workflowId}:${actionCode}`,
+          idempotency_key: `${workflowId}:${actionCode}:${crypto.randomUUID()}`,
         }),
       })
       await refreshWorkflows(selectedId)
@@ -1013,7 +1041,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     if (!selectedId) return
     const q = fileSearch.trim()
     if (!q) { refreshFiles(selectedId); return }
-    try { const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?q=${encodeURIComponent(q)}`); setFiles(data) } catch (e: any) { showMessage(e.message, "error") }
+    try { const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?query=${encodeURIComponent(q)}`); setFiles(data) } catch (e: any) { showMessage(e.message, "error") }
   }
   async function handleGlobalSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -1023,7 +1051,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setFileSearch(query)
     openView("files")
     try {
-      const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?q=${encodeURIComponent(query)}`)
+      const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?query=${encodeURIComponent(query)}`)
       setFiles(data.filter((file) => file.status === "active"))
     } catch (err: any) {
       showMessage((err as Error).message, "error")
@@ -1466,18 +1494,30 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <Button id="organizer-preview" onClick={handleOrganizerPreview}>Preview plan</Button>
-                        {organizerResult && <Button id="organizer-apply" variant="outline" onClick={handleOrganizerApply}>Apply safe moves</Button>}
+                        {organizerPlan && <Button id="organizer-apply" variant="outline" onClick={handleOrganizerApply}>Apply safe moves</Button>}
                         <span className="text-xs text-muted-foreground">Generates a proposed change set. No files move.</span>
                       </div>
                     </div>
                     <Separator />
                     <div className="preview-region">
-                      <div className="preview-region-heading"><div><h3>Proposed changes</h3><p>The dry-run plan will appear here before any file moves.</p></div><Badge variant="secondary">0 changes</Badge></div>
+                      <div className="preview-region-heading"><div><h3>Proposed changes</h3><p>The dry-run plan will appear here before any file moves.</p></div><Badge variant="secondary">{organizerPlan?.actions.length ?? 0} {organizerPlan?.actions.length === 1 ? "action" : "actions"}</Badge></div>
                       <div className="preview-table-shell">
                         <Table>
                           <TableHeader><TableRow><TableHead>Action</TableHead><TableHead>Source</TableHead><TableHead>Destination</TableHead><TableHead>Type</TableHead><TableHead>Reason</TableHead></TableRow></TableHeader>
+                          <TableBody>
+                            {organizerPlan?.actions.map((action) => (
+                              <TableRow key={`${action.source}-${action.destination}`}>
+                                <TableCell><Badge variant={action.status === "conflict" ? "destructive" : "outline"}>{action.status}</Badge></TableCell>
+                                <TableCell className="break-all font-medium">{action.source}</TableCell>
+                                <TableCell className="break-all">{action.destination}</TableCell>
+                                <TableCell>{fileTypeFromPath(action.source)}</TableCell>
+                                <TableCell>{action.reason}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
                         </Table>
-                        <div className="preview-empty"><ScanLine className="h-5 w-5" /><strong>No preview yet</strong><span>{selectedId ? "Run Preview plan to inspect each proposed source and destination." : "Select a project, then preview the plan to inspect proposed changes."}</span></div>
+                        {!organizerPlan && <div className="preview-empty"><ScanLine className="h-5 w-5" /><strong>No preview yet</strong><span>{selectedId ? "Run Preview plan to inspect each proposed source and destination." : "Select a project, then preview the plan to inspect proposed changes."}</span></div>}
+                        {organizerPlan?.actions.length === 0 && <div className="preview-empty"><ScanLine className="h-5 w-5" /><strong>No files to organize</strong><span>No regular files are waiting in incoming/.</span></div>}
                       </div>
                     </div>
                     <div id="organizer-result" className={organizerResult ? "result-panel" : "hidden"} role="status" aria-live="polite" tabIndex={-1} hidden={!organizerResult}>{organizerResult}</div>
@@ -1486,7 +1526,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
                 <aside className="evidence-rail" aria-label="Operation evidence">
                   <div className="evidence-panel"><div className="evidence-title"><ShieldCheck className="h-4 w-4" />Safety constraints</div><ul><li><CheckCircle2 />Source files are never overwritten</li><li><CheckCircle2 />Preview makes no file changes</li><li><CheckCircle2 />Applied moves write a rollback journal</li><li><CheckCircle2 />Conflicts remain protected</li></ul></div>
                   <div className="evidence-panel"><div className="evidence-title"><FolderKanban className="h-4 w-4" />Project scope</div><dl><div><dt>Project</dt><dd>{selectedProjectName}</dd></div><div><dt>Source</dt><dd><code>{selectedProject?.storage_slug ? `${selectedProject.storage_slug}/incoming/` : "incoming/"}</code></dd></div><div><dt>Target</dt><dd><code>{selectedProject?.storage_slug ? `${selectedProject.storage_slug}/working/` : "working/"}</code></dd></div><div><dt>Indexed items</dt><dd>{files.length} files</dd></div></dl><Button variant="link" className="mt-2 h-auto p-0 text-xs" onClick={() => openView("files")}>View in Files <ExternalLink className="h-3 w-3" /></Button></div>
-                  <div className="evidence-panel"><div className="evidence-title"><RefreshCw className="h-4 w-4" />Rollback journal</div><div className="grid gap-2"><Label htmlFor="journal-path">Journal path</Label><Input id="journal-path" defaultValue="organization-journal.json" required /><Button id="organizer-rollback" variant="secondary" size="sm" onClick={handleRollback}>Roll back journal</Button></div></div>
+                  <div className="evidence-panel"><div className="evidence-title"><RefreshCw className="h-4 w-4" />Rollback journal</div><div className="grid gap-2"><Label htmlFor="journal-path">Journal path</Label><Input id="journal-path" placeholder="Apply a plan to create a rollback journal" required /><Button id="organizer-rollback" variant="secondary" size="sm" onClick={handleRollback}>Roll back journal</Button></div></div>
                   <div className="evidence-panel"><div className="evidence-title"><Activity className="h-4 w-4" />Latest result</div>{organizerResult ? <pre>{organizerResult}</pre> : <dl><div><dt>Status</dt><dd>Awaiting preview</dd></div><div><dt>Plan created</dt><dd>—</dd></div><div><dt>Changes</dt><dd>0 proposed</dd></div></dl>}</div>
                 </aside>
               </div>
