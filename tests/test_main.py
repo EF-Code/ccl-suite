@@ -92,6 +92,14 @@ def request(method: str, path: str, **kwargs: object) -> httpx.Response:
     return asyncio.run(send())
 
 
+def create_test_reviewer() -> str:
+    response = request(
+        "POST", "/users", json={"external_ref": f"reviewer-{uuid4().hex}", "role": "supervisor"}
+    )
+    assert response.status_code == 201
+    return response.json()["id"]
+
+
 def test_health_reports_ok() -> None:
     response = request("GET", "/health")
 
@@ -1890,7 +1898,7 @@ def test_project_organization_preview_apply_and_rollback(
     applied = request(
         "POST",
         f"/projects/{project['id']}/organization/apply",
-        json={"quarantine_conflicts": False},
+        json={"quarantine_conflicts": False, "expected_plan_digest": preview.json()["plan_digest"]},
     )
 
     assert preview.status_code == 201
@@ -1934,7 +1942,7 @@ def test_project_organization_apply_returns_not_found_without_storage(
     response = request(
         "POST",
         f"/projects/{project['id']}/organization/apply",
-        json={"quarantine_conflicts": False},
+        json={"quarantine_conflicts": False, "expected_plan_digest": "0" * 64},
     )
 
     assert response.status_code == 404
@@ -1954,11 +1962,13 @@ def test_project_organization_apply_can_quarantine_conflicts(
     incoming.mkdir()
     (incoming / "Plan.csv").write_text("first", encoding="utf-8")
     (incoming / "plan.csv").write_text("second", encoding="utf-8")
+    preview = request("POST", f"/projects/{project['id']}/organization/plan")
+    assert preview.status_code == 201
 
     response = request(
         "POST",
         f"/projects/{project['id']}/organization/apply",
-        json={"quarantine_conflicts": True},
+        json={"quarantine_conflicts": True, "expected_plan_digest": preview.json()["plan_digest"]},
     )
 
     assert response.status_code == 201
@@ -2019,10 +2029,12 @@ def test_project_organization_apply_maps_apply_failures(
         raise error
 
     monkeypatch.setattr("main.apply_plan", fail)
+    preview = request("POST", f"/projects/{project['id']}/organization/plan")
+    assert preview.status_code == 201
     response = request(
         "POST",
         f"/projects/{project['id']}/organization/apply",
-        json={"quarantine_conflicts": False},
+        json={"quarantine_conflicts": False, "expected_plan_digest": preview.json()["plan_digest"]},
     )
 
     assert response.status_code == expected_status
@@ -2041,7 +2053,7 @@ def test_project_organization_rollback_maps_missing_and_unsafe_journals(
     missing = request(
         "POST",
         f"/projects/{project['id']}/organization/rollback",
-        json={"journal_path": "missing.json"},
+        json={"journal_path": ".ccl-journals/organization-" + "0" * 32 + ".json"},
     )
     unsafe = request(
         "POST",
@@ -2063,12 +2075,13 @@ def test_project_organization_rollback_rejects_symlink_journal(
     (project_root / "working").mkdir()
     target = project_root / "journal.json"
     target.write_text("{}", encoding="utf-8")
-    (project_root / "journal-link.json").symlink_to(target)
+    (project_root / ".ccl-journals").mkdir()
+    (project_root / ".ccl-journals" / ("organization-" + "0" * 32 + ".json")).symlink_to(target)
 
     response = request(
         "POST",
         f"/projects/{project['id']}/organization/rollback",
-        json={"journal_path": "journal-link.json"},
+        json={"journal_path": ".ccl-journals/organization-" + "0" * 32 + ".json"},
     )
 
     assert response.status_code == 409
@@ -2102,7 +2115,7 @@ def test_project_organization_rollback_maps_rollback_failures(
     response = request(
         "POST",
         f"/projects/{project['id']}/organization/rollback",
-        json={"journal_path": "journal.json"},
+        json={"journal_path": ".ccl-journals/organization-" + "0" * 32 + ".json"},
     )
 
     assert response.status_code == expected_status
@@ -2112,6 +2125,7 @@ def test_project_organization_rollback_maps_rollback_failures(
 def test_approval_can_be_decided_once() -> None:
     project = create_project()
     workflow = create_workflow(str(project["id"]))
+    reviewer_id = create_test_reviewer()
 
     created = request(
         "POST",
@@ -2121,9 +2135,10 @@ def test_approval_can_be_decided_once() -> None:
     decided = request(
         "POST",
         f"/approvals/{created.json()['id']}/decision",
+        headers={"X-User-ID": reviewer_id},
         json={
             "status": "approved",
-            "approved_by_id": TEST_OWNER_ID,
+            "approved_by_id": reviewer_id,
             "decision_code": "reviewed",
         },
     )
@@ -2144,6 +2159,7 @@ def test_approval_can_be_decided_once() -> None:
 def test_workflow_allows_only_one_pending_approval() -> None:
     project = create_project("Single pending approval")
     workflow = create_workflow(str(project["id"]))
+    reviewer_id = create_test_reviewer()
 
     first = request(
         "POST",
@@ -2158,7 +2174,8 @@ def test_workflow_allows_only_one_pending_approval() -> None:
     decided = request(
         "POST",
         f"/approvals/{first.json()['id']}/decision",
-        json={"status": "approved", "approved_by_id": TEST_OWNER_ID},
+        headers={"X-User-ID": reviewer_id},
+        json={"status": "approved", "approved_by_id": reviewer_id},
     )
     after_decision = request(
         "POST",
@@ -5048,6 +5065,7 @@ def test_specialist_handoff_cannot_cross_project_access_boundary() -> None:
 def test_high_impact_workflow_action_pauses_until_approval_and_is_idempotent() -> None:
     project = create_project("Approval gate project")
     workflow = create_workflow(str(project["id"]))
+    reviewer_id = create_test_reviewer()
 
     action = request(
         "POST",
@@ -5099,7 +5117,8 @@ def test_high_impact_workflow_action_pauses_until_approval_and_is_idempotent() -
     decision = request(
         "POST",
         f"/approvals/{action_payload['approval_id']}/decision",
-        json={"status": "approved", "approved_by_id": TEST_OWNER_ID},
+        headers={"X-User-ID": reviewer_id},
+        json={"status": "approved", "approved_by_id": reviewer_id},
     )
     assert decision.status_code == 200
     assert decision.json()["action_id"] == action_payload["id"]
@@ -5111,3 +5130,92 @@ def test_high_impact_workflow_action_pauses_until_approval_and_is_idempotent() -
     assert executed.status_code == 200
     assert executed.json()["status"] == "executed"
     assert "no external destructive side effect" in executed.json()["result_summary"]
+
+
+def test_workflow_approval_requires_an_independent_reviewer() -> None:
+    project = create_project("Independent reviewer")
+    workflow = create_workflow(str(project["id"]))
+    approval = request("POST", f"/workflows/{workflow['id']}/approvals", json={})
+    assert approval.status_code == 201
+
+    self_decision = request(
+        "POST", f"/approvals/{approval.json()['id']}/decision",
+        json={"status": "approved", "approved_by_id": TEST_OWNER_ID},
+    )
+    assert self_decision.status_code == 403
+    reviewer_id = create_test_reviewer()
+    decision = request(
+        "POST", f"/approvals/{approval.json()['id']}/decision",
+        headers={"X-User-ID": reviewer_id}, json={"status": "approved", "approved_by_id": reviewer_id},
+    )
+    assert decision.status_code == 200
+
+
+def test_workflow_cancel_and_archive_action_can_finish() -> None:
+    project = create_project("Review transitions")
+    workflow = create_workflow(str(project["id"]))
+    reviewer_id = create_test_reviewer()
+    cancelled = request("POST", f"/workflows/{workflow['id']}/approvals", json={})
+    assert request(
+        "POST", f"/approvals/{cancelled.json()['id']}/decision",
+        headers={"X-User-ID": reviewer_id}, json={"status": "cancelled", "approved_by_id": reviewer_id},
+    ).status_code == 200
+
+    archive = request(
+        "POST", f"/workflows/{workflow['id']}/actions",
+        json={"action_code": "archive", "target_ref": "project/archive", "reason": "Close reviewed work."},
+    )
+    assert archive.status_code == 201
+    assert request(
+        "POST", f"/approvals/{archive.json()['approval_id']}/decision",
+        headers={"X-User-ID": reviewer_id}, json={"status": "approved", "approved_by_id": reviewer_id},
+    ).status_code == 200
+    executed = request("POST", f"/workflow-actions/{archive.json()['id']}/execute")
+    assert executed.status_code == 200
+    assert executed.json()["status"] == "executed"
+
+
+def test_rejected_action_does_not_revoke_approved_workflow() -> None:
+    project = create_project("Approved action decision")
+    workflow = create_workflow(str(project["id"]))
+    reviewer_id = create_test_reviewer()
+    approval = request("POST", f"/workflows/{workflow['id']}/approvals", json={})
+    assert request(
+        "POST", f"/approvals/{approval.json()['id']}/decision",
+        headers={"X-User-ID": reviewer_id},
+        json={"status": "approved", "approved_by_id": reviewer_id},
+    ).status_code == 200
+
+    action = request(
+        "POST", f"/workflows/{workflow['id']}/actions",
+        json={"action_code": "send", "target_ref": "output/report", "reason": "Ask for review."},
+    )
+    assert action.status_code == 201
+    rejected = request(
+        "POST", f"/approvals/{action.json()['approval_id']}/decision",
+        headers={"X-User-ID": reviewer_id},
+        json={"status": "rejected", "approved_by_id": reviewer_id},
+    )
+    assert rejected.status_code == 200
+    workflows = request("GET", f"/projects/{project['id']}/workflows")
+    assert workflows.json()[0]["state"] == "approved"
+
+
+def test_organization_apply_rejects_a_stale_preview(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    monkeypatch.setattr("main.PROJECT_ROOT", projects_root)
+    project = create_project("Preview digest")
+    incoming = projects_root / "preview-digest" / "incoming"
+    incoming.mkdir(parents=True)
+    (incoming / "first.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    preview = request("POST", f"/projects/{project['id']}/organization/plan")
+    assert preview.status_code == 201
+    (incoming / "later.csv").write_text("a,b\n3,4\n", encoding="utf-8")
+    applied = request(
+        "POST", f"/projects/{project['id']}/organization/apply",
+        json={"expected_plan_digest": preview.json()["plan_digest"]},
+    )
+    assert applied.status_code == 409
+    assert (incoming / "first.csv").exists()
+    assert (incoming / "later.csv").exists()

@@ -5,6 +5,7 @@ import csv
 import io
 import json
 import os
+import re
 from collections import Counter
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -194,6 +195,7 @@ from file_organizer import (
     OrganizationPlan,
     apply_plan,
     build_plan,
+    plan_digest,
     quarantine_conflicts,
     rollback_journal,
     write_plan,
@@ -608,6 +610,7 @@ def organization_plan_response(
         project_id=project_id,
         plan_path=safe_relative_path(root, plan_path).as_posix(),
         created_at=datetime.fromisoformat(plan.created_at),
+        plan_digest=plan_digest(plan),
         actions=[
             OrganizationActionResponse(
                 source=action.source,
@@ -3905,6 +3908,13 @@ async def apply_project_organization(
     try:
         root = project_storage_root(project)
         plan = build_plan(root)
+        if not hmac.compare_digest(
+            request.expected_plan_digest, plan_digest(plan)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Organization plan changed. Preview it again before applying.",
+            )
         plan_path = write_plan(plan)
         journal_path = apply_plan(plan)
         quarantine_journal_path: Path | None = None
@@ -3965,6 +3975,11 @@ async def rollback_project_organization(
     project = require_record(db, Project, project_id, "Project was not found.")
     try:
         root = project_storage_root(project)
+        if not re.fullmatch(
+            r"\.ccl-journals/(?:organization|quarantine)-[0-9a-f]{32}\.json",
+            request.journal_path,
+        ):
+            raise ValueError("Only generated organization journals can be rolled back.")
         journal_path = project_relative_path(root, request.journal_path, "Journal path")
         restored_count = rollback_journal(root, journal_path)
     except (FileNotFoundError, NotADirectoryError):
@@ -4203,6 +4218,11 @@ async def decide_approval(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Workflow action was not found.",
             )
+    if decision.status == "approved" and approval.requested_by_id == actor.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A different reviewer must approve this request.",
+        )
 
     approval.status = decision.status
     approval.approved_by_id = approved_by_id
@@ -4220,11 +4240,15 @@ async def decide_approval(
         else:
             action.result_summary = f"Action {decision.status} by reviewer."
 
-    target_state = {
-        "approved": "approved" if action is None or action.action_code == "approve" else _workflow.state,
-        "rejected": "changes_required",
-        "cancelled": "in_progress",
-    }[decision.status]
+    if action is not None and _workflow.state == "approved" and decision.status != "approved":
+        # Rejecting an action does not revoke an already approved workflow.
+        target_state = "approved"
+    else:
+        target_state = {
+            "approved": "approved" if action is None or action.action_code in {"approve", "archive"} else _workflow.state,
+            "rejected": "changes_required",
+            "cancelled": "in_progress",
+        }[decision.status]
     if target_state != _workflow.state:
         if not can_transition(_workflow.state, target_state):
             raise HTTPException(

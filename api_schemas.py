@@ -1025,12 +1025,14 @@ class OrganizationPlanResponse(BaseModel):
     plan_path: str
     created_at: datetime
     actions: list[OrganizationActionResponse]
+    plan_digest: str
 
 
 class OrganizationApplyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quarantine_conflicts: bool = False
+    expected_plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class OrganizationApplyResponse(BaseModel):
