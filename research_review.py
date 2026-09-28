@@ -121,8 +121,9 @@ def _csv_cell(value: object) -> str:
     """Convert a value to a spreadsheet-safe CSV cell."""
 
     text = "" if value is None else str(value)
-    if text.startswith(("=", "+", "-", "@")):
-        return "'" + text
+    normalized = text.lstrip(" \t\r\n\v\f")
+    if normalized.startswith(("=", "+", "-", "@")):
+        return "'" + normalized
     return text
 
 

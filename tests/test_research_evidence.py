@@ -443,6 +443,15 @@ def test_csv_export_neutralizes_spreadsheet_formula_values() -> None:
     assert rows[0]["source_title"] == "Vehicle study"
 
 
+@pytest.mark.parametrize("prefix", [" ", "\t", "\r"])
+def test_csv_export_neutralizes_formula_after_leading_whitespace(prefix: str) -> None:
+    review = _export_review(prefix + '=HYPERLINK("https://example.test","open")')
+
+    rows = list(csv.DictReader(io.StringIO(render_csv(review))))
+
+    assert rows[0]["claim"].startswith("'=HYPERLINK")
+
+
 def test_json_and_markdown_exports_preserve_provenance() -> None:
     review = _export_review()
 
