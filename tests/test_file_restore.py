@@ -15,7 +15,18 @@ from file_restore import (
     UnsafeRestorePathError,
     restore_version_content,
     version_archive_path,
+    _destination_path,
 )
+
+
+def test_restore_cannot_write_organization_journal(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+
+    with pytest.raises(UnsafeRestorePathError, match="reserved"):
+        _destination_path(root, "organization-journal.json")
+    with pytest.raises(UnsafeRestorePathError, match="reserved"):
+        _destination_path(root, ".ccl-journals/organization-journal.json")
 from models import FileVersion, Project, User
 
 

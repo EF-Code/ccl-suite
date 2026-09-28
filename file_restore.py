@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from file_inventory import resolve_approved_root, safe_relative_path, sha256_file
+from file_inventory import is_internal_write_path, resolve_approved_root, safe_relative_path, sha256_file
 from models import FileVersion
 
 VERSION_ARCHIVE_DIRECTORY = ".ccl-versions"
@@ -69,7 +69,7 @@ def _source_path(root: Path, storage_key: str, label: str) -> Path:
         raise RestoreSourceUnavailableError(f"{label} must not be a symlink.")
     resolved = candidate.resolve(strict=False)
     try:
-        safe_relative_path(root, resolved)
+        relative = safe_relative_path(root, resolved)
     except ValueError as exc:
         raise UnsafeRestorePathError(f"{label} must remain inside the approved root.") from exc
     if not resolved.is_file():
@@ -88,11 +88,13 @@ def _destination_path(root: Path, destination: Path | str) -> Path:
         raise UnsafeRestorePathError("Restore destination must not be a symlink.")
     resolved = path.resolve(strict=False)
     try:
-        safe_relative_path(root, resolved)
+        relative = safe_relative_path(root, resolved)
     except ValueError as exc:
         raise UnsafeRestorePathError(
             "Restore destination must remain inside the approved project root."
         ) from exc
+    if is_internal_write_path(relative):
+        raise UnsafeRestorePathError("Restore destination is reserved for internal project data.")
     if resolved.exists():
         raise RestoreDestinationExistsError(
             "Restore destination already exists and will not be overwritten."
