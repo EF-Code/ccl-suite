@@ -181,7 +181,7 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     page.locator("#organizer-apply").click()
     confirm_protected_action(page)
     expect(organizer_result).to_contain_text("Applied 0 of 0 action(s)")
-    expect(organizer_result).to_contain_text("Journal: organization-journal.json")
+    expect(organizer_result).to_contain_text("Journal: .ccl-journals/organization-")
 
     page.locator("#organizer-rollback").click()
     confirm_protected_action(page)
