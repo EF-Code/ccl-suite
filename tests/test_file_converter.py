@@ -44,6 +44,17 @@ def test_csv_json_and_json_csv_conversion(tmp_path: Path) -> None:
     )
 
 
+def test_conversion_cannot_write_organization_journal(tmp_path: Path) -> None:
+    root, incoming, _ = make_project(tmp_path)
+    source = incoming / "records.csv"
+    source.write_text("name\nalpha\n", encoding="utf-8")
+
+    with pytest.raises(UnsafeConversionPathError, match="reserved"):
+        convert_file(root, source, "organization-journal.json")
+    with pytest.raises(UnsafeConversionPathError, match="reserved"):
+        convert_file(root, source, ".ccl-journals/organization-journal.json")
+
+
 def test_markdown_to_text_and_text_to_markdown_preserve_content(tmp_path: Path) -> None:
     root, incoming, output = make_project(tmp_path)
     markdown = incoming / "notes.md"

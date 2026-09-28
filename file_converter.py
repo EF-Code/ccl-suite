@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
-from file_inventory import resolve_approved_root, safe_relative_path
+from file_inventory import is_internal_write_path, resolve_approved_root, safe_relative_path
 
 ConversionKind = Literal["text", "image"]
 
@@ -151,6 +151,8 @@ def validate_conversion_paths(
     )
     if source_path == destination_path:
         raise UnsafeConversionPathError("Conversion source and destination must differ.")
+    if is_internal_write_path(safe_relative_path(root, destination_path)):
+        raise UnsafeConversionPathError("Conversion destination is reserved for internal project data.")
     if destination_path.exists():
         raise ConversionDestinationExistsError(
             f"Conversion destination already exists: {destination_path}"
@@ -309,11 +311,15 @@ def _image_to_bytes(request: ConversionRequest) -> bytes:
     output = io.BytesIO()
     try:
         with Image.open(request.source) as image:
+            if image.width * image.height > 4_000_000:
+                raise ConversionError("Image dimensions exceed the conversion limit.")
             image.load()
             if request.destination_format == "jpg" and image.mode not in {"RGB", "L"}:
                 image = image.convert("RGB")
             image.save(output, format="JPEG" if request.destination_format == "jpg" else "PNG")
-    except (OSError, ValueError) as exc:
+            if output.tell() > 16_777_216:
+                raise ConversionError("Converted image exceeds the output limit.")
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise ConversionError("Image input could not be decoded or converted.") from exc
     return output.getvalue()
 
