@@ -1225,7 +1225,7 @@ def test_project_backup_endpoint_creates_and_reverifies_archive(
     assert restored.json()["files_restored"] == 1
     assert restored.json()["destination_path"] == "restored/endpoint-project"
     assert (
-        projects_root / "restored" / "endpoint-project" / "notes.txt"
+        project_root / "restored" / "endpoint-project" / "notes.txt"
     ).read_text(encoding="utf-8") == "backup me"
     assert (project_root / "notes.txt").read_text(encoding="utf-8") == "backup me"
     events = request("GET", "/security-events")
@@ -2344,20 +2344,36 @@ def test_workflow_and_approval_routes_enforce_project_boundary() -> None:
     assert decided.status_code == 404
 
 
+def create_security_operator() -> str:
+    """Create a test supervisor authorized to write security events."""
+
+    with TestingSessionLocal() as session:
+        operator = User(
+            external_ref=f"security-operator-{uuid4().hex}",
+            role="supervisor",
+        )
+        session.add(operator)
+        session.commit()
+        return str(operator.id)
+
+
 def test_security_events_are_structured_and_limited() -> None:
+    operator_id = create_security_operator()
+    headers = {"X-User-ID": operator_id}
     created = request(
         "POST",
         "/security-events",
+        headers=headers,
         json={
             "event_code": "project.created",
             "outcome": "success",
-            "actor_id": TEST_OWNER_ID,
+            "actor_id": operator_id,
             "resource_type": "project",
             "resource_ref": "project-1",
             "request_ref": "request-1",
         },
     )
-    listed = request("GET", "/security-events?limit=1")
+    listed = request("GET", "/security-events?limit=1", headers=headers)
 
     assert created.status_code == 201
     assert listed.status_code == 200
@@ -2366,14 +2382,16 @@ def test_security_events_are_structured_and_limited() -> None:
 
 
 def test_security_event_can_omit_actor() -> None:
+    operator_id = create_security_operator()
     response = request(
         "POST",
         "/security-events",
+        headers={"X-User-ID": operator_id},
         json={"event_code": "system.started", "outcome": "success"},
     )
 
     assert response.status_code == 201
-    assert response.json()["actor_id"] == TEST_OWNER_ID
+    assert response.json()["actor_id"] == operator_id
 
 
 def test_security_dashboard_aggregates_events_and_respects_account_scope() -> None:
