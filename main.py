@@ -284,6 +284,7 @@ from semantic_search import (
 )
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
+MAX_RESEARCH_REVIEW_RESPONSE_EVENTS = 500
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="CCL AI Suite", version="0.1.0")
@@ -2105,7 +2106,10 @@ def research_review_register(review: ResearchReview) -> ResearchEvidenceRegister
     return research_evidence_register_response(review.project_id, result)
 
 
-def research_review_response(review: ResearchReview) -> ResearchReviewResponse:
+def research_review_response(
+    review: ResearchReview,
+    db: Session,
+) -> ResearchReviewResponse:
     """Build a complete review response from durable state and fresh warnings."""
 
     register = research_review_register(review)
@@ -2135,12 +2139,17 @@ def research_review_response(review: ResearchReview) -> ResearchReviewResponse:
             key=lambda item: (item.created_at.isoformat(), str(item.id)),
         )
     ]
+    event_records = list_records(
+        db,
+        select(ResearchReviewEvent)
+        .where(ResearchReviewEvent.review_id == review.id)
+        .order_by(ResearchReviewEvent.created_at.desc(), ResearchReviewEvent.id.desc())
+        .limit(MAX_RESEARCH_REVIEW_RESPONSE_EVENTS + 1),
+    )
+    events_truncated = len(event_records) > MAX_RESEARCH_REVIEW_RESPONSE_EVENTS
     events = [
         ResearchReviewEventResponse.model_validate(event)
-        for event in sorted(
-            review.events,
-            key=lambda item: (item.created_at.isoformat(), str(item.id)),
-        )
+        for event in reversed(event_records[:MAX_RESEARCH_REVIEW_RESPONSE_EVENTS])
     ]
     return ResearchReviewResponse.model_validate(
         {
@@ -2161,6 +2170,7 @@ def research_review_response(review: ResearchReview) -> ResearchReviewResponse:
             "claims": claims,
             "warnings": register.warnings,
             "events": events,
+            "events_truncated": events_truncated,
         }
     )
 
@@ -2325,7 +2335,7 @@ async def create_project_research_review(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database temporarily unavailable.",
         )
-    return research_review_response(review)
+    return research_review_response(review, db)
 
 
 @app.get(
@@ -2354,7 +2364,7 @@ async def list_project_research_reviews(
         .where(ResearchReview.project_id == project.id)
         .order_by(ResearchReview.created_at.desc(), ResearchReview.id.desc()),
     )
-    return [research_review_response(review) for review in reviews]
+    return [research_review_response(review, db) for review in reviews]
 
 
 @app.get(
@@ -2379,7 +2389,7 @@ async def get_research_review(
         actor,
         denial_action="research.review.read",
     )
-    return research_review_response(review)
+    return research_review_response(review, db)
 
 
 @app.post(
@@ -2445,7 +2455,7 @@ async def request_research_claim_correction(
         note=correction.comment,
     )
     persist_research_review_mutation(db, review, event)
-    return research_review_response(review)
+    return research_review_response(review, db)
 
 
 @app.post(
@@ -2504,7 +2514,7 @@ async def verify_research_claim(
         note=verification.note,
     )
     persist_research_review_mutation(db, review, event)
-    return research_review_response(review)
+    return research_review_response(review, db)
 
 
 @app.post(
@@ -2555,7 +2565,7 @@ async def approve_research_review(
         note=approval.note,
     )
     persist_research_review_mutation(db, review, event)
-    return research_review_response(review)
+    return research_review_response(review, db)
 
 
 @app.get(

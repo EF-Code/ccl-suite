@@ -396,6 +396,7 @@ export type ResearchReviewResponse = {
   claims: ResearchReviewClaim[];
   warnings: ResearchEvidenceWarning[];
   events: ResearchReviewEvent[];
+  events_truncated: boolean;
 };
 
 export type KnowledgeFeedbackRating = "helpful" | "not_helpful";

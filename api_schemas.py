@@ -794,6 +794,7 @@ class ResearchReviewResponse(BaseModel):
         max_length=MAX_RESEARCH_WARNING_COUNT,
     )
     events: list[ResearchReviewEventResponse] = Field(max_length=500)
+    events_truncated: bool = False
 
     @model_validator(mode="after")
     def validate_review_integrity(self) -> ResearchReviewResponse:
