@@ -127,3 +127,29 @@ def test_organizer_cli_rejects_quarantine_without_apply(
         organizer_main()
 
     assert exc_info.value.code == 2
+
+
+def test_organizer_cli_reports_the_quarantine_journal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "project"
+    incoming = root / "incoming"
+    destination = root / "working" / "spreadsheets" / "plan.csv"
+    incoming.mkdir(parents=True)
+    destination.parent.mkdir(parents=True)
+    (incoming / "Plan.csv").write_text("conflicted data", encoding="utf-8")
+    destination.write_text("keep existing data", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["file_organizer.py", str(root), "--apply", "--quarantine-conflicts"],
+    )
+
+    assert organizer_main() == 0
+
+    output = capsys.readouterr().out
+    assert "Conflicts quarantined in .ccl-journals/quarantine-" in output
+    assert destination.read_text(encoding="utf-8") == "keep existing data"
+    quarantined = list((root / "quarantine").rglob("Plan.csv"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text(encoding="utf-8") == "conflicted data"

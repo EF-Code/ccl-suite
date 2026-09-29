@@ -401,7 +401,7 @@ def main() -> int:
             journal = apply_plan(plan, args.journal)
             print(f"Journal written to {journal.relative_to(root)}")
             if args.quarantine_conflicts:
-                quarantine_conflicts(plan)
+                quarantine_journal = quarantine_conflicts(plan)
                 print(f"Conflicts quarantined in {quarantine_journal.relative_to(root)}")
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
