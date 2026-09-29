@@ -159,9 +159,11 @@ from file_backups import (
     BackupDestinationExistsError,
     BackupIntegrityError,
     BackupPathError,
+    BackupQuotaExceededError,
     BackupSourceError,
     BackupStoragePaths,
     DEFAULT_BACKUP_ROOT,
+    DEFAULT_MAX_BACKUP_STORAGE_BYTES,
     backup_storage_paths,
     create_backup,
     remove_backup_artifacts,
@@ -291,6 +293,14 @@ app = FastAPI(title="CCL AI Suite", version="0.1.0")
 Entity = TypeVar("Entity")
 PROJECT_ROOT = DEFAULT_PROJECT_ROOT
 BACKUP_ROOT = DEFAULT_BACKUP_ROOT
+try:
+    MAX_BACKUP_STORAGE_BYTES = int(
+        os.getenv("CCL_BACKUP_MAX_TOTAL_BYTES", str(DEFAULT_MAX_BACKUP_STORAGE_BYTES))
+    )
+except ValueError as exc:
+    raise RuntimeError("CCL_BACKUP_MAX_TOTAL_BYTES must be a positive integer.") from exc
+if MAX_BACKUP_STORAGE_BYTES <= 0:
+    raise RuntimeError("CCL_BACKUP_MAX_TOTAL_BYTES must be a positive integer.")
 
 
 class RequestBodyLimitMiddleware:
@@ -3099,6 +3109,7 @@ async def create_project_backup(
             BACKUP_ROOT,
             project_id,
             uuid4(),
+            max_total_storage_bytes=MAX_BACKUP_STORAGE_BYTES,
         )
         verification = verify_backup(
             artifact.storage,
@@ -3123,6 +3134,13 @@ async def create_project_backup(
         db.add(backup)
         db.commit()
         db.refresh(backup)
+    except BackupQuotaExceededError:
+        db.rollback()
+        cleanup_failed_backup(artifact)
+        raise HTTPException(
+            status_code=507,
+            detail="Backup storage quota reached; increase the configured limit before creating more backups.",
+        )
     except (FileNotFoundError, NotADirectoryError):
         db.rollback()
         cleanup_failed_backup(artifact)

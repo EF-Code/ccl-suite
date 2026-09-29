@@ -12,6 +12,10 @@ database provider's backup policy.
   `.manifest.json` files. It defaults to `./backups`.
 - The two roots must be separate private directories. Backup records store
   relative artifact keys, never host filesystem paths.
+- Backup storage has a 10 GiB default aggregate cap. Set
+  `CCL_BACKUP_MAX_TOTAL_BYTES` to a positive byte count to change it. New backup
+  creation is rejected when the cap would be exceeded; existing backups are
+  never automatically deleted.
 - A manifest records every regular file and directory, its relative POSIX
   path, permission mode, size, and SHA-256 checksum. Symbolic links and special
   files are rejected rather than silently omitted.

@@ -15,9 +15,10 @@ import shutil
 import stat
 import tarfile
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Iterable, Literal
+from typing import Iterable, Iterator, Literal
 from uuid import UUID, uuid4
 
 from file_inventory import resolve_approved_root, sha256_file
@@ -26,6 +27,7 @@ BACKUP_FORMAT_VERSION = 1
 BACKUP_ARCHIVE_SUFFIX = ".tar"
 BACKUP_MANIFEST_SUFFIX = ".manifest.json"
 DEFAULT_BACKUP_ROOT = Path(os.getenv("CCL_BACKUP_ROOT", "backups"))
+DEFAULT_MAX_BACKUP_STORAGE_BYTES = 10 * 1024 * 1024 * 1024
 BackupEntryKind = Literal["file", "directory"]
 
 
@@ -45,12 +47,71 @@ class BackupArtifactError(BackupError):
     """Raised when a backup artifact cannot be created or used."""
 
 
+class BackupQuotaExceededError(BackupError):
+    """Raised when creating a backup would exceed the configured storage cap."""
+
+
 class BackupIntegrityError(BackupArtifactError):
     """Raised when an archive or manifest fails integrity validation."""
 
 
 class BackupDestinationExistsError(BackupError):
     """Raised instead of replacing an existing restore destination."""
+
+
+@contextmanager
+def backup_storage_quota_lock(backup_root: Path | str) -> Iterator[Path]:
+    """Serialize backup writes across API processes sharing one storage volume."""
+
+    import fcntl
+
+    root = resolve_backup_root(backup_root)
+    lock_path = root / ".ccl-backup-quota.lock"
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise BackupPathError("Backup quota lock must be a regular file.")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except BackupPathError:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
+    except OSError as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise BackupArtifactError("Backup storage could not be locked safely.") from exc
+
+    try:
+        yield root
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def backup_storage_usage(backup_root: Path | str) -> int:
+    """Count regular files in backup storage without following symbolic links."""
+
+    root = resolve_backup_root(backup_root)
+    total_bytes = 0
+    for current, directories, filenames in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        directories[:] = sorted(
+            name for name in directories if not (current_path / name).is_symlink()
+        )
+        for name in filenames:
+            path = current_path / name
+            try:
+                details = path.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise BackupArtifactError("Backup storage usage could not be measured safely.") from exc
+            if stat.S_ISREG(details.st_mode):
+                total_bytes += details.st_size
+    return total_bytes
 
 
 @dataclass(frozen=True)
@@ -572,6 +633,28 @@ class _HashingReader:
         return chunk
 
 
+class _BoundedWriter:
+    """Proxy a binary writer while enforcing a hard output-size ceiling."""
+
+    def __init__(self, stream: object, maximum_bytes: int | None) -> None:
+        self._stream = stream
+        self._maximum_bytes = maximum_bytes
+        self.bytes_written = 0
+
+    def write(self, content: bytes) -> int:
+        if (
+            self._maximum_bytes is not None
+            and self.bytes_written + len(content) > self._maximum_bytes
+        ):
+            raise BackupQuotaExceededError("Backup storage quota would be exceeded.")
+        written = self._stream.write(content)  # type: ignore[union-attr]
+        self.bytes_written += written
+        return written
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._stream, name)
+
+
 def _publish_temporary_file(temporary: Path, destination: Path, label: str) -> None:
     """Publish a temporary file through a no-overwrite hard link."""
 
@@ -604,6 +687,7 @@ def _create_archive(
     root: Path,
     manifest: BackupManifest,
     destination: Path,
+    max_archive_bytes: int | None = None,
 ) -> tuple[int, str]:
     """Create and publish one deterministic tar archive."""
 
@@ -616,23 +700,32 @@ def _create_archive(
             delete=False,
         ) as stream:
             temporary = Path(stream.name)
-        with tarfile.open(temporary, mode="w", format=tarfile.PAX_FORMAT) as archive:
-            for entry in manifest.entries:
-                source = _safe_source_path(root, entry.relative_path, entry.kind)
-                info = _tar_info(entry)
-                if entry.kind == "directory":
-                    archive.addfile(info)
-                    continue
-                try:
-                    with source.open("rb") as source_stream:
-                        reader = _HashingReader(source_stream)
-                        archive.addfile(info, reader)
-                except OSError as exc:
-                    raise BackupSourceError("A project file could not be archived.") from exc
-                if reader.bytes_read != entry.size_bytes or reader.digest.hexdigest() != entry.checksum_sha256:
-                    raise BackupSourceError("A project file changed during backup.")
-        with temporary.open("rb") as stream:
-            os.fsync(stream.fileno())
+        with temporary.open("wb") as output:
+            bounded_output = _BoundedWriter(output, max_archive_bytes)
+            with tarfile.open(
+                fileobj=bounded_output,
+                mode="w",
+                format=tarfile.PAX_FORMAT,
+            ) as archive:
+                for entry in manifest.entries:
+                    source = _safe_source_path(root, entry.relative_path, entry.kind)
+                    info = _tar_info(entry)
+                    if entry.kind == "directory":
+                        archive.addfile(info)
+                        continue
+                    try:
+                        with source.open("rb") as source_stream:
+                            reader = _HashingReader(source_stream)
+                            archive.addfile(info, reader)
+                    except OSError as exc:
+                        raise BackupSourceError("A project file could not be archived.") from exc
+                    if (
+                        reader.bytes_read != entry.size_bytes
+                        or reader.digest.hexdigest() != entry.checksum_sha256
+                    ):
+                        raise BackupSourceError("A project file changed during backup.")
+            output.flush()
+            os.fsync(output.fileno())
         _publish_temporary_file(temporary, destination, "Backup archive")
         return destination.stat().st_size, sha256_file(destination)
     except BackupError:
@@ -649,30 +742,44 @@ def create_backup(
     backup_root: Path | str,
     project_ref: UUID | str,
     backup_id: UUID | str | None = None,
+    max_total_storage_bytes: int | None = None,
 ) -> BackupArtifact:
     """Create a manifest and deterministic archive without modifying a project."""
 
     root, destination_root = resolve_backup_roots(project_root, backup_root)
-    storage = backup_storage_paths(destination_root, project_ref, backup_id)
-    _prepare_artifact_directory(storage)
-    manifest = build_backup_manifest(root, storage.project_ref)
-    archive_published = False
-    manifest_published = False
-    try:
-        archive_size, archive_checksum = _create_archive(
-            root,
-            manifest,
-            storage.artifact_path,
-        )
-        archive_published = True
-        manifest_checksum = write_backup_manifest(storage.manifest_path, manifest)
-        manifest_published = True
-    except BackupError:
-        if archive_published:
-            storage.artifact_path.unlink(missing_ok=True)
-        if manifest_published:
-            storage.manifest_path.unlink(missing_ok=True)
-        raise
+    with backup_storage_quota_lock(destination_root):
+        if max_total_storage_bytes is not None and max_total_storage_bytes <= 0:
+            raise ValueError("Maximum backup storage must be positive.")
+
+        storage = backup_storage_paths(destination_root, project_ref, backup_id)
+        manifest = build_backup_manifest(root, storage.project_ref)
+        max_archive_bytes = None
+        if max_total_storage_bytes is not None:
+            available_bytes = max_total_storage_bytes - backup_storage_usage(destination_root)
+            manifest_size = len(backup_manifest_bytes(manifest))
+            max_archive_bytes = available_bytes - manifest_size
+            if max_archive_bytes <= 0:
+                raise BackupQuotaExceededError("Backup storage quota would be exceeded.")
+
+        _prepare_artifact_directory(storage)
+        archive_published = False
+        manifest_published = False
+        try:
+            archive_size, archive_checksum = _create_archive(
+                root,
+                manifest,
+                storage.artifact_path,
+                max_archive_bytes=max_archive_bytes,
+            )
+            archive_published = True
+            manifest_checksum = write_backup_manifest(storage.manifest_path, manifest)
+            manifest_published = True
+        except BackupError:
+            if archive_published:
+                storage.artifact_path.unlink(missing_ok=True)
+            if manifest_published:
+                storage.manifest_path.unlink(missing_ok=True)
+            raise
     return BackupArtifact(
         storage=storage,
         manifest=manifest,
@@ -1076,6 +1183,7 @@ __all__ = [
     "BACKUP_FORMAT_VERSION",
     "BACKUP_MANIFEST_SUFFIX",
     "DEFAULT_BACKUP_ROOT",
+    "DEFAULT_MAX_BACKUP_STORAGE_BYTES",
     "BackupDestinationExistsError",
     "BackupArtifact",
     "BackupEntry",
@@ -1083,6 +1191,7 @@ __all__ = [
     "BackupError",
     "BackupArtifactError",
     "BackupIntegrityError",
+    "BackupQuotaExceededError",
     "BackupManifest",
     "BackupPathError",
     "BackupSourceError",
@@ -1090,6 +1199,8 @@ __all__ = [
     "BackupVerification",
     "BackupRestoreResult",
     "backup_storage_paths",
+    "backup_storage_usage",
+    "backup_storage_quota_lock",
     "backup_manifest_bytes",
     "build_backup_manifest",
     "create_backup",
