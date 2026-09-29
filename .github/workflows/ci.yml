@@ -72,6 +72,20 @@ jobs:
       - name: Audit production frontend dependencies
         run: pnpm --dir frontend audit --prod --audit-level high
 
+  compose:
+    name: Compose configuration validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Validate isolated host-port configuration
+        env:
+          POSTGRES_PASSWORD: ccl-ci-config-only-password
+          CCL_API_BIND_PORT: "18000"
+          CCL_DB_BIND_PORT: "15432"
+          CCL_MAILPIT_BIND_PORT: "18025"
+          CCL_PUBLIC_URL: http://127.0.0.1:18000
+        run: docker compose --project-name ccl-ci config --quiet
+
   secrets:
     name: Repository secret scan
     runs-on: ubuntu-latest
