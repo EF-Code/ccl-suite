@@ -7,12 +7,13 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from api_schemas import LoginRequest
 from database import Base, get_db
 from file_converter import ConversionError
 from knowledge_sources import build_approved_knowledge_sources_statement
@@ -20,6 +21,7 @@ from main import (
     MAX_REQUEST_BODY_BYTES,
     app,
     health,
+    login,
     list_records,
     persist_record,
     require_current_session,
@@ -147,6 +149,48 @@ def test_authenticated_session_lookup_failure_is_translated_to_503() -> None:
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "Database temporarily unavailable."
+
+
+def test_login_database_failure_is_translated_to_503() -> None:
+    class BrokenSession:
+        rolled_back = False
+
+        def get(self, _model: object, _record_id: object) -> object:
+            raise SQLAlchemyError("database unavailable")
+
+        def rollback(self) -> None:
+            self.rolled_back = True
+
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/auth/login",
+            "raw_path": b"/auth/login",
+            "query_string": b"",
+            "headers": [],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+    )
+    db = BrokenSession()
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            login(
+                LoginRequest(email="admin@example.test", password="valid-test-password"),
+                Response(),
+                request,
+                db,  # type: ignore[arg-type]
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Database temporarily unavailable."
+    assert db.rolled_back is True
 
 
 def test_serves_operations_web_prototype() -> None:

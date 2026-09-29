@@ -931,17 +931,28 @@ async def login(
     except ValueError:
         email = ""
     client_ip = request.client.host if request.client else "unknown"
-    if login_is_throttled(db, email, client_ip):
-        raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
-    actor = db.scalar(select(User).where(User.email == email)) if email else None
-    valid_password = verify_password(credentials.password, actor.password_hash if actor else None)
-    if actor is None or not actor.is_active or not valid_password:
-        record_failed_login(db, email, client_ip)
-        raise HTTPException(status_code=401, detail="Invalid email or password.")
-    clear_email_login_failures(db, email)
-    session, session_token, csrf_token = issue_session(actor)
-    db.add(session)
-    db.commit()
+    try:
+        if login_is_throttled(db, email, client_ip):
+            raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
+        actor = db.scalar(select(User).where(User.email == email)) if email else None
+        valid_password = verify_password(credentials.password, actor.password_hash if actor else None)
+        if actor is None or not actor.is_active or not valid_password:
+            record_failed_login(db, email, client_ip)
+            raise HTTPException(status_code=401, detail="Invalid email or password.")
+        clear_email_login_failures(db, email)
+        session, session_token, csrf_token = issue_session(actor)
+        db.add(session)
+        db.commit()
+    except SQLAlchemyError as exc:
+        try:
+            db.rollback()
+        except SQLAlchemyError:
+            logger.error("Authentication rollback failed after a database error.")
+        logger.error("Authentication request failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        ) from exc
     set_auth_cookies(response, session_token, csrf_token)
     return auth_user_response(actor)
 
