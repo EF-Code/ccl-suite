@@ -3,6 +3,7 @@
 .env
 .env.*
 .venv
+.impeccable/
 __pycache__
 *.py[cod]
 .pytest_cache
@@ -10,3 +11,6 @@ tests
 tmp
 projects/
 backups/
+regions.json
+**/*UNTRACKED.md
+docs/*.docx
