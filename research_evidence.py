@@ -453,7 +453,7 @@ def _missing_evidence_value(value: str) -> bool:
 def _claim_is_in_passage(claim: ExtractedClaim) -> bool:
     claim_text = _canonical_claim_text(claim.claim)
     passage_text = _canonical_claim_text(claim.passage)
-    return bool(claim_text) and claim_text in passage_text
+    return bool(claim_text) and f" {claim_text} " in f" {passage_text} "
 
 
 def _simple_verb_stem(token: str) -> str:
