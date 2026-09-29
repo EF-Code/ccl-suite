@@ -340,8 +340,10 @@ Create a standard project folder first, then scan it with
 
 The scanner records each regular file's relative path, name, extension,
 content-based MIME type, size, UTC modification time, SHA-256 hash, and whether
-the MIME type agrees with the extension. It writes `manifest.json` and
-`manifest.csv` inside the approved root.
+the MIME type agrees with the extension. It writes `.ccl-inventory/manifest.json`
+and `.ccl-inventory/manifest.csv` inside the approved root. Existing files are
+never replaced; a conflicting output is written under a content-addressed name
+in `.ccl-inventory/`.
 
 Custom manifest paths may be supplied when they remain inside that root:
 

@@ -55,10 +55,12 @@ def test_inventory_cli_writes_manifests(
 
     output = capsys.readouterr().out
     assert "Scanned 1 files." in output
-    assert json.loads((root / "manifest.json").read_text(encoding="utf-8"))[0][
+    assert json.loads(
+        (root / ".ccl-inventory" / "manifest.json").read_text(encoding="utf-8")
+    )[0][
         "relative_path"
     ] == "notes.txt"
-    assert (root / "manifest.csv").is_file()
+    assert (root / ".ccl-inventory" / "manifest.csv").is_file()
 
 
 def test_inventory_cli_reports_invalid_root(

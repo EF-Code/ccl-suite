@@ -1697,10 +1697,10 @@ def test_project_inventory_endpoint_writes_manifests(
     assert response.json()["files_scanned"] == 1
     assert response.json()["duplicate_groups"] == 0
     assert response.json()["versions_created"] == 1
-    assert response.json()["json_manifest"] == "manifest.json"
-    assert response.json()["csv_manifest"] == "manifest.csv"
-    assert (project_root / "manifest.json").is_file()
-    assert (project_root / "manifest.csv").is_file()
+    assert response.json()["json_manifest"] == ".ccl-inventory/manifest.json"
+    assert response.json()["csv_manifest"] == ".ccl-inventory/manifest.csv"
+    assert (project_root / ".ccl-inventory" / "manifest.json").is_file()
+    assert (project_root / ".ccl-inventory" / "manifest.csv").is_file()
 
     search = request(
         "GET",

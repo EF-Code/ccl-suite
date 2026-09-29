@@ -14,8 +14,10 @@ curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/inventory
 
 The response includes the scanned records, duplicate-hash counts, the number
 of records persisted, history events, and new immutable versions created.
-Generated `manifest.json` and `manifest.csv` files are evidence outputs and are
-excluded from the asset database.
+Generated `.ccl-inventory/manifest.json` and `.ccl-inventory/manifest.csv`
+files are evidence outputs excluded from inventory scans and the asset database.
+Existing root-level files with those names are treated as user files and are
+never overwritten.
 
 ## Search records
 

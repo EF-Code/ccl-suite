@@ -3835,14 +3835,6 @@ async def inventory_project_files(
     try:
         root = project_storage_root(project)
         records = scan_files(root)
-        manifest_paths = {
-            "manifest.json",
-            "manifest.csv",
-        }
-        # The scanner can see manifests from an earlier run.  They are
-        # generated evidence, not project assets, so keep them out of the
-        # searchable file-record database and duplicate counts.
-        records = [record for record in records if record.relative_path not in manifest_paths]
         json_path, csv_path = write_manifests(root, records)
         sync_result = sync_inventory_records(
             db,

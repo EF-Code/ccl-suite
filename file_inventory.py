@@ -8,7 +8,10 @@ import hashlib
 import json
 import mimetypes
 import os
+import secrets
+import stat
 import subprocess
+import tempfile
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,9 +19,11 @@ from typing import Iterable
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024
 DEFAULT_PROJECT_ROOT = Path(os.getenv("CCL_PROJECT_ROOT", "projects"))
-DEFAULT_JSON_NAME = "manifest.json"
-DEFAULT_CSV_NAME = "manifest.csv"
-INTERNAL_DIRECTORY_NAMES = frozenset({".ccl-versions", ".ccl-journals"})
+DEFAULT_JSON_NAME = ".ccl-inventory/manifest.json"
+DEFAULT_CSV_NAME = ".ccl-inventory/manifest.csv"
+INTERNAL_DIRECTORY_NAMES = frozenset(
+    {".ccl-versions", ".ccl-journals", ".ccl-inventory", ".ccl-organization"}
+)
 INTERNAL_JOURNAL_NAMES = frozenset({"organization-journal.json", "quarantine-journal.json"})
 MIME_COMMAND = ("file", "--brief", "--mime-type")
 
@@ -61,7 +66,7 @@ def safe_relative_path(root: Path, path: Path) -> Path:
 
 
 def is_internal_write_path(relative_path: Path | str) -> bool:
-    """Keep client-created files away from version archives and rollback journals."""
+    """Keep client-created files away from application-managed storage."""
 
     parts = Path(relative_path).parts
     return bool(parts) and (
@@ -150,17 +155,36 @@ def _manifest_paths(
 ) -> tuple[Path, Path]:
     """Resolve manifest paths and keep both outputs below the root."""
 
-    for candidate in (json_path, csv_path):
-        if candidate is not None and candidate.is_symlink():
+    def resolve_output(candidate: Path | None, default_name: str) -> Path:
+        raw_path = Path(candidate or root / default_name).expanduser()
+        lexical_path = Path(os.path.abspath(raw_path))
+        try:
+            relative = lexical_path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("Manifest output must stay inside the approved root.") from exc
+        if not relative.parts:
+            raise ValueError("Manifest output must name a file inside the approved root.")
+        if lexical_path.is_symlink():
             raise ValueError("Manifest output must not be a symlink.")
-    json_output = (json_path or root / DEFAULT_JSON_NAME).resolve(strict=False)
-    csv_output = (csv_path or root / DEFAULT_CSV_NAME).resolve(strict=False)
-    if json_output == csv_output:
-        raise ValueError("JSON and CSV manifest paths must be different.")
-    for output in (json_output, csv_output):
+
+        current = root
+        for part in relative.parts[:-1]:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("Manifest output directories must not be symlinks.")
+            current.mkdir(parents=True, exist_ok=True, mode=0o750)
+            if current.is_symlink() or not current.is_dir():
+                raise ValueError("Manifest output directory is not safe.")
+
+        output = lexical_path.resolve(strict=False)
         if not output.is_relative_to(root):
             raise ValueError("Manifest output must stay inside the approved root.")
-        output.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+        return output
+
+    json_output = resolve_output(json_path, DEFAULT_JSON_NAME)
+    csv_output = resolve_output(csv_path, DEFAULT_CSV_NAME)
+    if json_output == csv_output:
+        raise ValueError("JSON and CSV manifest paths must be different.")
     return json_output, csv_output
 
 
@@ -175,14 +199,94 @@ def write_manifests(
     root = resolve_approved_root(approved_root)
     json_output, csv_output = _manifest_paths(root, json_path, csv_path)
     rows = [asdict(record) for record in records]
-    json_output.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+    json_payload = (json.dumps(rows, indent=2) + "\n").encode("utf-8")
 
     fieldnames = [field.name for field in fields(FileRecord)]
-    with csv_output.open("w", newline="", encoding="utf-8") as stream:
+    with tempfile.SpooledTemporaryFile(mode="w+t", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+        stream.seek(0)
+        csv_payload = stream.read().encode("utf-8")
+
+    json_output = _publish_manifest_without_replacement(root, json_output, json_payload)
+    csv_output = _publish_manifest_without_replacement(root, csv_output, csv_payload)
     return json_output, csv_output
+
+
+def _manifest_matches(path: Path, payload: bytes) -> bool:
+    """Check an existing regular manifest without following symbolic links."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return False
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            return False
+        return stream.read(len(payload) + 1) == payload
+
+
+def _create_manifest_exclusively(path: Path, payload: bytes) -> bool:
+    """Atomically create one manifest only when its destination is unused."""
+
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=".manifest-",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+            return True
+        except FileExistsError:
+            return False
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _publish_manifest_without_replacement(
+    root: Path,
+    preferred_path: Path,
+    payload: bytes,
+) -> Path:
+    """Reuse identical output or publish under a unique internal path."""
+
+    if _create_manifest_exclusively(preferred_path, payload):
+        return preferred_path
+    if _manifest_matches(preferred_path, payload):
+        return preferred_path
+
+    internal_directory = root / ".ccl-inventory"
+    if internal_directory.is_symlink():
+        raise ValueError("Manifest output directory must not be a symlink.")
+    internal_directory.mkdir(parents=True, exist_ok=True, mode=0o750)
+    if internal_directory.is_symlink() or not internal_directory.is_dir():
+        raise ValueError("Manifest output directory is not safe.")
+
+    digest = hashlib.sha256(payload).hexdigest()
+    candidates = [
+        internal_directory / f"{preferred_path.stem}-{digest}{preferred_path.suffix}"
+    ]
+    candidates.extend(
+        internal_directory
+        / f"{preferred_path.stem}-{secrets.token_hex(12)}{preferred_path.suffix}"
+        for _ in range(3)
+    )
+    for candidate in candidates:
+        if _create_manifest_exclusively(candidate, payload):
+            return candidate
+        if _manifest_matches(candidate, payload):
+            return candidate
+    raise FileExistsError("A unique manifest output path could not be allocated.")
 
 
 def build_parser() -> argparse.ArgumentParser:

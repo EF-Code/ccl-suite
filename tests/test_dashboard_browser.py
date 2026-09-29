@@ -202,7 +202,7 @@ def test_dashboard_runs_project_file_workflow(dashboard_page: Page) -> None:
     inventory_result = page.locator("#inventory-result")
     inventory_result.wait_for(state="visible")
     expect(inventory_result).to_contain_text("Scanned 0 file(s)")
-    expect(inventory_result).to_contain_text("JSON: manifest.json")
+    expect(inventory_result).to_contain_text("JSON: .ccl-inventory/manifest.json")
 
     open_workspace(page, "Recovery")
     page.locator("#backup-create").click()
