@@ -1,23 +1,39 @@
 """Database engine and session configuration.
 
-The connection string is supplied through ``DATABASE_URL`` so credentials stay
-outside the repository.  The fallback is a credential-free local PostgreSQL
-URL for development; Docker configuration will provide an explicit URL later.
+An explicit ``DATABASE_URL`` takes precedence. Docker can provide credentials
+as separate ``CCL_DATABASE_*`` components, which are safely URL-encoded here.
 """
 
 from collections.abc import AsyncIterator
 import os
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://localhost/ccl_suite"
 
 
 def get_database_url() -> str:
-    """Return the configured database URL without embedding credentials."""
+    """Return a database URL, safely escaping component-based credentials."""
 
-    return os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+    configured_url = os.getenv("DATABASE_URL")
+    if configured_url:
+        return configured_url
+
+    database_host = os.getenv("CCL_DATABASE_HOST")
+    if database_host:
+        database_url = URL.create(
+            "postgresql+psycopg",
+            username=os.getenv("CCL_DATABASE_USER", "ccl_suite"),
+            password=os.getenv("CCL_DATABASE_PASSWORD"),
+            host=database_host,
+            port=int(os.getenv("CCL_DATABASE_PORT", "5432")),
+            database=os.getenv("CCL_DATABASE_NAME", "ccl_suite"),
+        )
+        return database_url.render_as_string(hide_password=False)
+
+    return DEFAULT_DATABASE_URL
 
 
 class Base(DeclarativeBase):
