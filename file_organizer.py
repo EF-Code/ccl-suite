@@ -8,6 +8,8 @@ import json
 import os
 import re
 import secrets
+import stat
+import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -27,7 +29,7 @@ DEFAULT_SOURCE_DIR = "incoming"
 DEFAULT_TARGET_DIR = "working"
 DEFAULT_QUARANTINE_DIR = "quarantine"
 INTERNAL_JOURNAL_DIRECTORY = ".ccl-journals"
-DEFAULT_PLAN_NAME = "organization-plan.json"
+INTERNAL_PLAN_DIRECTORY = ".ccl-organization"
 MAX_ORGANIZATION_ACTIONS = 1000
 
 ActionStatus = Literal["planned", "conflict", "applied", "quarantined", "rolled_back"]
@@ -150,9 +152,12 @@ def build_plan(
 
 
 def plan_dict(plan: OrganizationPlan) -> dict[str, object]:
-    """Return a JSON-ready representation of a plan."""
+    """Return a portable plan representation without host filesystem paths."""
 
-    return asdict(plan)
+    return {
+        "actions": [asdict(action) for action in plan.actions],
+        "root": ".",
+    }
 
 
 def plan_digest(plan: OrganizationPlan) -> str:
@@ -163,14 +168,95 @@ def plan_digest(plan: OrganizationPlan) -> str:
 
 
 def write_plan(plan: OrganizationPlan, output: Path | None = None) -> Path:
-    """Write a dry-run plan inside its approved root."""
+    """Write an immutable plan without replacing project files."""
 
-    root = Path(plan.root)
-    destination = (output or root / DEFAULT_PLAN_NAME).resolve(strict=False)
-    safe_relative_path(root, destination)
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
-    destination.write_text(json.dumps(plan_dict(plan), indent=2) + "\n", encoding="utf-8")
-    return destination
+    root = resolve_approved_root(plan.root)
+    digest = plan_digest(plan)
+    payload = json.dumps(
+        {**plan_dict(plan), "digest": digest},
+        indent=2,
+        sort_keys=True,
+    ).encode("utf-8") + b"\n"
+
+    internal_plans = root / INTERNAL_PLAN_DIRECTORY / "plans"
+    current = root
+    for part in (INTERNAL_PLAN_DIRECTORY, "plans"):
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("Organization plan directories must not be symlinks.")
+        current.mkdir(parents=True, exist_ok=True, mode=0o750)
+        if current.is_symlink() or not current.is_dir():
+            raise ValueError("Organization plan directory is not safe.")
+
+    if output is None:
+        preferred_path = internal_plans / f"{digest}.json"
+    else:
+        candidate = Path(os.path.abspath(Path(output).expanduser()))
+        try:
+            relative = candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("Plan output must stay inside the approved root.") from exc
+        if not relative.parts:
+            raise ValueError("Plan output must name a file inside the approved root.")
+        current = root
+        for part in relative.parts[:-1]:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("Plan output directories must not be symlinks.")
+            current.mkdir(parents=True, exist_ok=True, mode=0o750)
+        preferred_path = candidate
+
+    candidates = [preferred_path]
+    if preferred_path != internal_plans / f"{digest}.json":
+        candidates.append(internal_plans / f"{digest}.json")
+    candidates.extend(
+        internal_plans / f"{digest}-{secrets.token_hex(12)}.json"
+        for _ in range(3)
+    )
+    for destination in candidates:
+        if _create_plan_file(destination, payload):
+            return destination
+        if _plan_file_matches(destination, payload):
+            return destination
+    raise FileExistsError("A unique organization plan path could not be allocated.")
+
+
+def _plan_file_matches(path: Path, payload: bytes) -> bool:
+    """Compare an existing regular plan without following symbolic links."""
+
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return False
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            return False
+        return stream.read(len(payload) + 1) == payload
+
+
+def _create_plan_file(path: Path, payload: bytes) -> bool:
+    """Atomically publish plan bytes only when the destination is unused."""
+
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=".plan-",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+            return True
+        except FileExistsError:
+            return False
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def render_plan(plan: OrganizationPlan) -> str:

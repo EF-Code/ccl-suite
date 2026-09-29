@@ -90,7 +90,7 @@ def test_organizer_cli_applies_and_rolls_back(
 
     monkeypatch.setattr(sys, "argv", ["file_organizer.py", str(root)])
     assert organizer_main() == 0
-    assert "Plan written to organization-plan.json" in capsys.readouterr().out
+    assert "Plan written to .ccl-organization/plans/" in capsys.readouterr().out
     assert source.is_file()
 
     journal = root / "organization-journal.json"

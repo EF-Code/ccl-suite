@@ -370,8 +370,10 @@ the role-permission matrix and authorization behavior.
 
 `file_organizer.py` creates a deterministic plan for moving files from a
 project's `incoming` directory into category folders under `working`. The
-default command is a dry run: it prints the proposed moves and writes
-`organization-plan.json` without changing any files.
+default command is a dry run: it prints the proposed moves and writes an
+immutable content-addressed plan under `.ccl-organization/plans/` without
+changing any files. The saved plan uses a project-relative root and does not
+expose a host filesystem path.
 
 ```bash
 .venv/bin/python file_organizer.py ./projects/client-intake-q3

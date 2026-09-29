@@ -56,7 +56,8 @@ def test_build_plan_is_dry_run_and_writes_confined_plan(tmp_path: Path) -> None:
     assert not (target / "spreadsheets" / "quarterly-report.csv").exists()
 
     plan_path = write_plan(plan)
-    assert plan_path == root / "organization-plan.json"
+    assert plan_path.parent == root / ".ccl-organization" / "plans"
+    assert plan_path.suffix == ".json"
     assert json.loads(plan_path.read_text(encoding="utf-8"))["actions"][0]["source"] == (
         "incoming/Quarterly Report.csv"
     )
