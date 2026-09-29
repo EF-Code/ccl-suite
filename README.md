@@ -287,6 +287,15 @@ projects and files. The test follows login, project creation, folder generation,
 inventory, and guarded operations. It skips during the normal suite unless
 `RUN_BROWSER_TESTS=1` is set.
 
+## Continuous integration
+
+GitHub Actions runs on every pull request and push to `main`. The workflow runs
+Python correctness lint, unit/API tests and a PostgreSQL integration round-trip;
+frontend lint/build; the live Chromium dashboard acceptance suite against
+isolated PostgreSQL, Mailpit, and file storage; Python and frontend dependency
+audits; and a secret scan over tracked Git history. Each Python job uses
+`~/.venv` like the local setup above. CI passwords are disposable fixtures only.
+
 ## Folder Standards
 
 The standalone `folder_generator.py` script creates the standard project layout
