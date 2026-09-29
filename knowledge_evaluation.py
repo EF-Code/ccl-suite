@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Final, Literal
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 from api_schemas import SemanticSearchResult
 from knowledge_answer import GroundedAnswer, compose_grounded_answer
