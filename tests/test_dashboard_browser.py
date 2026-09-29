@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pytest
 
 
@@ -65,6 +68,55 @@ def open_workspace(page: Page, label: str) -> None:
 def csrf_headers(page: Page) -> dict[str, str]:
     csrf = next(cookie["value"] for cookie in page.context.cookies() if cookie["name"] == "ccl_csrf")
     return {"X-CSRF-Token": csrf}
+
+
+@contextmanager
+def independent_reviewer_page(requester: Page, project_title: str) -> Iterator[Page]:
+    """Invite and sign in a distinct supervisor for human approval checks."""
+
+    reviewer_email = f"reviewer-{uuid4().hex}@example.test"
+    reviewer_password = "Browser-Reviewer-Only-Password-2026!"
+    invitation = requester.request.post(
+        f"{BASE_URL}/auth/invitations",
+        headers=csrf_headers(requester),
+        data={"email": reviewer_email, "role": "supervisor"},
+    )
+    assert invitation.status == 201, invitation.text
+    invite_url = invitation.json()["invite_url"]
+    token = invite_url.partition("#invite=")[2]
+    assert token
+    accepted = httpx.post(
+        f"{BASE_URL}/auth/invitations/accept",
+        json={"token": token, "password": reviewer_password},
+        timeout=10,
+    )
+    assert accepted.status_code == 201, accepted.text
+
+    browser = requester.context.browser
+    assert browser is not None
+    reviewer = browser.new_page()
+    reviewer.set_default_timeout(10_000)
+    browser_errors: list[str] = []
+    reviewer.on(
+        "console",
+        lambda message: browser_errors.append(message.text)
+        if message.type == "error" and "401 (Unauthorized)" not in message.text
+        else None,
+    )
+    reviewer.on("pageerror", lambda error: browser_errors.append(str(error)))
+    try:
+        reviewer.goto(BASE_URL, wait_until="networkidle")
+        reviewer.locator("#login-email").fill(reviewer_email)
+        reviewer.locator("#login-password").fill(reviewer_password)
+        reviewer.locator("#login-form").get_by_role("button", name="Sign in").click()
+        reviewer.locator("#health-badge").wait_for(state="visible")
+        project_selector = reviewer.get_by_role("combobox", name="Active project")
+        project_selector.click()
+        reviewer.get_by_role("option", name=project_title, exact=True).click()
+        yield reviewer
+    finally:
+        reviewer.close()
+    assert browser_errors == []
 
 
 @pytest.fixture
@@ -458,11 +510,19 @@ def test_dashboard_runs_workflow_definition_and_approval(dashboard_page: Page) -
     approval = workflow_card.locator("[data-approval-id]").first
     approval.wait_for(state="visible")
     expect(approval.locator("[data-approval-status='pending']")).to_be_visible()
-    approval.locator("input").fill("reviewed")
-    approval.get_by_role("button", name="Approve").click()
-    confirm_protected_action(page)
-    expect(approval.locator("[data-approval-status='approved']")).to_be_visible()
-    expect(workflow_panel.locator("[data-workflow-stage='decide']")).to_contain_text("Outcome recorded")
+    with independent_reviewer_page(page, project_title) as reviewer:
+        open_workspace(reviewer, "Workflows")
+        reviewer_panel = reviewer.locator("#workflow-orchestrator")
+        reviewer_card = reviewer.locator("#workflow-list [data-workflow-id]").filter(
+            has_text="Publish campaign package"
+        )
+        reviewer_card.wait_for(state="visible")
+        reviewer_approval = reviewer_card.locator("[data-approval-id]").first
+        reviewer_approval.locator("input").fill("reviewed")
+        reviewer_approval.get_by_role("button", name="Approve").click()
+        confirm_protected_action(reviewer)
+        expect(reviewer_approval.locator("[data-approval-status='approved']")).to_be_visible()
+        expect(reviewer_panel.locator("[data-workflow-stage='decide']")).to_contain_text("Outcome recorded")
 
 
 def test_dashboard_runs_accelerated_workflow_controls(dashboard_page: Page) -> None:
