@@ -83,7 +83,6 @@ ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
             "approval.decide",
             "security.read",
             "security.alerts.evaluate",
-            "security.write",
             "knowledge.read",
             "knowledge.register",
             "knowledge.ingest",
