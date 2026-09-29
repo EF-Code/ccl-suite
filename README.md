@@ -296,6 +296,23 @@ isolated PostgreSQL, Mailpit, and file storage; Python and frontend dependency
 audits; and a secret scan over tracked Git history. Each Python job uses
 `~/.venv` like the local setup above. CI passwords are disposable fixtures only.
 
+## Isolated staging
+
+To bring up a separate loopback-only staging candidate without reusing the
+regular Compose project's data, use a distinct Compose project name and ports:
+
+```bash
+CCL_API_BIND_PORT=18000 \
+CCL_DB_BIND_PORT=15432 \
+CCL_MAILPIT_BIND_PORT=18025 \
+CCL_PUBLIC_URL=http://127.0.0.1:18000 \
+docker compose --project-name ccl-week11-staging up --build -d
+```
+
+The distinct Compose project name creates separate named database and storage
+volumes. Use sanitized sample data only. The candidate and supervisor sign-off
+record are described in [`docs/week-11-release-candidate.md`](docs/week-11-release-candidate.md).
+
 ## Folder Standards
 
 The standalone `folder_generator.py` script creates the standard project layout
