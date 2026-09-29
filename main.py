@@ -3301,7 +3301,7 @@ async def restore_project_backup(
     try:
         result = restore_backup(
             backup_storage_for_record(backup),
-            PROJECT_ROOT,
+            project_storage_root(_project),
             restore_request.destination_path,
             expected_archive_checksum=backup.archive_checksum_sha256,
             expected_manifest_checksum=backup.manifest_checksum_sha256,
