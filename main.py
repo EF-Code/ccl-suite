@@ -2182,6 +2182,8 @@ def require_project_research_review(
     review_id: UUID,
     actor: User,
     denial_action: str,
+    *,
+    for_update: bool = False,
 ) -> tuple[Project, ResearchReview]:
     """Apply project access before loading a review package."""
 
@@ -2192,7 +2194,20 @@ def require_project_research_review(
         actor,
         denial_action=denial_action,
     )
-    review = require_record(db, ResearchReview, review_id, "Research review was not found.")
+    if for_update:
+        review = db.scalar(
+            select(ResearchReview)
+            .where(ResearchReview.id == review_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if review is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Research review was not found.",
+            )
+    else:
+        review = require_record(db, ResearchReview, review_id, "Research review was not found.")
     if review.project_id != project_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -2415,6 +2430,7 @@ async def request_research_claim_correction(
         review_id,
         actor,
         denial_action="research.review.correction",
+        for_update=True,
     )
     claim = db.scalar(
         select(ResearchReviewClaim).where(
@@ -2482,6 +2498,7 @@ async def verify_research_claim(
         review_id,
         actor,
         denial_action="research.review.verify",
+        for_update=True,
     )
     claim = db.scalar(
         select(ResearchReviewClaim).where(
@@ -2540,6 +2557,7 @@ async def approve_research_review(
         review_id,
         actor,
         denial_action="research.review.approve",
+        for_update=True,
     )
     if review.status == "approved":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Research review has already been approved.")
