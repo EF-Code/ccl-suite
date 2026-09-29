@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
+from sqlalchemy import and_, delete, or_
 from sqlalchemy.orm import Session
 
 from models import AuthSession, AuthThrottle, Invitation, User, utc_now
@@ -100,9 +101,17 @@ def session_is_valid(session: AuthSession) -> bool:
     return session.revoked_at is None and as_utc(session.expires_at) > utc_now()
 
 
+def _login_pair_key(email: str, client_ip: str) -> str:
+    """Build an unambiguous email/source throttle key before hashing it."""
+
+    return f"pair:{len(email)}:{email}:{client_ip}"
+
+
 def login_is_throttled(db: Session, email: str, client_ip: str) -> bool:
+    """Throttle one account/source pair and the source, never the account globally."""
+
     now = utc_now()
-    for key in (f"email:{email}", f"ip:{client_ip}"):
+    for key in (_login_pair_key(email, client_ip), f"ip:{client_ip}"):
         throttle = db.get(AuthThrottle, token_digest(key))
         if throttle is not None and throttle.locked_until is not None:
             if as_utc(throttle.locked_until) > now:
@@ -111,8 +120,27 @@ def login_is_throttled(db: Session, email: str, client_ip: str) -> bool:
 
 
 def record_failed_login(db: Session, email: str, client_ip: str) -> None:
+    """Record source-based failures and remove expired throttle rows."""
+
     now = utc_now()
-    for key, limit in ((f"email:{email}", 5), (f"ip:{client_ip}", 25)):
+    db.execute(
+        delete(AuthThrottle).where(
+            or_(
+                and_(
+                    AuthThrottle.locked_until.is_not(None),
+                    AuthThrottle.locked_until <= now,
+                ),
+                and_(
+                    AuthThrottle.locked_until.is_(None),
+                    AuthThrottle.window_started <= now - LOGIN_WINDOW,
+                ),
+            )
+        )
+    )
+    for key, limit in (
+        (_login_pair_key(email, client_ip), 5),
+        (f"ip:{client_ip}", 25),
+    ):
         digest = token_digest(key)
         throttle = db.get(AuthThrottle, digest)
         if throttle is None:
@@ -128,10 +156,20 @@ def record_failed_login(db: Session, email: str, client_ip: str) -> None:
     db.commit()
 
 
-def clear_email_login_failures(db: Session, email: str) -> None:
-    throttle = db.get(AuthThrottle, token_digest(f"email:{email}"))
-    if throttle is not None:
-        db.delete(throttle)
+def clear_email_login_failures(
+    db: Session,
+    email: str,
+    client_ip: str | None = None,
+) -> None:
+    """Clear legacy email-only state and the successful source/account pair."""
+
+    keys = [f"email:{email}"]
+    if client_ip is not None:
+        keys.append(_login_pair_key(email, client_ip))
+    for key in keys:
+        throttle = db.get(AuthThrottle, token_digest(key))
+        if throttle is not None:
+            db.delete(throttle)
 
 
 __all__ = [

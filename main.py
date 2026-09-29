@@ -939,7 +939,7 @@ async def login(
         if actor is None or not actor.is_active or not valid_password:
             record_failed_login(db, email, client_ip)
             raise HTTPException(status_code=401, detail="Invalid email or password.")
-        clear_email_login_failures(db, email)
+        clear_email_login_failures(db, email, client_ip)
         session, session_token, csrf_token = issue_session(actor)
         db.add(session)
         db.commit()

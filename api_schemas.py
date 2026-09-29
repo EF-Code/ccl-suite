@@ -62,7 +62,7 @@ class AuthUserResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid")
 
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=1, max_length=1024)
