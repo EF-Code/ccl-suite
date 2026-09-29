@@ -128,8 +128,8 @@ jobs:
       CCL_PUBLIC_URL: http://127.0.0.1:8000
       CCL_SMTP_HOST: 127.0.0.1
       CCL_SMTP_PORT: 1025
-      CCL_PROJECT_ROOT: ${{ runner.temp }}/ccl-browser-projects
-      CCL_BACKUP_ROOT: ${{ runner.temp }}/ccl-browser-backups
+      CCL_PROJECT_ROOT: /tmp/ccl-browser-projects
+      CCL_BACKUP_ROOT: /tmp/ccl-browser-backups
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7
@@ -173,6 +173,9 @@ jobs:
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:8000/health >/dev/null; then
               exit 0
+            fi
+            if (( attempt % 10 == 0 )); then
+              echo "Waiting for API readiness ($attempt/30)"
             fi
             sleep 1
           done
