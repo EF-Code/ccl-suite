@@ -69,7 +69,7 @@ def _source_path(root: Path, storage_key: str, label: str) -> Path:
         raise RestoreSourceUnavailableError(f"{label} must not be a symlink.")
     resolved = candidate.resolve(strict=False)
     try:
-        relative = safe_relative_path(root, resolved)
+        safe_relative_path(root, resolved)
     except ValueError as exc:
         raise UnsafeRestorePathError(f"{label} must remain inside the approved root.") from exc
     if not resolved.is_file():

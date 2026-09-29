@@ -17,6 +17,7 @@ from file_restore import (
     version_archive_path,
     _destination_path,
 )
+from models import FileVersion, Project, User
 
 
 def test_restore_cannot_write_organization_journal(tmp_path: Path) -> None:
@@ -27,9 +28,6 @@ def test_restore_cannot_write_organization_journal(tmp_path: Path) -> None:
         _destination_path(root, "organization-journal.json")
     with pytest.raises(UnsafeRestorePathError, match="reserved"):
         _destination_path(root, ".ccl-journals/organization-journal.json")
-from models import FileVersion, Project, User
-
-
 def make_session(tmp_path: Path) -> Session:
     engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'restore.sqlite3'}")
     Base.metadata.create_all(engine)
