@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,6 +22,7 @@ from main import (
     health,
     list_records,
     persist_record,
+    require_current_session,
     require_record,
 )
 from models import (
@@ -118,6 +119,34 @@ def test_health_reports_unavailable_when_database_is_down() -> None:
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "Service temporarily unavailable."
+
+
+def test_authenticated_session_lookup_failure_is_translated_to_503() -> None:
+    class BrokenSession:
+        def get(self, _model: object, _record_id: object) -> object:
+            raise SQLAlchemyError("database unavailable")
+
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/auth/me",
+            "raw_path": b"/auth/me",
+            "query_string": b"",
+            "headers": [(b"cookie", b"ccl_session=opaque-test-token")],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_current_session(request, BrokenSession())  # type: ignore[arg-type]
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Database temporarily unavailable."
 
 
 def test_serves_operations_web_prototype() -> None:

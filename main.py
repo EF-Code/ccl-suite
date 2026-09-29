@@ -486,12 +486,19 @@ def require_current_session(request: Request, db: Session) -> tuple[User, AuthSe
     raw_token = request.cookies.get("ccl_session", "")
     if not raw_token or len(raw_token) > 256:
         raise HTTPException(status_code=401, detail="Sign in is required.")
-    session = db.get(AuthSession, token_digest(raw_token))
-    if session is None or not session_is_valid(session):
-        raise HTTPException(status_code=401, detail="Sign in is required.")
-    actor = db.get(User, session.user_id)
-    if actor is None or not actor.is_active or not actor.email or not actor.password_hash:
-        raise HTTPException(status_code=401, detail="Sign in is required.")
+    try:
+        session = db.get(AuthSession, token_digest(raw_token))
+        if session is None or not session_is_valid(session):
+            raise HTTPException(status_code=401, detail="Sign in is required.")
+        actor = db.get(User, session.user_id)
+        if actor is None or not actor.is_active or not actor.email or not actor.password_hash:
+            raise HTTPException(status_code=401, detail="Sign in is required.")
+    except SQLAlchemyError as exc:
+        logger.error("Authentication session lookup failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        ) from exc
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         csrf_cookie = request.cookies.get("ccl_csrf", "")
         csrf_header = request.headers.get("x-csrf-token", "")
