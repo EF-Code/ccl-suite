@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests and dependency audit
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ccl_ci
+          POSTGRES_USER: ccl_ci
+          POSTGRES_PASSWORD: ccl-ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ccl_ci -d ccl_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://ccl_ci:ccl-ci-only-password@localhost:5432/ccl_ci
+      TEST_DATABASE_URL: postgresql+psycopg://ccl_ci:ccl-ci-only-password@localhost:5432/ccl_ci
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Create the project Python environment
+        run: python -m venv ~/.venv
+      - name: Install Python dependencies and checks
+        run: ~/.venv/bin/python -m pip install -r requirements-dev.txt
+      - name: Check Python formatting and lint
+        run: ~/.venv/bin/ruff check --isolated --select E4,E7,E9,F .
+      - name: Apply migrations to the isolated CI database
+        run: ~/.venv/bin/python -m alembic upgrade head
+      - name: Run unit, API, and PostgreSQL integration tests
+        run: ~/.venv/bin/python -m pytest -q
+      - name: Audit Python dependencies
+        run: ~/.venv/bin/pip-audit -r requirements-dev.txt
+
+  frontend:
+    name: Frontend lint, build, and dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: pnpm/setup@v3
+        with:
+          version: 11.25.0
+          runtime: node@22
+      - name: Install locked frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+      - name: Lint frontend
+        run: pnpm --dir frontend lint
+      - name: Build frontend
+        run: pnpm --dir frontend build
+      - name: Audit production frontend dependencies
+        run: pnpm --dir frontend audit --prod --audit-level high
+
+  secrets:
+    name: Repository secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Scan tracked Git history for secrets
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/path"
+          ghcr.io/gitleaks/gitleaks:v8.30.1
+          detect --source=/path --redact --no-banner
+
+  browser:
+    name: Live dashboard acceptance tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ccl_browser
+          POSTGRES_USER: ccl_browser
+          POSTGRES_PASSWORD: ccl-browser-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ccl_browser -d ccl_browser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.31.1
+        ports:
+          - 1025:1025
+          - 8025:8025
+    env:
+      DATABASE_URL: postgresql+psycopg://ccl_browser:ccl-browser-only-password@127.0.0.1:5432/ccl_browser
+      CCL_ENVIRONMENT: testing
+      CCL_PUBLIC_URL: http://127.0.0.1:8000
+      CCL_SMTP_HOST: 127.0.0.1
+      CCL_SMTP_PORT: 1025
+      CCL_PROJECT_ROOT: ${{ runner.temp }}/ccl-browser-projects
+      CCL_BACKUP_ROOT: ${{ runner.temp }}/ccl-browser-backups
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-browser.txt
+      - name: Create the project Python environment
+        run: python -m venv ~/.venv
+      - name: Install browser-test dependencies
+        run: ~/.venv/bin/python -m pip install -r requirements-browser.txt
+      - name: Apply migrations to the isolated browser-test database
+        run: ~/.venv/bin/python -m alembic upgrade head
+      - name: Seed a disposable browser-test administrator
+        env:
+          DASHBOARD_TEST_EMAIL: browser-ci@example.test
+          DASHBOARD_TEST_PASSWORD: ccl-browser-ci-only-password
+        run: |
+          ~/.venv/bin/python - <<'PY'
+          import os
+          from uuid import uuid4
+
+          from auth import hash_password
+          from database import SessionLocal
+          from models import User
+
+          with SessionLocal() as session:
+              session.add(User(
+                  external_ref=f"browser-ci:{uuid4().hex}",
+                  email=os.environ["DASHBOARD_TEST_EMAIL"],
+                  password_hash=hash_password(os.environ["DASHBOARD_TEST_PASSWORD"]),
+                  is_active=True,
+                  role="administrator",
+              ))
+              session.commit()
+          PY
+      - name: Start the API against isolated test storage
+        run: |
+          mkdir -p "$CCL_PROJECT_ROOT" "$CCL_BACKUP_ROOT"
+          nohup ~/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/ccl-browser-api.log" 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Install Chromium for the live dashboard tests
+        run: ~/.venv/bin/python -m playwright install --with-deps chromium
+      - name: Run browser end-to-end acceptance suite
+        env:
+          RUN_BROWSER_TESTS: "1"
+          DASHBOARD_BASE_URL: http://127.0.0.1:8000
+          DASHBOARD_TEST_EMAIL: browser-ci@example.test
+          DASHBOARD_TEST_PASSWORD: ccl-browser-ci-only-password
+        run: ~/.venv/bin/python -m pytest -q -m browser tests/test_dashboard_browser.py
