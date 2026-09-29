@@ -787,7 +787,17 @@ async def reject_oversized_requests(request: Request) -> None:
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
-async def health() -> HealthResponse:
+async def health(db: Session = Depends(get_db)) -> HealthResponse:
+    """Report readiness only after the database accepts a lightweight query."""
+
+    try:
+        db.execute(select(1))
+    except SQLAlchemyError as exc:
+        logger.error("Health check failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable.",
+        ) from exc
     return HealthResponse(status="ok")
 
 

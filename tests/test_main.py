@@ -19,6 +19,7 @@ from knowledge_sources import build_approved_knowledge_sources_statement
 from main import (
     MAX_REQUEST_BODY_BYTES,
     app,
+    health,
     list_records,
     persist_record,
     require_record,
@@ -105,6 +106,18 @@ def test_health_reports_ok() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_health_reports_unavailable_when_database_is_down() -> None:
+    class BrokenSession:
+        def execute(self, _statement: object) -> object:
+            raise SQLAlchemyError("database unavailable")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(health(BrokenSession()))  # type: ignore[arg-type]
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Service temporarily unavailable."
 
 
 def test_serves_operations_web_prototype() -> None:
