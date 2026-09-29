@@ -575,8 +575,21 @@ def test_dashboard_runs_accelerated_workflow_controls(dashboard_page: Page) -> N
 
     approval = workflow_card.locator(f"[data-approval-id='{approval_id}']")
     approval.wait_for(state="visible")
-    approval.get_by_role("button", name="Approve").click()
-    confirm_protected_action(page)
+    with independent_reviewer_page(page, project_title) as reviewer:
+        open_workspace(reviewer, "Workflows")
+        # The new reviewer sees the same persisted workflow and pending approval.
+        reviewer_card = reviewer.locator(f"#workflow-list [data-workflow-id='{workflow_id}']")
+        reviewer_card.wait_for(state="visible")
+        reviewer_approval = reviewer_card.locator(f"[data-approval-id='{approval_id}']")
+        reviewer_approval.get_by_role("button", name="Approve").click()
+        confirm_protected_action(reviewer)
+        expect(reviewer_approval.locator("[data-approval-status='approved']")).to_be_visible()
+        reviewer_action = reviewer.locator(
+            f"#workflow-actions-list [data-workflow-action-id='{action.get_attribute('data-workflow-action-id')}']"
+        )
+        expect(reviewer_action).to_have_attribute("data-action-status", "approved")
+
+    workflow_panel.get_by_role("button", name="Refresh").click()
     expect(action).to_have_attribute("data-action-status", "approved")
 
     action.get_by_role("button", name="Record approved execution").click()
