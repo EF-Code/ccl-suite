@@ -4,9 +4,13 @@
 .env.*
 .venv
 .impeccable/
+.ruff_cache/
 __pycache__
 *.py[cod]
 .pytest_cache
+.coverage
+coverage.xml
+htmlcov/
 tests
 tmp
 projects/
