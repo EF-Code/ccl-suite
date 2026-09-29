@@ -15,6 +15,10 @@ tests
 tmp
 projects/
 backups/
+node_modules/
+**/node_modules/
+frontend/dist/
+frontend/.parcel-cache/
 regions.json
 **/*UNTRACKED.md
 docs/*.docx
