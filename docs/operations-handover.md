@@ -5,6 +5,45 @@ supervisor training session, production deployment, or final release approval
 has already occurred. Use the isolated staging instance and sanitized sample
 corpus for rehearsal.
 
+## Local operations verification — 2026-09-30
+
+- The source base is `20aaa6ec702eaa5092fc101e58ddbc969ab3a249`. GitHub Actions
+  run [36707850960](https://github.com/EF-Code/ccl-suite/actions/runs/36707850960)
+  passed for that commit, including backend/PostgreSQL integration, frontend
+  build and audit, Compose validation, live dashboard browser acceptance, and
+  repository secret scanning. That run verifies the committed base only, not
+  the additional uncommitted local changes listed below.
+- The local API image was rebuilt from the current worktree and is healthy;
+  image ID `sha256:317843a8dab73130643d90c4bda3fcf92f726c8c5b324470f3f80dda1b24cf56`.
+  `/health` returned `ok`, the browser dashboard loaded without console errors,
+  and the database is at Alembic revision `0017_project_work_items`. API and
+  PostgreSQL ports remain bound to `127.0.0.1` only.
+- The API now connects as `ccl_app`, not the PostgreSQL bootstrap
+  administrator. Live checks confirmed superuser, database-creation,
+  role-creation, and RLS-bypass privileges are disabled; all 26 public tables
+  are owned by the application role. User/project/work-item counts remained
+  `64/3/0` across the role transition.
+- The full local backend suite passed (`367 passed, 2 skipped`); both
+  PostgreSQL integration tests passed against a disposable database. All 10
+  live Chromium dashboard acceptance flows passed against an isolated test
+  database, including the 390 px mobile-header regression check. Frontend
+  lint/build/audit, Python dependency audit, required Ruff checks, and Compose
+  configuration validation passed. The frontend build emits a non-failing
+  bundle-size warning (556 KB minified, 154 KB gzip).
+- A custom-format PostgreSQL backup with a SHA-256 sidecar was created at
+  `ccl-suite-postgres-20260930T125457Z-20aaa6ec702e.dump` and restored to an
+  isolated temporary database at revision `0017_project_work_items`; the
+  verifier removed that temporary database afterward. The user-level systemd
+  timer is enabled for a daily 02:30 host-local run, with 14-day retention.
+- The current backup directory is on the LUKS-encrypted system disk. You
+  explicitly chose not to configure a secondary destination; this does not
+  protect against failure of that physical disk.
+- The Compose API remains loopback-only. Cloudflare Tunnel would provide
+  Cloudflare-mediated remote access, not LAN-only access; it is not installed
+  or configured. Keep it off until a Cloudflare hostname and Access identity
+  allowlist are confirmed. Direct LAN access with local TLS is a separate,
+  unconfigured option.
+
 ## Training session plan
 
 Suggested duration: 45-60 minutes. The supervisor should operate the system
@@ -84,17 +123,17 @@ deployment or a sequential smoke check as load capacity.
 
 | Item | State | Record before final handover |
 | --- | --- | --- |
-| Backend, frontend, Compose, browser, dependency, and secret CI gates | Verified on the recorded Week 11 source revision | Record the new release revision and its CI run after documentation changes are published |
-| Critical/high defect register | No known open critical/high code defect in the current candidate test pass | Review the [defect register](release-defect-register.md) and re-run release checks on RC2 |
-| Installation, administrator, user, architecture, and recovery guides | Prepared in the linked operations documentation | Supervisor reviews steps against the intended deployment |
+| Backend, frontend, Compose, browser, dependency, and secret gates | Hosted CI passed for base `20aaa6ec`; current local checks passed as recorded above | Run hosted CI after local changes are reviewed and committed; record the release revision |
+| Critical/high defect register | Prior register is tied to an older baseline; latest CI is green but is not a fresh source defect review | Refresh the [defect register](release-defect-register.md) on the release candidate |
+| Installation, administrator, user, architecture, and recovery guides | Local PostgreSQL backup and controlled password-recovery procedures are documented | Supervisor reviews the procedures and confirms the intended operator |
 | Presentation and demonstration script | Draft prepared; practice session pending | Review the deck after fresh RC2 evidence and record supervisor corrections |
 | Supervisor practice session | Pending | Date, attendee, operator who demonstrated recovery, and follow-up items |
-| Production hosting and data approval | Not established by the local staging demo | Named service owner, hosting decision, data classification, and approval reference |
-| Credential and invitation ownership | Pending supervisor assignment | Named credential custodian and account review owner; never record secret values |
-| PostgreSQL backup and restore | Separate operational procedure required | Provider, schedule, retention, restore test date, and responsible owner |
-| Project-file backup and restore | Implemented; verify against the final release candidate | Backup ID, checksums, destination, timestamp, and actor |
+| Local deployment and data approval | No cloud hosting is planned; API and database remain loopback-only. Cloudflare hostname/Access identities and LAN CA/TLS are not configured | Keep remote access off until a hostname, allowed identities, certificate trust, and network boundary are explicitly configured and tested |
+| Credential and invitation ownership | Local reset procedure and login/recovery serialization were tested against a disposable PostgreSQL database; no live account was changed | Assign the named credential custodian and account-review owner; never record secret values |
+| PostgreSQL backup and restore | Daily systemd user timer enabled; 14-day retention; local restore rehearsal passed; user accepted single-disk storage | Assign an operator to review failures and disk space; record the accepted disk-failure risk and repeat a restore rehearsal periodically |
+| Project-file backup and restore | API tests pass; the operational workflow is separate from PostgreSQL backup | Supervisor rehearses a project-file restore against a disposable/sanitized project on the release candidate |
 | RC2 and final release tag | Pending | Fresh CI and staging evidence, approved tag, immutable source revision, release notes, and archive location |
-| Temporary access cleanup | Pending final review | Confirm temporary accounts are disabled and their sessions revoked |
+| Temporary access cleanup | Not performed; no accounts or invitations were changed during this work | Supervisor reviews the account and invitation list, then authorizes disabling any temporary access |
 
 ## Post-handover roadmap
 
