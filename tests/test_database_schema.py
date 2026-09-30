@@ -28,6 +28,7 @@ from models import (
     Workflow,
     WorkflowAction,
     WorkflowToolRun,
+    WorkItem,
 )
 
 REQUIRED_TABLES = {
@@ -47,6 +48,7 @@ REQUIRED_TABLES = {
     "workflow_tool_runs",
     "security_events",
     "operational_alerts",
+    "work_items",
     "knowledge_sources",
     "ingestion_runs",
     "document_chunks",
@@ -81,6 +83,8 @@ def test_relationship_mappers_configure() -> None:
     assert File.versions.property.mapper.class_ is FileVersion
     assert File.knowledge_sources.property.mapper.class_ is KnowledgeSource
     assert Project.workflows.property.mapper.class_ is Workflow
+    assert Project.work_items.property.mapper.class_ is WorkItem
+    assert User.created_work_items.property.mapper.class_ is WorkItem
     assert Workflow.approvals.property.mapper.class_ is Approval
     assert Workflow.actions.property.mapper.class_ is WorkflowAction
     assert Workflow.tool_runs.property.mapper.class_ is WorkflowToolRun
@@ -186,6 +190,12 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
         "ix_operational_alerts_status_severity",
         "ix_operational_alerts_project_status",
     }
+    assert {
+        index.name for index in WorkItem.__table__.indexes
+    } == {"ix_work_items_project_status_due"}
+    assert {
+        constraint.name for constraint in WorkItem.__table__.constraints
+    } >= {"ck_work_items_title_not_blank", "ck_work_items_status", "ck_work_items_priority"}
     assert OperationalAlert.__table__.c.fingerprint.unique is True
     assert {
         constraint.name for constraint in OperationalAlert.__table__.constraints

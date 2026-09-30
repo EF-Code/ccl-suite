@@ -28,6 +28,7 @@ from models import (  # noqa: F401
     ResearchReviewEvent,
     SecurityEvent,
     User,
+    WorkItem,
     Workflow,
     WorkflowAction,
     WorkflowToolRun,

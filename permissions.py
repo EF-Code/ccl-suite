@@ -17,6 +17,8 @@ ROLES: Final[tuple[str, ...]] = (
 PERMISSIONS: Final[tuple[str, ...]] = (
     "project.read",
     "project.create",
+    "work_item.read",
+    "work_item.manage",
     "file.read",
     "file.upload",
     "file.restore",
@@ -45,6 +47,8 @@ ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
         {
             "project.read",
             "project.create",
+            "work_item.read",
+            "work_item.manage",
             "file.read",
             "file.upload",
             "file.restore",
@@ -70,6 +74,8 @@ ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
         {
             "project.read",
             "project.create",
+            "work_item.read",
+            "work_item.manage",
             "file.read",
             "file.upload",
             "file.restore",
@@ -88,7 +94,7 @@ ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
             "knowledge.ingest",
         }
     ),
-    "intern": frozenset({"project.read", "file.read"}),
+    "intern": frozenset({"project.read", "file.read", "work_item.read"}),
 }
 
 

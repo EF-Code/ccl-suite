@@ -804,6 +804,92 @@ def create_project(title: str = "Endpoint Project") -> dict[str, object]:
     return response.json()
 
 
+def test_project_work_items_support_audited_status_lifecycle() -> None:
+    project = create_project("Work-item lifecycle")
+    endpoint = f"/projects/{project['id']}/work-items"
+    created = request(
+        "POST",
+        endpoint,
+        json={
+            "title": "Prepare the first edit",
+            "description": "Collect the approved clips and create a rough cut.",
+            "assignee": "Video editor",
+            "priority": "high",
+            "due_date": "2026-10-05",
+        },
+    )
+
+    assert created.status_code == 201
+    item = created.json()
+    assert item["project_id"] == project["id"]
+    assert item["created_by_id"] == TEST_OWNER_ID
+    assert item["status"] == "todo"
+    assert item["priority"] == "high"
+    assert item["assignee"] == "Video editor"
+    assert item["completed_at"] is None
+
+    started = request(
+        "PATCH", f"{endpoint}/{item['id']}", json={"status": "in_progress"}
+    )
+    completed = request(
+        "PATCH", f"{endpoint}/{item['id']}", json={"status": "done"}
+    )
+    invalid_transition = request(
+        "PATCH", f"{endpoint}/{item['id']}", json={"status": "blocked"}
+    )
+    reopened = request(
+        "PATCH", f"{endpoint}/{item['id']}", json={"status": "in_progress"}
+    )
+    listed = request("GET", f"{endpoint}?status=in_progress")
+    events = request("GET", "/security-events")
+
+    assert started.status_code == 200
+    assert completed.status_code == 200
+    assert completed.json()["completed_at"] is not None
+    assert invalid_transition.status_code == 409
+    assert reopened.status_code == 200
+    assert reopened.json()["completed_at"] is None
+    assert [record["id"] for record in listed.json()] == [item["id"]]
+    assert {
+        event["event_code"]
+        for event in events.json()
+        if event["resource_ref"] == item["id"]
+    } == {"work_item.created", "work_item.status_changed"}
+
+
+def test_project_work_items_reject_cross_project_updates_and_intern_writes() -> None:
+    project = create_project("Work-item access")
+    other_project = create_project("Other work-item project")
+    endpoint = f"/projects/{project['id']}/work-items"
+    created = request("POST", endpoint, json={"title": "Keep access scoped"})
+    item_id = created.json()["id"]
+
+    cross_project = request(
+        "PATCH",
+        f"/projects/{other_project['id']}/work-items/{item_id}",
+        json={"title": "Move across projects"},
+    )
+    intern = request(
+        "POST",
+        "/users",
+        json={"external_ref": "work-item-intern", "role": "intern"},
+    )
+    intern_write = request(
+        "POST",
+        endpoint,
+        headers={"X-User-ID": intern.json()["id"]},
+        json={"title": "Unauthorized task"},
+    )
+    invalid_input = request("POST", endpoint, json={"title": "   "})
+    empty_patch = request("PATCH", f"{endpoint}/{item_id}", json={})
+
+    assert created.status_code == 201
+    assert cross_project.status_code == 404
+    assert intern_write.status_code == 403
+    assert invalid_input.status_code == 422
+    assert empty_patch.status_code == 422
+
+
 def create_workflow(project_id: str) -> dict[str, object]:
     response = request(
         "POST",

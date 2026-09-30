@@ -15,10 +15,14 @@ request is rejected and recorded as `access.denied`.
 
 | Role | Allowed operations |
 | --- | --- |
-| `administrator` | All project, file, backup, conversion, workflow, approval, security, knowledge-source, and user-management operations |
-| `supervisor` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/review/ingestion, security-event writes, and alert management |
-| `staff` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read/ingestion, scoped security reads, and alert evaluation |
-| `intern` | Project and file metadata read only |
+| `administrator` | All project, work-item, file, backup, conversion, workflow, approval, security, knowledge-source, and user-management operations |
+| `supervisor` | Project and work-item management, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/review/ingestion, security-event writes, and alert management |
+| `staff` | Owned-project and work-item management, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read/ingestion, scoped security reads, and alert evaluation |
+| `intern` | Project, work-item, and file metadata read only |
+
+Work-item operations use `work_item.read` and `work_item.manage` and remain
+inside the same project boundary as other project data. The optional assignee
+is a display label, not an account assignment or access grant.
 
 Only administrators and supervisors have `security.write`. Staff cannot create
 security events or acknowledge and resolve alerts. Staff security views are

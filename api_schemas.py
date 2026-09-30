@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent_orchestration import MAX_AGENT_INPUT_CHARACTERS
 from knowledge_contract import (
@@ -36,6 +36,8 @@ AgentActorContract = Literal[
     "knowledge",
     "quality_control",
 ]
+WorkItemStatus = Literal["todo", "in_progress", "blocked", "done", "cancelled"]
+WorkItemPriority = Literal["low", "normal", "high", "urgent"]
 
 
 class UserCreate(BaseModel):
@@ -161,6 +163,63 @@ class ProjectResponse(BaseModel):
             created_at=project.created_at,
             updated_at=project.updated_at,
         )
+
+
+class WorkItemCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    assignee: str | None = Field(default=None, max_length=120)
+    priority: WorkItemPriority = "normal"
+    due_date: date | None = None
+
+    @field_validator("assignee")
+    @classmethod
+    def normalize_assignee(cls, value: str | None) -> str | None:
+        return value or None
+
+
+class WorkItemUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=2000)
+    assignee: str | None = Field(default=None, max_length=120)
+    priority: WorkItemPriority | None = None
+    status: WorkItemStatus | None = None
+    due_date: date | None = None
+
+    @field_validator("assignee")
+    @classmethod
+    def normalize_assignee(cls, value: str | None) -> str | None:
+        return value or None
+
+    @model_validator(mode="after")
+    def validate_patch(self) -> WorkItemUpdate:
+        if not self.model_fields_set:
+            raise ValueError("At least one work-item field must be provided.")
+        for field_name in ("title", "description", "priority", "status"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null.")
+        return self
+
+
+class WorkItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    project_id: UUID
+    title: str
+    description: str
+    assignee: str | None
+    priority: WorkItemPriority
+    status: WorkItemStatus
+    due_date: date | None
+    created_by_id: UUID | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class FileCreate(BaseModel):
@@ -1387,6 +1446,9 @@ __all__ = [
     "WorkflowStateTransitionRequest",
     "WorkflowToolRequest",
     "WorkflowToolRunResponse",
+    "WorkItemCreate",
+    "WorkItemResponse",
+    "WorkItemUpdate",
     "BackupCreate",
     "BackupResponse",
     "BackupRestoreCreate",

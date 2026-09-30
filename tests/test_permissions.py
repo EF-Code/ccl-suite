@@ -6,6 +6,10 @@ def test_permission_matrix_lists_four_roles_and_explicit_operations() -> None:
 
     assert set(matrix) == {"administrator", "supervisor", "staff", "intern"}
     assert "user.manage" in matrix["administrator"]
+    assert "work_item.manage" in matrix["supervisor"]
+    assert "work_item.manage" in matrix["staff"]
+    assert "work_item.read" in matrix["intern"]
+    assert "work_item.manage" not in matrix["intern"]
     assert "approval.decide" in matrix["supervisor"]
     assert "file.upload" in matrix["staff"]
     assert "security.write" not in matrix["staff"]
@@ -17,7 +21,7 @@ def test_permission_matrix_lists_four_roles_and_explicit_operations() -> None:
     assert "knowledge.ingest" in matrix["staff"]
     assert "knowledge.approve" in matrix["supervisor"]
     assert "knowledge.approve" not in matrix["staff"]
-    assert matrix["intern"] == ["project.read", "file.read"]
+    assert set(matrix["intern"]) == {"project.read", "work_item.read", "file.read"}
 
 
 def test_legacy_roles_are_scoped_aliases() -> None:
@@ -28,6 +32,8 @@ def test_legacy_roles_are_scoped_aliases() -> None:
     assert role_can("member", "security.write") is False
     assert role_can("supervisor", "security.write") is True
     assert role_can("intern", "file.upload") is False
+    assert role_can("intern", "work_item.read") is True
+    assert role_can("intern", "work_item.manage") is False
     assert role_can("intern", "backup.read") is False
     assert role_can("intern", "knowledge.read") is False
     assert role_can("intern", "knowledge.ingest") is False

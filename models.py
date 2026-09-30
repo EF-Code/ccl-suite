@@ -58,6 +58,10 @@ class User(Base):
         back_populates="created_by",
         foreign_keys=lambda: [Workflow.created_by_id],
     )
+    created_work_items: Mapped[list[WorkItem]] = relationship(
+        back_populates="created_by",
+        foreign_keys=lambda: [WorkItem.created_by_id],
+    )
     created_backups: Mapped[list[Backup]] = relationship(
         back_populates="created_by",
         foreign_keys=lambda: [Backup.created_by_id],
@@ -216,6 +220,54 @@ class Project(Base):
     )
     research_reviews: Mapped[list[ResearchReview]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
+    )
+    work_items: Mapped[list[WorkItem]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class WorkItem(Base):
+    """Track accountable project work through a small, auditable lifecycle."""
+
+    __tablename__ = "work_items"
+    __table_args__ = (
+        Index("ix_work_items_project_status_due", "project_id", "status", "due_date"),
+        CheckConstraint("length(trim(title)) > 0", name="ck_work_items_title_not_blank"),
+        CheckConstraint(
+            "status IN ('todo', 'in_progress', 'blocked', 'done', 'cancelled')",
+            name="ck_work_items_status",
+        ),
+        CheckConstraint(
+            "priority IN ('low', 'normal', 'high', 'urgent')",
+            name="ck_work_items_priority",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    assignee: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="todo")
+    priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    project: Mapped[Project] = relationship(back_populates="work_items")
+    created_by: Mapped[User | None] = relationship(
+        back_populates="created_work_items",
+        foreign_keys=[created_by_id],
     )
 
 

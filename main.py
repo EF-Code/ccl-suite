@@ -99,6 +99,10 @@ from api_schemas import (
     PermissionMatrixResponse,
     ProjectCreate,
     ProjectResponse,
+    WorkItemCreate,
+    WorkItemResponse,
+    WorkItemStatus,
+    WorkItemUpdate,
     ResearchApplicabilityCheckRequest,
     ResearchApplicabilityCheckResponse,
     ResearchApplicabilityFieldResponse,
@@ -259,6 +263,7 @@ from models import (
     ResearchReviewEvent,
     SecurityEvent,
     User,
+    WorkItem,
     Workflow,
     WorkflowAction,
     WorkflowToolRun,
@@ -392,6 +397,45 @@ def persist_record(db: Session, record: Entity, resource_name: str) -> Entity:
             detail="Database temporarily unavailable.",
         )
     return record
+
+
+def persist_work_item_change(
+    db: Session,
+    item: WorkItem,
+    actor_id: UUID,
+    event_code: str,
+) -> WorkItem:
+    """Commit one work-item change and its content-free audit event atomically."""
+
+    db.add(item)
+    try:
+        db.flush()
+        db.add(
+            SecurityEvent(
+                actor_id=actor_id,
+                event_code=event_code,
+                outcome="success",
+                resource_type="work_item",
+                resource_ref=str(item.id),
+            )
+        )
+        db.commit()
+        db.refresh(item)
+    except IntegrityError:
+        db.rollback()
+        logger.error("Work-item write failed because of a database constraint.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Work item could not be saved.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Work-item write failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    return item
 
 
 def list_records(db: Session, statement: object) -> list[Entity]:
@@ -1206,6 +1250,133 @@ async def list_projects(
         statement,
     )
     return [ProjectResponse.from_model(project) for project in projects]
+
+
+WORK_ITEM_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
+    "todo": frozenset({"in_progress", "blocked", "done", "cancelled"}),
+    "in_progress": frozenset({"todo", "blocked", "done", "cancelled"}),
+    "blocked": frozenset({"todo", "in_progress", "done", "cancelled"}),
+    "done": frozenset({"in_progress"}),
+    "cancelled": frozenset({"todo"}),
+}
+
+
+@app.get(
+    "/projects/{project_id}/work-items",
+    response_model=list[WorkItemResponse],
+    tags=["work items"],
+    dependencies=[Depends(require_project_scope), Depends(require_permission("work_item.read"))],
+)
+async def list_project_work_items(
+    project_id: UUID,
+    status_filter: WorkItemStatus | None = Query(default=None, alias="status"),
+    limit: int = Query(default=250, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[WorkItemResponse]:
+    """List work items in the active project without crossing its access boundary."""
+
+    statement = select(WorkItem).where(WorkItem.project_id == project_id)
+    if status_filter is not None:
+        statement = statement.where(WorkItem.status == status_filter)
+    priority_order = case(
+        (WorkItem.priority == "urgent", 0),
+        (WorkItem.priority == "high", 1),
+        (WorkItem.priority == "normal", 2),
+        else_=3,
+    )
+    items = list_records(
+        db,
+        statement.order_by(
+            priority_order,
+            WorkItem.due_date.asc().nulls_last(),
+            WorkItem.created_at.desc(),
+            WorkItem.id,
+        ).limit(limit).offset(offset),
+    )
+    return [WorkItemResponse.model_validate(item) for item in items]
+
+
+@app.post(
+    "/projects/{project_id}/work-items",
+    response_model=WorkItemResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["work items"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("work_item.manage")),
+        Depends(require_project_scope),
+    ],
+)
+async def create_project_work_item(
+    project_id: UUID,
+    work_item: WorkItemCreate,
+    actor: User = Depends(require_permission("work_item.manage")),
+    db: Session = Depends(get_db),
+) -> WorkItemResponse:
+    item = WorkItem(
+        project_id=project_id,
+        created_by_id=actor.id,
+        title=work_item.title,
+        description=work_item.description,
+        assignee=work_item.assignee,
+        priority=work_item.priority,
+        due_date=work_item.due_date,
+    )
+    saved = persist_work_item_change(db, item, actor.id, "work_item.created")
+    return WorkItemResponse.model_validate(saved)
+
+
+@app.patch(
+    "/projects/{project_id}/work-items/{work_item_id}",
+    response_model=WorkItemResponse,
+    tags=["work items"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_permission("work_item.manage")),
+        Depends(require_project_scope),
+    ],
+)
+async def update_project_work_item(
+    project_id: UUID,
+    work_item_id: UUID,
+    changes: WorkItemUpdate,
+    actor: User = Depends(require_permission("work_item.manage")),
+    db: Session = Depends(get_db),
+) -> WorkItemResponse:
+    item = require_record(db, WorkItem, work_item_id, "Work item was not found.")
+    if item.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Work item was not found.")
+
+    updates = changes.model_dump(exclude_unset=True)
+    next_status = updates.get("status")
+    changed_fields = {
+        field_name: value
+        for field_name, value in updates.items()
+        if getattr(item, field_name) != value
+    }
+    if not changed_fields:
+        return WorkItemResponse.model_validate(item)
+
+    status_changed = next_status is not None and next_status != item.status
+    if status_changed:
+        if next_status not in WORK_ITEM_STATUS_TRANSITIONS[item.status]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Work item cannot move from {item.status.replace('_', ' ')} to {next_status.replace('_', ' ')}.",
+            )
+        item.completed_at = utc_now() if next_status == "done" else None
+
+    for field_name, value in changed_fields.items():
+        if field_name != "status":
+            setattr(item, field_name, value)
+        else:
+            item.status = value
+    event_code = (
+        "work_item.status_changed" if status_changed else "work_item.updated"
+    )
+    saved = persist_work_item_change(db, item, actor.id, event_code)
+    return WorkItemResponse.model_validate(saved)
 
 
 def require_project_knowledge_source(
