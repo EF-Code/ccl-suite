@@ -1,9 +1,10 @@
 # Role permissions
 
-The API uses a server-side role-permission matrix. A caller identifies the
-authenticated user with the `X-User-ID` header; the server loads that user and
-checks the stored role before running a protected operation. An AI response is
-never consulted for authorization.
+The API uses a server-side role-permission matrix. The browser authenticates
+with a revocable server-side session carried in the `ccl_session` cookie.
+State-changing requests also require the `ccl_csrf` cookie value in the
+`X-CSRF-Token` header. `X-User-ID` is not an authentication method. An AI
+response is never consulted for authorization.
 
 Identity fields on mutation requests are server-bound. Upload, workflow,
 approval, and security-event records use the authenticated user as their
@@ -15,9 +16,13 @@ request is rejected and recorded as `access.denied`.
 | Role | Allowed operations |
 | --- | --- |
 | `administrator` | All project, file, backup, conversion, workflow, approval, security, knowledge-source, and user-management operations |
-| `supervisor` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/review/ingestion, and security events |
-| `staff` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read/ingestion, and security events |
+| `supervisor` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/review/ingestion, security-event writes, and alert management |
+| `staff` | Project creation/read, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read/ingestion, scoped security reads, and alert evaluation |
 | `intern` | Project and file metadata read only |
+
+Only administrators and supervisors have `security.write`. Staff cannot create
+security events or acknowledge and resolve alerts. Staff security views are
+limited to their permitted actor and project scope.
 
 The read-only matrix is available at `GET /permissions`. The API keeps the
 legacy `member` and `reviewer` development values as aliases for `staff` and
@@ -28,14 +33,18 @@ created through the development provisioning route.
 
 ```bash
 curl http://127.0.0.1:8000/projects \
-  -H 'X-User-ID: <USER_ID>'
+  -b 'ccl_session=<SESSION_COOKIE>'
 ```
 
-When running in development without a header, the first provisioned user is
-used for the local prototype. Deployments outside development require the
-header and return `401` when it is missing. A known user without the required
-permission receives `403`, and the decision is recorded as an
-`access.denied` security event without storing request payloads.
+The placeholder represents a session issued by `POST /auth/login`; retain it in
+a private cookie jar rather than storing real tokens in shell history. For
+state-changing requests, send both the `ccl_session` and `ccl_csrf` cookies and
+copy the CSRF cookie value into `X-CSRF-Token`. The dashboard handles this
+automatically. A missing, expired, revoked, or disabled-account session
+receives `401`; a valid session without the required permission receives
+`403`. A cross-project request outside the actor's scope is hidden as `404`.
+Denials are recorded as `access.denied` security events without storing request
+payloads.
 
 Backup lifecycle routes use the separate `backup.read`, `backup.create`,
 `backup.verify`, and `backup.restore` permissions. Successful and failed

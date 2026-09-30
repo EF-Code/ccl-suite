@@ -32,10 +32,16 @@ oversized, or changed sources are rejected.
 
 ## Ingest an approved source
 
+The dashboard is the recommended client. For API calls, retain the active
+`ccl_session` and `ccl_csrf` cookies issued at login, and send the CSRF cookie
+value in `X-CSRF-Token` on this state-changing request. The placeholders below
+are not credentials; `X-User-ID` is not an authentication method.
+
 ```bash
 curl -X POST \
   http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-sources/<SOURCE_ID>/ingest \
-  -H 'X-User-ID: <STAFF_OR_SUPERVISOR_ID>'
+  -b 'ccl_session=<SESSION_COOKIE>; ccl_csrf=<CSRF_COOKIE>' \
+  -H 'X-CSRF-Token: <CSRF_COOKIE>'
 ```
 
 The response contains the completed `ingestion_run`, its source checksum, the

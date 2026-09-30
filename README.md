@@ -108,8 +108,9 @@ bootstrap command prompts for the first administrator's password.
 - `GET /projects/{project_id}/backups` lists project-scoped backup metadata;
   `/backups/{backup_id}/verify` rechecks the archive and every manifest hash.
 - `POST /projects/{project_id}/backups/{backup_id}/restore` verifies and
-  restores a backup to a new relative directory below the configured projects
-  root. Existing destinations and the original project are never replaced.
+  restores a backup to a new relative directory inside the owning project's
+  storage root. Existing destinations and the original project are never
+  replaced.
 - `POST /projects/{project_id}/organization/plan` previews file moves without
   changing files.
 - `POST /projects/{project_id}/organization/apply` applies safe moves and can
@@ -117,7 +118,8 @@ bootstrap command prompts for the first administrator's password.
 - `POST` and `GET /projects/{project_id}/workflows` manage project workflows.
 - `POST` and `GET /workflows/{workflow_id}/approvals` manage workflow approvals.
 - `POST /approvals/{approval_id}/decision` records one approval decision.
-- `POST` and `GET /security-events` manage structured security audit events.
+- `GET /security-events` lists structured security audit events. Writing events
+  with `POST /security-events` is limited to supervisors and administrators.
 
 Knowledge-base capability documentation covers the controlled
 [source register](docs/knowledge-sources.md),
@@ -138,6 +140,15 @@ A non-sensitive [sample source](samples/knowledge/company-rules.md) is
 available for the normal ingestion workflow.
 The [representative media operations corpus](samples/knowledge/representative-media-company/README.md)
 provides a clearly labelled, sanitized end-to-end acceptance set.
+
+Operational documentation is available for
+[installation](docs/installation.md), [administration](docs/administrator-guide.md),
+[users](docs/user-guide.md), [system architecture](docs/system-architecture.md),
+[backup and recovery](docs/backup-recovery.md), and
+[operations handover](docs/operations-handover.md). The
+[permissions guide](docs/permissions.md) describes the current role boundaries.
+The [release defect register](docs/release-defect-register.md) tracks resolved
+candidate findings separately from pending operational sign-off.
 
 Protected routes require an active server-side session. An `X-User-ID` header
 does not authenticate a production or development request. Login sets a

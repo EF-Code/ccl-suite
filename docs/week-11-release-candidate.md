@@ -8,7 +8,7 @@ employee data into the staging instance.
 ## Candidate identity
 
 - Candidate/version: Local Week 11 release candidate (not tagged)
-- Source revision: Week 11 implementation committed on `main`; record the published revision at release time with `git rev-parse HEAD`
+- Source revision: `a3dc85f4657ac127b5053ff6388856f737539367` (`main`, 2026-09-30)
 - Staging URL: `http://127.0.0.1:18000` (loopback only)
 - Deployment date: 2026-09-29
 - Image: `ccl-week11-staging-api`, `sha256:91c797f03cb68024699ff3fb4630b1757ca90d794dc0688ef516da1afa84d166`
@@ -21,17 +21,17 @@ The GitHub Actions workflow in `.github/workflows/ci.yml` runs on pull requests
 and pushes to `main`. It runs Python correctness lint, unit/API/PostgreSQL
 integration tests, frontend lint/build and live Chromium acceptance tests,
 Python and production JavaScript dependency audits, and a Git history secret
-scan. The local equivalents pass below; GitHub-hosted CI still needs a run on a
-published commit or pull request.
+scan. The hosted workflow passed on the published source revision below. The
+documentation changes now in progress require a fresh run after publication.
 
-- CI run URL and revision: pending publication; no hosted run yet
+- CI run URL and revision: [run 36586252498](https://github.com/EF-Code/ccl-suite/actions/runs/36586252498) on `a3dc85f4657ac127b5053ff6388856f737539367` - passed
 - Python correctness lint: passed (`ruff check --isolated --select E4,E7,E9,F .`)
-- Python unit/API suite: 360 passed, 2 skipped
-- Live PostgreSQL integration: 1 passed against the isolated staging database
+- Python unit/API suite: 361 passed, 2 skipped locally; hosted backend job passed, including PostgreSQL integration
+- Live PostgreSQL integration: passed in the hosted backend job against its isolated CI database
 - Frontend lint and production build: passed
 - Python dependency audit: no known vulnerabilities reported
 - Production frontend dependency audit: no known vulnerabilities reported
-- Git history secret scan: no leaks found in 643 commits / approximately 12.46 MB scanned
+- Git history secret scan: passed on the hosted run; no secret finding reported
 - Live browser acceptance: 9 passed against the isolated staging API
 
 ## Acceptance and fault checks
@@ -41,7 +41,7 @@ Run these against the isolated staging project and attach sanitized evidence.
 | Area | Expected result | Result / evidence |
 | --- | --- | --- |
 | Functional integration | Login, project/folder setup, upload/inventory/organize/restore, source review/ingestion, cited answer, research review/export controls, independent workflow approval, and guarded specialist flow | Passed: 9 live browser tests against staging |
-| Invalid input | Invalid paths, unsupported uploads, malformed requests, stale plans, and conflicting destinations must fail safely without overwriting data | Passed in the 360-test backend/API suite |
+| Invalid input | Invalid paths, unsupported uploads, malformed requests, stale plans, and conflicting destinations must fail safely without overwriting data | Passed in the 361-test backend/API suite |
 | Service failure | Database loss must fail closed; readiness and protected API operations return 503 and Compose marks the API unhealthy | Passed live: `/health` and authenticated `/projects` returned 503 while PostgreSQL was stopped |
 | Unauthorized access | Unauthenticated, wrong-role, cross-project, CSRF-invalid, and requester self-approval attempts are denied | Passed in backend/API tests; browser approval flow uses a separately invited supervisor |
 | Adversarial input | Prompt injection, secret-extraction, approval-bypass, and path-traversal cases remain blocked | Passed in the automated security and agent guardrail tests |

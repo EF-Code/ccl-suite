@@ -26,12 +26,20 @@ register for auditability but are excluded from the approved-source query.
 
 ## API
 
+The dashboard is the recommended client. Protected API requests require a
+session cookie issued by `POST /auth/login`; every state-changing request must
+also send the `ccl_csrf` cookie value in `X-CSRF-Token`. The snippets below
+show the request shape with placeholders only. Keep real session and CSRF
+values in a private cookie jar; never commit or share them. `X-User-ID` does
+not authenticate a request.
+
 Register a source without sending document text:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-sources \
   -H 'Content-Type: application/json' \
-  -H 'X-User-ID: <STAFF_ID>' \
+  -b 'ccl_session=<SESSION_COOKIE>; ccl_csrf=<CSRF_COOKIE>' \
+  -H 'X-CSRF-Token: <CSRF_COOKIE>' \
   -d '{
     "file_id":"<FILE_ID>",
     "owner_id":"<OWNER_ID>",
@@ -45,7 +53,7 @@ List all registered source metadata for one project:
 
 ```bash
 curl http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-sources \
-  -H 'X-User-ID: <STAFF_ID>'
+  -b 'ccl_session=<SESSION_COOKIE>'
 ```
 
 Approve a pending source as a supervisor or administrator:
@@ -54,7 +62,8 @@ Approve a pending source as a supervisor or administrator:
 curl -X POST \
   http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-sources/<SOURCE_ID>/review \
   -H 'Content-Type: application/json' \
-  -H 'X-User-ID: <SUPERVISOR_ID>' \
+  -b 'ccl_session=<SESSION_COOKIE>; ccl_csrf=<CSRF_COOKIE>' \
+  -H 'X-CSRF-Token: <CSRF_COOKIE>' \
   -d '{"decision":"approved"}'
 ```
 
@@ -63,7 +72,8 @@ Ingest an approved text source:
 ```bash
 curl -X POST \
   http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-sources/<SOURCE_ID>/ingest \
-  -H 'X-User-ID: <STAFF_OR_SUPERVISOR_ID>'
+  -b 'ccl_session=<SESSION_COOKIE>; ccl_csrf=<CSRF_COOKIE>' \
+  -H 'X-CSRF-Token: <CSRF_COOKIE>'
 ```
 
 The response contains the completed run, source checksum, chunk count, and
@@ -77,7 +87,8 @@ Search approved source passages for one project:
 ```bash
 curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-search \
   -H 'Content-Type: application/json' \
-  -H 'X-User-ID: <PROJECT_OWNER_ID>' \
+  -b 'ccl_session=<SESSION_COOKIE>; ccl_csrf=<CSRF_COOKIE>' \
+  -H 'X-CSRF-Token: <CSRF_COOKIE>' \
   -d '{
     "query":"How do we verify a file before restoring it?",
     "source_type":"sop",
@@ -97,7 +108,8 @@ Answer from approved source evidence:
 ```bash
 curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-answer \
   -H 'Content-Type: application/json' \
-  -H 'X-User-ID: <PROJECT_OWNER_ID>' \
+  -b 'ccl_session=<SESSION_COOKIE>; ccl_csrf=<CSRF_COOKIE>' \
+  -H 'X-CSRF-Token: <CSRF_COOKIE>' \
   -d '{
     "query":"How do we verify a file before restoring it?",
     "evidence_limit":5
@@ -119,7 +131,8 @@ or evidence back to the server:
 ```bash
 curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-feedback \
   -H 'Content-Type: application/json' \
-  -H 'X-User-ID: <PROJECT_OWNER_ID>' \
+  -b 'ccl_session=<SESSION_COOKIE>; ccl_csrf=<CSRF_COOKIE>' \
+  -H 'X-CSRF-Token: <CSRF_COOKIE>' \
   -d '{
     "rating":"helpful",
     "reason":"accurate",
@@ -135,7 +148,8 @@ and sensitive logs cannot be accidentally submitted:
 ```bash
 curl -X POST http://127.0.0.1:8000/projects/<PROJECT_ID>/knowledge-error-reports \
   -H 'Content-Type: application/json' \
-  -H 'X-User-ID: <PROJECT_OWNER_ID>' \
+  -b 'ccl_session=<SESSION_COOKIE>; ccl_csrf=<CSRF_COOKIE>' \
+  -H 'X-CSRF-Token: <CSRF_COOKIE>' \
   -d '{"surface":"answer","category":"wrong_source"}'
 ```
 

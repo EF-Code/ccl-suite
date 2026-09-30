@@ -6,8 +6,8 @@ composer and any future model provider cannot grant access.
 
 ## Decision order
 
-1. Resolve the authenticated actor from `X-User-ID` (or the local development
-   fallback).
+1. Resolve the authenticated actor from the active, revocable server-side
+   session cookie. A client-supplied `X-User-ID` is not authentication.
 2. Require the `knowledge.read` permission from the server-side role matrix.
    An intern is denied even when the intern is recorded as the project owner.
 3. Apply the project boundary before loading chunks:
