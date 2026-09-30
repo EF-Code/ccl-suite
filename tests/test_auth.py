@@ -13,10 +13,11 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from auth import hash_password, token_digest
+from auth import hash_password, token_digest, verify_password
 from database import Base, get_db
 from main import app
-from models import AuthSession, Invitation, User, utc_now
+from models import AuthSession, Invitation, SecurityEvent, User, utc_now
+from scripts.reset_account_password import reset_account_password
 
 
 @pytest.fixture
@@ -212,3 +213,53 @@ def test_login_throttles_repeated_failures(auth_database) -> None:
             assert blocked.status_code == 429
 
     asyncio.run(scenario())
+
+
+def test_local_password_recovery_revokes_sessions_and_records_an_audit_event(
+    auth_database,
+) -> None:
+    sessions, admin_id = auth_database
+    with sessions() as db:
+        db.add(
+            AuthSession(
+                token_hash="a" * 64,
+                csrf_hash="b" * 64,
+                user_id=admin_id,
+                expires_at=utc_now() + timedelta(hours=1),
+            )
+        )
+        db.commit()
+
+        user_id, revoked_sessions, audit_reference = reset_account_password(
+            db, " ADMIN@example.test ", "replacement administrator password"
+        )
+
+    assert user_id == str(admin_id)
+    assert revoked_sessions == 1
+    with sessions() as db:
+        user = db.get(User, admin_id)
+        assert user is not None and verify_password("replacement administrator password", user.password_hash)
+        assert not verify_password("correct horse battery staple", user.password_hash)
+        session = db.scalar(select(AuthSession).where(AuthSession.user_id == admin_id))
+        assert session is not None and session.revoked_at is not None
+        event = db.scalar(
+            select(SecurityEvent).where(SecurityEvent.request_ref == audit_reference)
+        )
+        assert event is not None
+        assert event.actor_id is None
+        assert event.event_code == "auth.password.reset"
+        assert event.resource_ref == str(admin_id)
+
+
+def test_local_password_recovery_refuses_disabled_accounts(auth_database) -> None:
+    sessions, admin_id = auth_database
+    with sessions() as db:
+        user = db.get(User, admin_id)
+        assert user is not None
+        user.is_active = False
+        db.commit()
+
+        with pytest.raises(ValueError, match="No active password-enabled account"):
+            reset_account_password(db, "admin@example.test", "replacement administrator password")
+
+        assert db.scalar(select(SecurityEvent)) is None

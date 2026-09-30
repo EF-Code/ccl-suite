@@ -989,7 +989,11 @@ async def login(
     try:
         if login_is_throttled(db, email, client_ip):
             raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
-        actor = db.scalar(select(User).where(User.email == email)) if email else None
+        actor = (
+            db.scalar(select(User).where(User.email == email).with_for_update())
+            if email
+            else None
+        )
         valid_password = verify_password(credentials.password, actor.password_hash if actor else None)
         if actor is None or not actor.is_active or not valid_password:
             record_failed_login(db, email, client_ip)
