@@ -13,6 +13,7 @@ from typing import Literal, TypeVar
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import case, func, or_, select
@@ -337,6 +338,12 @@ class RequestBodyLimitMiddleware:
 
 
 app.add_middleware(RequestBodyLimitMiddleware)
+
+app.mount(
+    "/assets",
+    StaticFiles(directory=STATIC_DIR / "assets", check_dir=False),
+    name="frontend-assets",
+)
 
 
 class HealthResponse(BaseModel):

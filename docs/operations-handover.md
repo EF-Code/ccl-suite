@@ -1,151 +1,77 @@
-# Operations handover package
+# Local operations and demo guide
 
-This is a working training and handover plan. It is not evidence that a live
-supervisor training session, production deployment, or final release approval
-has already occurred. Use the isolated staging instance and sanitized sample
-corpus for rehearsal.
+This guide supports local operation and demonstration of the CCL Suite. It is
+not a claim of production hosting or remote-access readiness. Real email
+delivery and backup/recovery setup are not prerequisites for local use.
+Role-based review and approval remain normal application features; the backup
+feature remains optional.
 
-## Local operations verification — 2026-09-30
+## Local verification — 2026-09-30
 
-- The source base is `20aaa6ec702eaa5092fc101e58ddbc969ab3a249`. GitHub Actions
-  run [36707850960](https://github.com/EF-Code/ccl-suite/actions/runs/36707850960)
-  passed for that commit, including backend/PostgreSQL integration, frontend
-  build and audit, Compose validation, live dashboard browser acceptance, and
-  repository secret scanning. That run verifies the committed base only, not
-  the additional uncommitted local changes listed below.
-- The local API image was rebuilt from the current worktree and is healthy;
-  image ID `sha256:317843a8dab73130643d90c4bda3fcf92f726c8c5b324470f3f80dda1b24cf56`.
-  `/health` returned `ok`, the browser dashboard loaded without console errors,
-  and the database is at Alembic revision `0017_project_work_items`. API and
-  PostgreSQL ports remain bound to `127.0.0.1` only.
-- The API now connects as `ccl_app`, not the PostgreSQL bootstrap
-  administrator. Live checks confirmed superuser, database-creation,
-  role-creation, and RLS-bypass privileges are disabled; all 26 public tables
-  are owned by the application role. User/project/work-item counts remained
-  `64/3/0` across the role transition.
-- The full local backend suite passed (`367 passed, 2 skipped`); both
-  PostgreSQL integration tests passed against a disposable database. All 10
-  live Chromium dashboard acceptance flows passed against an isolated test
-  database, including the 390 px mobile-header regression check. Frontend
-  lint/build/audit, Python dependency audit, required Ruff checks, and Compose
-  configuration validation passed. The frontend build emits a non-failing
-  bundle-size warning (556 KB minified, 154 KB gzip).
-- A custom-format PostgreSQL backup with a SHA-256 sidecar was created at
-  `ccl-suite-postgres-20260930T125457Z-20aaa6ec702e.dump` and restored to an
-  isolated temporary database at revision `0017_project_work_items`; the
-  verifier removed that temporary database afterward. The user-level systemd
-  timer is enabled for a daily 02:30 host-local run, with 14-day retention.
-- The current backup directory is on the LUKS-encrypted system disk. You
-  explicitly chose not to configure a secondary destination; this does not
-  protect against failure of that physical disk.
-- The Compose API remains loopback-only. Cloudflare Tunnel would provide
-  Cloudflare-mediated remote access, not LAN-only access; it is not installed
-  or configured. Keep it off until a Cloudflare hostname and Access identity
-  allowlist are confirmed. Direct LAN access with local TLS is a separate,
-  unconfigured option.
+- Hosted CI run [36720490053](https://github.com/EF-Code/ccl-suite/actions/runs/36720490053)
+  passed on base revision `8cfe1f579b4a921dd34f413f390379150ae9512b`, before
+  the current uncommitted changes. It covered backend and PostgreSQL tests,
+  frontend lint/build/audit, live dashboard browser tests, Compose validation,
+  and repository secret scanning.
+- After the current changes, the full local Python suite passed (`368 passed,
+  2 skipped`); frontend lint/build, the scoped Ruff checks, and Compose
+  configuration validation passed. Vite's largest JavaScript bundle is now
+  436.05 kB, below the unchanged 550 kB warning threshold.
+- The API image was rebuilt and only the API container was recreated. The
+  running API and PostgreSQL services are healthy and loopback-bound; `/health`
+  returned 200. The dashboard login screen loaded in the in-app browser, and
+  all nine generated JavaScript/CSS assets returned 200 from the API.
+- The authenticated Chromium suite had passed 10 flows on the hosted base
+  revision, but it was not rerun against this uncommitted chunking change. The
+  current verification exercised the login shell and every served asset; it
+  did not submit account credentials or create demo records.
+- Compose uses Mailpit to capture invitation messages. This is sufficient for
+  local account testing; no external mail provider is configured or required.
+- No backup operation is required for local use. Existing backup code, local
+  archives, and the previously configured systemd timer were not changed here;
+  this does not constitute an off-device recovery plan.
+- The application remains loopback-only. Cloudflare Tunnel, LAN access, and
+  local TLS are unconfigured and are outside the current local-use scope.
 
-## Training session plan
+## Optional local walkthrough
 
-Suggested duration: 45-60 minutes. The supervisor should operate the system
-for the final portion rather than only watch a walkthrough.
+Use sanitized or disposable data to exercise product flows.
 
-| Segment | Practice | Completion evidence |
-| --- | --- | --- |
-| Access and roles | Sign in, identify active role, invite or disable a test account | Confirm the correct role and account lifecycle |
-| Project files | Select a project, inventory files, review an organization plan, create and verify a backup | Save the sanitized test project and backup ID; do not record credentials |
-| Knowledge and research | Review a source, inspect a cited answer, inspect evidence warnings, verify and export a review | Supervisor explains why source approval and human review are required |
-| Workflow and agents | Request an approval, decide it from a separate supervisor session, inspect the handoff trace | Confirm requester and approver are distinct and trace is visible |
-| Monitoring and recovery | Evaluate alerts, inspect report scope, restore a verified backup to a new path | Supervisor performs a recovery rehearsal without replacing the source |
-| Ownership | Review deployment, secrets, data, database backup, support, and recovery responsibilities | Record named owners and approved procedures in the checklist below |
+1. Sign in and confirm the active account, role, and project selector.
+2. Select a project, inventory its files, inspect an organization preview, and
+   apply only safe planned operations.
+3. Register a sample knowledge source, review and approve it with an authorized
+   reviewer account, then inspect a cited extractive answer.
+4. Preview research claims and scope/evidence warnings; verify claims only
+   after inspecting their source passages, then export a review package.
+5. Request a workflow action as one user and decide it from a different
+   authorized account; inspect the resulting action and trace.
+6. Review operational alerts and the weekly report, noting that alert
+   evaluation is manual.
+7. For invitations, open Mailpit and use the captured one-time link. External
+   email delivery is not part of the local demo.
 
-## Demonstration script
+Stop at a failing step and preserve the error and sanitized run reference.
+Do not present local test evidence as a production deployment or load test.
 
-### Before the session
+## Local-use checklist
 
-- Confirm the staging instance is healthy and bound only to its approved
-  interface.
-- Use the representative sanitized media-operations corpus in
-  `samples/knowledge/representative-media-company/` or an approved synthetic
-  equivalent.
-- Confirm separate staff and supervisor accounts are available. Do not put
-  passwords, invitation tokens, or session cookies in the script or slides.
-- Ensure the selected project contains only disposable demonstration data and
-  that its backup destination has sufficient capacity.
-- Keep the previous backup outside the demo path; never use `down --volumes`
-  as a cleanup step.
+| Area | Local-use status |
+| --- | --- |
+| Application and data services | Compose API and PostgreSQL; loopback-bound by default |
+| Authentication and invitations | Server-side sessions and invite-only accounts; Mailpit captures invitation mail |
+| Review and approvals | Available as application workflows; independent reviewer accounts can be used in a walkthrough |
+| Email delivery | External provider not configured and not needed for local use |
+| Backups | Not a local-use prerequisite; optional product workflow and existing host timer/archive are separate from this checklist |
+| Remote access and TLS | Not configured; unnecessary while using the application on this host |
 
-### Walkthrough (about 15 minutes)
+Keep credentials out of reports, screenshots, and source control. Use separate
+test accounts when demonstrating role boundaries, and avoid real client or
+employee data in a demo project.
 
-1. **Access (1 min):** sign in as staff and show the active account and project
-   selector. Explain that server-side sessions and project ownership enforce
-   access.
-2. **File control (3 min):** select the sanitized project, run inventory, and
-   show file metadata and the non-destructive organization preview. Apply only
-   the planned safe operations.
-3. **Knowledge (3 min):** register the sample company-rules file. Switch to the
-   supervisor session to approve it, ingest it, then show a cited extractive
-   answer and its source passage.
-4. **Research (2 min):** preview claims and scope/evidence warnings. Verify
-   only after inspecting the evidence; show a review export.
-5. **Workflow (2 min):** request approval as staff, record the decision from
-   the separate supervisor session, then inspect the persisted action and
-   trace.
-6. **Recovery and monitoring (3 min):** create and verify a project backup,
-   restore it to a new path within the project, compare a sample checksum, and
-   show the related audit events and scoped monitoring view.
-7. **Close (1 min):** state the current limits: local demo email uses Mailpit,
-   answers are extractive rather than provider-generated, alert evaluation is
-   manual, and production hosting requires separate approval and setup.
+## Follow-up only if scope changes
 
-If any step fails, stop the walkthrough at that boundary, preserve the error
-and sanitized run reference, and do not claim that the workflow completed.
-
-## Final presentation outline
-
-A supervisor review presentation draft is maintained separately from this
-documentation package. Reconcile it with the recorded test evidence after RC2
-and the supervisor walkthrough; keep pending release and acceptance gates
-visible.
-
-1. Problem and approved project scope
-2. System architecture and data/security boundaries
-3. File operations and recovery safeguards
-4. Approved-source knowledge and cited answers
-5. Human-reviewed research and workflow approvals
-6. Automated tests, CI, staging evidence, and known limitations
-7. Operator handover, ownership decisions, and next roadmap
-
-Use measured results from the release record. Label local, CI, staging, and
-supervisor-accepted evidence separately; do not present a demo as a production
-deployment or a sequential smoke check as load capacity.
-
-## Handover and release checklist
-
-| Item | State | Record before final handover |
-| --- | --- | --- |
-| Backend, frontend, Compose, browser, dependency, and secret gates | Hosted CI passed for base `20aaa6ec`; current local checks passed as recorded above | Run hosted CI after local changes are reviewed and committed; record the release revision |
-| Critical/high defect register | Prior register is tied to an older baseline; latest CI is green but is not a fresh source defect review | Refresh the [defect register](release-defect-register.md) on the release candidate |
-| Installation, administrator, user, architecture, and recovery guides | Local PostgreSQL backup and controlled password-recovery procedures are documented | Supervisor reviews the procedures and confirms the intended operator |
-| Presentation and demonstration script | Draft prepared; practice session pending | Review the deck after fresh RC2 evidence and record supervisor corrections |
-| Supervisor practice session | Pending | Date, attendee, operator who demonstrated recovery, and follow-up items |
-| Local deployment and data approval | No cloud hosting is planned; API and database remain loopback-only. Cloudflare hostname/Access identities and LAN CA/TLS are not configured | Keep remote access off until a hostname, allowed identities, certificate trust, and network boundary are explicitly configured and tested |
-| Credential and invitation ownership | Local reset procedure and login/recovery serialization were tested against a disposable PostgreSQL database; no live account was changed | Assign the named credential custodian and account-review owner; never record secret values |
-| PostgreSQL backup and restore | Daily systemd user timer enabled; 14-day retention; local restore rehearsal passed; user accepted single-disk storage | Assign an operator to review failures and disk space; record the accepted disk-failure risk and repeat a restore rehearsal periodically |
-| Project-file backup and restore | API tests pass; the operational workflow is separate from PostgreSQL backup | Supervisor rehearses a project-file restore against a disposable/sanitized project on the release candidate |
-| RC2 and final release tag | Pending | Fresh CI and staging evidence, approved tag, immutable source revision, release notes, and archive location |
-| Temporary access cleanup | Not performed; no accounts or invitations were changed during this work | Supervisor reviews the account and invitation list, then authorizes disabling any temporary access |
-
-## Post-handover roadmap
-
-These are follow-up decisions, not claims of current capability:
-
-- Approve and configure a remote deployment with HTTPS, managed secrets,
-  durable database backups, monitoring ownership, and documented recovery.
-- Select and validate an external email provider if invitations must reach real
-  recipients.
-- Add a scheduled alert evaluator only if an operator needs unattended checks
-  and an owner is assigned to its delivery and failure monitoring.
-- Consider a provider-backed language model only after documenting data
-  handling, source rights, cost limits, retention, and human-review boundaries.
-- Add self-service password recovery only with a reviewed identity and
-  notification design.
+Remote hosting or access would require a separately reviewed network boundary,
+TLS, secrets management, operational ownership, and recovery plan. External
+email delivery should be configured only if invitations must reach real
+recipients. Neither is needed for the current local workflow.

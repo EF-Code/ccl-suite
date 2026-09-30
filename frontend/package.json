@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:standalone": "pnpm build && html-inline -i dist/index.html -o dist/bundle.html -b dist && cp dist/bundle.html ../static/index.html",
+    "build:static": "pnpm build && node scripts/publish-static.mjs",
+    "build:standalone": "pnpm run build:static",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -63,7 +64,6 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",
     "autoprefixer": "^10.5.4",
-    "html-inline": "^1.2.0",
     "oxlint": "^1.79.0",
     "parcel": "^2.16.4",
     "parcel-resolver-tspaths": "^0.0.9",

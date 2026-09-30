@@ -148,7 +148,7 @@ Operational documentation is available for
 [operations handover](docs/operations-handover.md). The
 [permissions guide](docs/permissions.md) describes the current role boundaries.
 The [release defect register](docs/release-defect-register.md) tracks resolved
-candidate findings separately from pending operational sign-off.
+candidate findings separately from local-demo scope decisions.
 
 Protected routes require an active server-side session. An `X-User-ID` header
 does not authenticate a production or development request. Login sets a
@@ -208,9 +208,10 @@ interactive documentation is at `/docs`. The local Mailpit inbox is at
 `http://127.0.0.1:8025`.
 
 In the Compose demo, invitation emails are captured by Mailpit and are not
-delivered to real recipients. Its inbox is bound to localhost; SMTP is only
-available to services on the Compose network. Mailpit stores messages in
-memory, so its inbox clears when the container is recreated.
+delivered to real recipients. That is sufficient for local use; an external
+mail provider is not required. Mailpit's inbox is bound to localhost, SMTP is
+only available to services on the Compose network, and messages are held in
+memory until the container is recreated.
 
 Create the first administrator in the running API container. This prompts for
 a password and refuses to create a second bootstrap administrator:
@@ -221,11 +222,11 @@ docker compose exec api python scripts/bootstrap_admin.py --email you@example.co
 
 Sign in at the dashboard, then use Setup to invite teammates by email and
 role. Open Mailpit to inspect the captured message, or copy the one-time link
-from the dashboard. Configure `CCL_PUBLIC_URL` in `.env` if users open the
-site at a different origin, then recreate the API container. For a real mail
-provider, set `CCL_SMTP_HOST`, `CCL_SMTP_PORT`, `CCL_SMTP_STARTTLS`,
-`CCL_SMTP_USERNAME`, `CCL_SMTP_PASSWORD`, and `CCL_MAIL_FROM_ADDRESS` in `.env`.
-Keep provider credentials out of source control.
+from the dashboard. Configure `CCL_PUBLIC_URL` in `.env` only if users open the
+site at a different origin, then recreate the API container. External mail
+delivery is optional; if it is needed later, configure the documented
+`CCL_SMTP_*` and `CCL_MAIL_FROM_ADDRESS` settings and keep provider credentials
+out of source control.
 
 Check container health and startup logs with:
 
@@ -240,17 +241,18 @@ Stop the services with:
 docker compose down
 ```
 
-Do not add `--volumes` unless you intentionally want to erase the PostgreSQL,
-project-file, and backup volumes.
+No external backup setup is required for local use. Do not add `--volumes`
+unless you intentionally want to erase the PostgreSQL, project-file, and
+optional backup volumes.
 
 The password is read from the ignored `.env` file and is not copied into the
 Docker image.
 
-Project backup storage is configured with `CCL_BACKUP_ROOT` and defaults to
-`./backups`. It must be a separate private directory from `CCL_PROJECT_ROOT`.
-The API returns portable artifact and manifest keys rather than host paths.
-The complete recovery procedure and integrity checklist are in
-[`docs/backup-recovery.md`](docs/backup-recovery.md).
+The project-backup feature is optional for a local demo. If you choose to use
+it, storage is configured with `CCL_BACKUP_ROOT` (default `./backups`) and must
+be separate from `CCL_PROJECT_ROOT`. The API returns portable artifact and
+manifest keys rather than host paths. The recovery procedure and integrity
+checklist are in [`docs/backup-recovery.md`](docs/backup-recovery.md).
 
 To exercise a live PostgreSQL round trip, first start the Compose services and
 set `TEST_DATABASE_URL` to the same local database, then run the opt-in test:
@@ -268,17 +270,18 @@ The dashboard uses the signed-in account as the owner when creating a project.
 ## Frontend workflow
 
 The maintainable React source is in `frontend/`. The API serves the generated
-single-file dashboard at `static/index.html`, so use the standalone build after
-changing the UI:
+dashboard HTML at `static/index.html` and its fingerprinted, lazy-loaded assets
+from `static/assets/`. Use the static build after changing the UI:
 
 ```bash
 pnpm --dir frontend lint
-pnpm --dir frontend build:standalone
+pnpm --dir frontend build:static
 ```
 
-`build:standalone` type-checks and builds the app, inlines its assets, and
-refreshes the API-served HTML. Rebuild the API image after that before testing
-the updated dashboard in Docker.
+`build:static` type-checks the app, creates separate cacheable workspace chunks,
+safely refreshes the generated files under `static/assets/`, and updates the
+API-served HTML. `build:standalone` remains as a compatibility alias. Rebuild
+the API image after that before testing the updated dashboard in Docker.
 
 ## Tests
 
@@ -336,8 +339,8 @@ docker compose --project-name ccl-week11-staging up --build -d
 ```
 
 The distinct Compose project name creates separate named database and storage
-volumes. Use sanitized sample data only. The candidate and supervisor sign-off
-record are described in [`docs/week-11-release-candidate.md`](docs/week-11-release-candidate.md).
+volumes. Use sanitized sample data only. Candidate verification evidence is
+recorded in [`docs/week-11-release-candidate.md`](docs/week-11-release-candidate.md).
 
 ## Folder Standards
 

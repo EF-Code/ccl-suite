@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react"
+import { lazy, Suspense, useEffect, useState, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -12,10 +12,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
-import { OverviewDashboard } from "@/components/overview-dashboard"
-import { SecurityDashboard } from "@/components/security-dashboard"
-import { WorkflowOrchestrator } from "@/components/workflow-orchestrator"
-import { ProjectWorkboard } from "@/components/project-workboard"
 import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type WorkItem, type WorkItemCreate, type WorkItemUpdate, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult, type UploadPolicy, type UploadResponse } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
@@ -23,6 +19,11 @@ import {
   Database, FileText, ArrowLeftRight, Library,
   AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare, GitBranch, Bell, ListChecks
 } from "lucide-react"
+
+const OverviewDashboard = lazy(() => import("@/components/overview-dashboard").then((module) => ({ default: module.OverviewDashboard })))
+const SecurityDashboard = lazy(() => import("@/components/security-dashboard").then((module) => ({ default: module.SecurityDashboard })))
+const WorkflowOrchestrator = lazy(() => import("@/components/workflow-orchestrator").then((module) => ({ default: module.WorkflowOrchestrator })))
+const ProjectWorkboard = lazy(() => import("@/components/project-workboard").then((module) => ({ default: module.ProjectWorkboard })))
 
 // Helpers
 function escapeForTest(v: string) { return v }
@@ -92,6 +93,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const [selectedId, setSelectedId] = useState("")
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [activeView, setActiveView] = useState<WorkspaceView>("overview")
+  const [visitedViews, setVisitedViews] = useState<Set<WorkspaceView>>(() => new Set(["overview"]))
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
   const [commandSearch, setCommandSearch] = useState("")
@@ -1301,6 +1303,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
 
   const openView = (view: WorkspaceView) => {
     setActiveView(view)
+    setVisitedViews((current) => current.has(view) ? current : new Set(current).add(view))
     setMobileNavOpen(false)
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
@@ -1467,7 +1470,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         <div id="flash" className={`rounded-lg border px-3 py-2.5 text-sm mb-4 ${showFlash ? "block" : "hidden"} ${flash.kind==="error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`} role={flash.kind==="error" ? "alert" : "status"} aria-live="polite" hidden={!showFlash}>{flash.msg}</div>
 
         <section className={activeView === "overview" ? "block" : "hidden"}>
-          <OverviewDashboard
+          {visitedViews.has("overview") && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading workspace…</div>}><OverviewDashboard
             project={selectedProject}
             projects={projects}
             health={health}
@@ -1479,11 +1482,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             workItems={workItems}
             approvals={workflowApprovals}
             onNavigate={openView}
-          />
+          /></Suspense>}
         </section>
 
         <section className={activeView === "workboard" ? "block" : "hidden"}>
-          <ProjectWorkboard
+          {visitedViews.has("workboard") && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading workspace…</div>}><ProjectWorkboard
             project={selectedProject}
             items={workItems}
             loading={workItemsLoading}
@@ -1492,7 +1495,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             onCreate={handleCreateWorkItem}
             onUpdate={handleUpdateWorkItem}
             onRefresh={() => { if (selectedId) void refreshWorkItems(selectedId) }}
-          />
+          /></Suspense>}
         </section>
 
         {/* Workflow steps — production */}
@@ -2260,7 +2263,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
 
         <section className={activeView === "workflows" ? "block" : "hidden"} aria-labelledby="workflow-page-title">
           <h2 id="workflow-page-title" className="sr-only">Workflow orchestrator</h2>
-          <WorkflowOrchestrator
+          {visitedViews.has("workflows") && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading workspace…</div>}><WorkflowOrchestrator
             project={selectedProject}
             workflows={workflows}
             approvals={workflowApprovals}
@@ -2281,10 +2284,10 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             onRequestAction={handleWorkflowActionRequest}
             onExecuteAction={handleWorkflowActionExecute}
             onDecisionCodeChange={(approvalId, value) => setApprovalDecisionCodes((current) => ({ ...current, [approvalId]: value }))}
-          />
+          /></Suspense>}
         </section>
 
-        {activeView === "security" && canReadSecurity && <SecurityDashboard canEvaluateAlerts={canEvaluateSecurityAlerts} canManageAlerts={canManageSecurityAlerts} />}
+        {activeView === "security" && canReadSecurity && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading workspace…</div>}><SecurityDashboard canEvaluateAlerts={canEvaluateSecurityAlerts} canManageAlerts={canManageSecurityAlerts} /></Suspense>}
 
       </main>
 

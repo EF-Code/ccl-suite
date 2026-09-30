@@ -22,11 +22,11 @@ listed above; it is not a claim of zero defects or production readiness.
 Re-run the release gates after changes and append any new findings before
 approving RC2.
 
-## Separate operational gates
+## Local-demo scope
 
-These are not code defects and remain tracked in the
-[handover package](operations-handover.md): supervisor acceptance and training,
-named credential and maintenance owners, PostgreSQL backup and restore
-ownership, final RC2 evidence, release tag and source archive, and temporary
-account/session cleanup. Keep these gates visible rather than marking them as
-software defects or treating them as already complete.
+External email delivery and database backups are not prerequisites for the local
+demo. Invitations are exercised through Mailpit, and the app's independent
+reviewer/approver workflow remains a product feature. Backup and recovery
+functionality is still available but is not required for local use. This scope
+decision does not claim external mail delivery, off-host recovery, or production
+readiness.

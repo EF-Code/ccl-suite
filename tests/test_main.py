@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import re
 from collections.abc import AsyncIterator, Generator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ from file_converter import ConversionError
 from knowledge_sources import build_approved_knowledge_sources_statement
 from main import (
     MAX_REQUEST_BODY_BYTES,
+    STATIC_DIR,
     app,
     health,
     login,
@@ -193,16 +195,38 @@ def test_login_database_failure_is_translated_to_503() -> None:
     assert db.rolled_back is True
 
 
-def test_serves_operations_web_prototype() -> None:
+def test_serves_dashboard_html_shell() -> None:
     response = request("GET", "/")
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "CCL AI Suite" in response.text
-    assert "Controlled conversion" in response.text
-    assert "Backup and restore" in response.text
-    assert "Operational alerts" in response.text
-    assert "Weekly operations report" in response.text
+    assert '<div id="root"></div>' in response.text
+    assert "/assets/" in response.text
+
+
+def test_serves_vite_dashboard_assets() -> None:
+    response = request("GET", "/")
+    assert response.status_code == 200
+
+    script_match = re.search(r'<script[^>]+src="(/assets/[^\"]+\.js)"', response.text)
+    assert script_match is not None
+    script = request("GET", script_match.group(1))
+    assert script.status_code == 200
+    assert "javascript" in script.headers["content-type"]
+
+    stylesheet_match = re.search(r'<link[^>]+href="(/assets/[^\"]+\.css)"', response.text)
+    assert stylesheet_match is not None
+    stylesheet = request("GET", stylesheet_match.group(1))
+    assert stylesheet.status_code == 200
+    assert "text/css" in stylesheet.headers["content-type"]
+
+    scripts = sorted((STATIC_DIR / "assets").glob("*.js"))
+    assert scripts
+    for asset in scripts:
+        chunk = request("GET", f"/assets/{asset.name}")
+        assert chunk.status_code == 200
+        assert "javascript" in chunk.headers["content-type"]
 
 
 def test_dashboard_ui_exposes_guided_workflow_and_protected_actions() -> None:

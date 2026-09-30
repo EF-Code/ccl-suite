@@ -10,12 +10,11 @@ export default defineConfig({
     },
   },
   build: {
-    // The API serves one self-contained static HTML artifact; inline the
-    // bundled Geist fonts so it does not depend on an unserved /assets path.
+    // Keep the initial dashboard small and serve lazy workspace chunks via the
+    // API's explicit /assets mount. Small fonts and other assets may be inlined.
     assetsInlineLimit: 100_000,
     // Keep 550 kB as a visible review threshold; do not raise it just to hide
-    // growth. Runtime code splitting needs a separate change to the API's
-    // single-file static-asset serving contract.
+    // growth.
     chunkSizeWarningLimit: 550,
   },
   server: {

@@ -1,9 +1,9 @@
-# Release candidate and acceptance record
+# Local candidate verification record
 
-This is the Week 11 staging handover record. It is intentionally a gate, not
-an assertion that supervisor acceptance or production readiness has already
-been granted. Use sanitized sample material only; never seed real client or
-employee data into the staging instance.
+This is a historical staging verification record. It describes the checks that
+were run on the candidate below; it is not a claim of production readiness.
+Use sanitized sample material only; never seed real client or employee data
+into staging.
 
 ## Candidate identity
 
@@ -34,31 +34,32 @@ documentation changes now in progress require a fresh run after publication.
 - Git history secret scan: passed on the hosted run; no secret finding reported
 - Live browser acceptance: 9 passed against the isolated staging API
 
-## Acceptance and fault checks
+## Verification and fault checks
 
-Run these against the isolated staging project and attach sanitized evidence.
+The following checks were run against the isolated staging project.
 
 | Area | Expected result | Result / evidence |
 | --- | --- | --- |
 | Functional integration | Login, project/folder setup, upload/inventory/organize/restore, source review/ingestion, cited answer, research review/export controls, independent workflow approval, and guarded specialist flow | Passed: 9 live browser tests against staging |
 | Invalid input | Invalid paths, unsupported uploads, malformed requests, stale plans, and conflicting destinations must fail safely without overwriting data | Passed in the 361-test backend/API suite |
 | Service failure | Database loss must fail closed; readiness and protected API operations return 503 and Compose marks the API unhealthy | Passed live: `/health` and authenticated `/projects` returned 503 while PostgreSQL was stopped |
-| Unauthorized access | Unauthenticated, wrong-role, cross-project, CSRF-invalid, and requester self-approval attempts are denied | Passed in backend/API tests; browser approval flow uses a separately invited supervisor |
+| Unauthorized access | Unauthenticated, wrong-role, cross-project, CSRF-invalid, and requester self-approval attempts are denied | Passed in backend/API tests; browser approval flow uses a separately invited reviewer account |
 | Adversarial input | Prompt injection, secret-extraction, approval-bypass, and path-traversal cases remain blocked | Passed in the automated security and agent guardrail tests |
 | Performance | 100 sequential loopback requests per route, one request at a time, rootless Docker 29.7.2 on the development host; zero failed samples | `/health`: p50 5.60 ms, p95 10.18 ms, max 14.28 ms. `/`: p50 6.99 ms, p95 12.89 ms, max 15.14 ms. Not a concurrent/load-capacity result. |
 | Recovery | PostgreSQL stopped for a controlled fault test; verified backup creation/restore and interrupted file-operation rollback in the test suite | Passed: Compose marked API unhealthy during outage; after PostgreSQL restart, DB/API became healthy and authenticated `/projects` returned 200 in 10.1 seconds. Backup/restore and interrupted-move checks also passed. |
 
-## Defect triage and supervisor sign-off
+## Defect triage
 
 | Priority | Defect | Owner | Status |
 | --- | --- | --- | --- |
 | High, resolved | Authenticated database lookup failures escaped as HTTP 500, and `/health` stayed green when PostgreSQL was unavailable | Engineering | Fixed: failures now return a safe 503; health check performs a database readiness query; unit and live outage/recovery checks pass |
 | Medium, resolved | Organizer conflict-quarantine CLI referenced an undefined journal variable after moving a conflict | Engineering | Fixed: captures and reports the quarantine journal; regression test passes |
 
-- Critical/high defects resolved or explicitly accepted: the two issues above are resolved; no known open critical/high code defect from this candidate test pass
-- Supervisor reviewer and acceptance date:
-- Acceptance evidence/reference:
-- Release decision: **Not approved until the pending checks and supervisor sign-off above are complete.**
+- The two defects above were resolved; the recorded candidate checks found no
+  open critical/high code defect within their scope. This is not a claim that
+  the codebase is defect-free.
+- Candidate result: the listed historical checks passed; this is not a
+  production release certification.
 
 ## Staging isolation
 
@@ -76,5 +77,5 @@ docker compose --project-name ccl-week11-staging up --build -d
 Compose project naming gives this staging run its own PostgreSQL, project-file,
 and backup volumes. Do not use `down --volumes` on a project whose data is not
 disposable. The local candidate is populated only with synthetic/sanitized
-acceptance data and a staging-only administrator. Keep it bound to loopback;
-supervisor access beyond this host requires an approved network/TLS setup.
+test data and a staging-only administrator. Keep it bound to loopback; access
+from another device requires a separately configured network/TLS boundary.
