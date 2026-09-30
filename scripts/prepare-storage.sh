@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-for storage_path in /app/projects /app/backups; do
+for storage_path in /app/projects /app/backups /app/database-credentials; do
     if [ ! -d "$storage_path" ]; then
         echo "Required storage volume is unavailable." >&2
         exit 1

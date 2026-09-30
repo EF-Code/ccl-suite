@@ -3,9 +3,10 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import configure_mappers
 
-from database import Base
+from database import Base, get_database_url
 from models import (
     AgentHandoff,
     Approval,
@@ -106,6 +107,36 @@ def test_schema_can_be_created_without_a_live_database() -> None:
 
     tables = set(inspect(engine).get_table_names())
     assert tables == REQUIRED_TABLES
+
+
+def test_database_password_file_is_url_encoded(monkeypatch, tmp_path: Path) -> None:
+    password_path = tmp_path / "database-password"
+    password_path.write_text("local:p@ss/word\n", encoding="utf-8")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("CCL_DATABASE_PASSWORD", raising=False)
+    monkeypatch.setenv("CCL_DATABASE_HOST", "db")
+    monkeypatch.setenv("CCL_DATABASE_PORT", "5432")
+    monkeypatch.setenv("CCL_DATABASE_NAME", "ccl_suite")
+    monkeypatch.setenv("CCL_DATABASE_USER", "ccl_app")
+    monkeypatch.setenv("CCL_DATABASE_PASSWORD_FILE", str(password_path))
+
+    database_url = make_url(get_database_url())
+
+    assert database_url.password == "local:p@ss/word"
+    assert database_url.username == "ccl_app"
+
+
+def test_database_password_file_must_not_be_empty(monkeypatch, tmp_path: Path) -> None:
+    password_path = tmp_path / "database-password"
+    password_path.write_text("\n", encoding="utf-8")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("CCL_DATABASE_HOST", "db")
+    monkeypatch.setenv("CCL_DATABASE_PASSWORD_FILE", str(password_path))
+
+    import pytest
+
+    with pytest.raises(ValueError, match="must contain a password"):
+        get_database_url()
 
 
 def test_required_indexes_and_foreign_keys_are_declared() -> None:

@@ -35,9 +35,13 @@ loopback-only demonstration environment, not a production deployment.
    curl -fsS http://127.0.0.1:8000/health
    ```
 
-   The API applies Alembic migrations before starting. Compose uses separate
-   named volumes for PostgreSQL, project files, and backups. A one-shot storage
-   initialization service prepares the file volumes before the API starts.
+   Compose uses separate named volumes for PostgreSQL, project files, backups,
+   and the generated application database credential. A one-shot storage
+   initializer prepares the volumes, then a restricted role-initialization
+   service creates a non-superuser application role and assigns existing app
+   tables to it. The API receives only that role's owner-only password file;
+   the PostgreSQL bootstrap administrator credential is not passed to the API.
+   The API applies Alembic migrations as the application role before starting.
 
 4. Bootstrap the first administrator. Use a passphrase from 12 to 1,024
    characters. The command prompts for it; do not put it on the command line:
@@ -91,11 +95,18 @@ template, not a source of production credentials.
 | Setting | Purpose |
 | --- | --- |
 | `POSTGRES_PASSWORD` | Required local database password |
+| `POSTGRES_USER` | PostgreSQL bootstrap administrator; not used by the API |
+| `CCL_DATABASE_USER` | Application database role; defaults to `ccl_app` and must differ from `POSTGRES_USER` |
 | `CCL_ENVIRONMENT` | Use `development` for the loopback demo; production enables secure cookies |
 | `CCL_PUBLIC_URL` | Browser-facing origin used to construct invitation links |
 | `CCL_BACKUP_MAX_TOTAL_BYTES` | Aggregate backup storage cap in bytes |
 | `CCL_SMTP_*`, `CCL_MAIL_FROM_ADDRESS` | Outgoing email configuration; Mailpit is the local default |
 | `CCL_API_BIND_PORT`, `CCL_DB_BIND_PORT`, `CCL_MAILPIT_BIND_PORT` | Host loopback ports |
+
+Compose generates a distinct random application-role password in the private
+`database_app_credentials` volume. Do not remove that volume independently
+while retaining `postgres_data`; if it is lost, the next role-initialization
+run generates a new password and applies it to the application role.
 
 For a local database and API without Compose, create PostgreSQL separately,
 then use the project environment:

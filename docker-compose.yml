@@ -36,6 +36,36 @@ services:
     volumes:
       - project_storage:/app/projects
       - backup_storage:/app/backups
+      - database_app_credentials:/app/database-credentials
+
+  db-role-init:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/usr/local/bin/configure_database_role.sh"]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-ccl_suite}
+      PGUSER: ${POSTGRES_USER:-ccl_suite}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CCL_DATABASE_USER: ${CCL_DATABASE_USER:-ccl_app}
+      CCL_DATABASE_PASSWORD_FILE: /run/ccl-db-credentials/password
+    volumes:
+      - database_app_credentials:/run/ccl-db-credentials
+      - ./scripts/configure_database_role.sh:/usr/local/bin/configure_database_role.sh:ro
 
   api:
     image: ccl-suite-api:local
@@ -51,8 +81,8 @@ services:
       CCL_DATABASE_HOST: db
       CCL_DATABASE_PORT: 5432
       CCL_DATABASE_NAME: ${POSTGRES_DB:-ccl_suite}
-      CCL_DATABASE_USER: ${POSTGRES_USER:-ccl_suite}
-      CCL_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CCL_DATABASE_USER: ${CCL_DATABASE_USER:-ccl_app}
+      CCL_DATABASE_PASSWORD_FILE: /run/ccl-db-credentials/password
       CCL_BACKUP_MAX_TOTAL_BYTES: ${CCL_BACKUP_MAX_TOTAL_BYTES:-10737418240}
       CCL_ENVIRONMENT: ${CCL_ENVIRONMENT:-development}
       CCL_PUBLIC_URL: ${CCL_PUBLIC_URL:-http://127.0.0.1:8000}
@@ -67,12 +97,15 @@ services:
     volumes:
       - project_storage:/app/projects
       - backup_storage:/app/backups
+      - database_app_credentials:/run/ccl-db-credentials:ro
     depends_on:
       db:
         condition: service_healthy
       mailpit:
         condition: service_started
       storage-init:
+        condition: service_completed_successfully
+      db-role-init:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:${CCL_API_BIND_PORT:-8000}:8000"
@@ -87,3 +120,4 @@ volumes:
   postgres_data:
   project_storage:
   backup_storage:
+  database_app_credentials:
