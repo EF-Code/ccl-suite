@@ -142,9 +142,9 @@
   .workflow-step { @apply flex min-h-[4.75rem] gap-3 rounded-xl border border-transparent bg-muted/60 p-3 transition-[background-color,border-color] duration-150 hover:border-border hover:bg-muted; transition-timing-function: var(--ease-emil); }
   .workflow-marker { @apply grid h-6 w-6 shrink-0 place-items-center rounded-md bg-primary text-xs font-semibold text-primary-foreground; }
 
-  .global-search { @apply min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#e1e7ec] bg-[#f6f8fa] px-3 text-muted-foreground; max-width: 34rem; box-shadow: inset 0 1px 2px rgba(16, 24, 40, 0.025); }
-  .global-search input { @apply h-8 border-0 bg-transparent px-0 text-xs shadow-none focus-visible:border-0 focus-visible:ring-0; }
-  .global-search kbd { @apply rounded-md border border-[#d9e1e8] bg-white px-1.5 py-0.5 font-mono text-[0.62rem] text-muted-foreground; }
+  .global-search-trigger { @apply border-[#dbe2e8] bg-[#f7f9fa] text-[#40556a] shadow-none; transition-property: background-color, border-color, box-shadow; transition-duration: 150ms; transition-timing-function: var(--ease-emil); }
+  .global-search-trigger:hover { @apply border-[#c6d4dc] bg-[#eef4f5] text-[#173b5d]; }
+  .global-search-trigger kbd { @apply rounded-md border border-[#d9e1e8] bg-white px-1.5 py-0.5 font-mono text-[0.62rem] text-muted-foreground; }
 
   .overview-dashboard { @apply mx-auto max-w-[1320px]; animation: workspace-enter 180ms var(--ease-emil) both; }
   .overview-heading { @apply mb-5 flex items-end justify-between gap-5; }

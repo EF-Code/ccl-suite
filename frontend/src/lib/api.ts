@@ -50,6 +50,24 @@ export type InvitationResult = {
   email_sent: boolean;
 };
 
+export type UploadPolicy = {
+  max_size_bytes: number;
+  allowed_extensions: Record<string, string[]>;
+  filename_pattern: string;
+};
+
+export type UploadResponse = {
+  project_id: string;
+  file_id: string;
+  storage_key: string;
+  name: string;
+  extension: string;
+  media_type: string;
+  size_bytes: number;
+  checksum_sha256: string;
+  status: string;
+};
+
 export type Project = {
   id: string;
   owner_id: string;
@@ -65,6 +83,27 @@ export type Project = {
   created_at: string;
   updated_at: string;
 };
+
+export type WorkItemStatus = "todo" | "in_progress" | "blocked" | "done" | "cancelled";
+export type WorkItemPriority = "low" | "normal" | "high" | "urgent";
+
+export type WorkItem = {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string;
+  assignee: string | null;
+  priority: WorkItemPriority;
+  status: WorkItemStatus;
+  due_date: string | null;
+  created_by_id: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkItemCreate = Pick<WorkItem, "title" | "description" | "assignee" | "priority" | "due_date">;
+export type WorkItemUpdate = Partial<Pick<WorkItem, "title" | "description" | "assignee" | "priority" | "status" | "due_date">>;
 
 export type Workflow = {
   id: string;

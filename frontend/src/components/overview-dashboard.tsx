@@ -2,10 +2,10 @@ import { ArrowUpRight, BookOpen, Check, CircleAlert, Clock3, FileText, FolderOpe
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import type { Approval, FileRecord, KnowledgeSource, Project, ResearchClaim, ResearchReviewResponse, Workflow } from "@/lib/api"
+import type { Approval, FileRecord, KnowledgeSource, Project, ResearchClaim, ResearchReviewResponse, Workflow, WorkItem } from "@/lib/api"
 import type { ReactNode } from "react"
 
-type OverviewTarget = "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup"
+type OverviewTarget = "workboard" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup"
 
 type OverviewHealth = {
   ok: boolean
@@ -22,6 +22,7 @@ type OverviewDashboardProps = {
   researchClaims: ResearchClaim[]
   researchReview: ResearchReviewResponse | null
   workflows: Workflow[]
+  workItems: WorkItem[]
   approvals: Record<string, Approval[]>
   onNavigate: (view: OverviewTarget) => void
 }
@@ -64,12 +65,14 @@ export function OverviewDashboard({
   researchClaims,
   researchReview,
   workflows,
+  workItems,
   approvals,
   onNavigate,
 }: OverviewDashboardProps) {
   const approvalList = workflows.flatMap((workflow) => approvals[workflow.id] || [])
   const pendingApprovals = approvalList.filter((approval) => approval.status === "pending")
   const decidedApprovals = approvalList.filter((approval) => approval.status !== "pending")
+  const activeWorkItems = workItems.filter((item) => !["done", "cancelled"].includes(item.status))
   const currentWorkflow = workflows[0]
   const projectReady = Boolean(project)
   const evidenceStatus = researchReview?.status || (researchClaims.length ? "needs_review" : "not_started")
@@ -84,6 +87,7 @@ export function OverviewDashboard({
   const nextActions = !project
     ? [{ title: "Create your first project", detail: "Set up the workspace before starting controlled work.", label: "Open setup", target: "setup" as const, tone: "attention" }]
     : [
+        workItems.length === 0 ? { title: "Plan the project work", detail: "Break the delivery into prioritized work items with target dates.", label: "Open workboard", target: "workboard" as const, tone: "good" } : null,
         workflows.length === 0 ? { title: "Define a workflow", detail: "Give the project its first versioned control path.", label: "Open workflows", target: "workflows" as const, tone: "good" } : null,
         pendingApprovals.length > 0 ? { title: "Review pending approval", detail: `${pendingApprovals.length} decision${pendingApprovals.length === 1 ? "" : "s"} waiting for an operator.`, label: "Open approvals", target: "workflows" as const, tone: "attention" } : null,
         files.length === 0 ? { title: "Prepare project files", detail: "Generate storage and scan the active project folder.", label: "Open operations", target: "operations" as const, tone: "neutral" } : null,
@@ -106,8 +110,8 @@ export function OverviewDashboard({
           <p>One clear view of work, evidence, approvals, and the next decision.</p>
         </div>
         <div className="overview-heading-actions">
-          <Button type="button" variant="outline" onClick={() => onNavigate("workflows")} disabled={!project}>
-            <GitBranch className="mr-1.5 h-4 w-4" />View workflow
+          <Button type="button" variant="outline" onClick={() => onNavigate("workboard")} disabled={!project}>
+            <ListChecks className="mr-1.5 h-4 w-4" />Open workboard
           </Button>
           <Button type="button" onClick={() => onNavigate("setup")}>
             <Plus className="mr-1.5 h-4 w-4" />New project
@@ -129,6 +133,7 @@ export function OverviewDashboard({
           </CardHeader>
           <CardContent className="overview-project-meta">
             <span><FolderOpen className="h-4 w-4" />{project?.storage_slug || "Project workspace"}</span>
+            <span><ListChecks className="h-4 w-4" />{activeWorkItems.length} active work item{activeWorkItems.length === 1 ? "" : "s"}</span>
             <span><ListChecks className="h-4 w-4" />{workflows.length} workflow{workflows.length === 1 ? "" : "s"}</span>
             <span><Clock3 className="h-4 w-4" />Updated {formatDate(project?.updated_at)}</span>
             <span className={projectReady ? "overview-status overview-status--good" : "overview-status overview-status--attention"}>{projectReady ? "Ready" : "Setup required"}</span>
@@ -153,6 +158,7 @@ export function OverviewDashboard({
               {project ? (
                 <>
                   <span><i className="overview-dot overview-dot--attention" />{pendingApprovals.length} pending approval{pendingApprovals.length === 1 ? "" : "s"}</span>
+                  <span><i className="overview-dot overview-dot--neutral" />{activeWorkItems.length} active work item{activeWorkItems.length === 1 ? "" : "s"}</span>
                   <span><i className="overview-dot overview-dot--neutral" />{files.length} active file{files.length === 1 ? "" : "s"}</span>
                 </>
               ) : (

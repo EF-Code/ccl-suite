@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -15,12 +15,13 @@ import { Separator } from "@/components/ui/separator"
 import { OverviewDashboard } from "@/components/overview-dashboard"
 import { SecurityDashboard } from "@/components/security-dashboard"
 import { WorkflowOrchestrator } from "@/components/workflow-orchestrator"
-import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult } from "@/lib/api"
+import { ProjectWorkboard } from "@/components/project-workboard"
+import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type WorkItem, type WorkItemCreate, type WorkItemUpdate, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult, type UploadPolicy, type UploadResponse } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
   Database, FileText, ArrowLeftRight, Library,
-  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare, GitBranch, Bell
+  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare, GitBranch, Bell, ListChecks
 } from "lucide-react"
 
 // Helpers
@@ -31,7 +32,12 @@ function fileTypeFromPath(path: string) {
   const extension = filename.match(/\.([^.]+)$/)?.[1]
   return extension?.toUpperCase() || "—"
 }
-type WorkspaceView = "overview" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
+function formatUploadSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+type WorkspaceView = "overview" | "workboard" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
 type OrganizationPlanAction = {
   source: string
   destination: string
@@ -87,7 +93,12 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [activeView, setActiveView] = useState<WorkspaceView>("overview")
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [globalSearch, setGlobalSearch] = useState("")
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandSearch, setCommandSearch] = useState("")
+  const [commandFiles, setCommandFiles] = useState<FileRecord[]>([])
+  const [commandFilesLoading, setCommandFilesLoading] = useState(false)
+  const [commandFilesError, setCommandFilesError] = useState("")
+  const [attentionOpen, setAttentionOpen] = useState(false)
 
   // Forms + results
   const [ownerResult, setOwnerResult] = useState("")
@@ -128,8 +139,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const [workflowError, setWorkflowError] = useState("")
   const [approvalDecisionCodes, setApprovalDecisionCodes] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<FileRecord[]>([])
+  const [workItems, setWorkItems] = useState<WorkItem[]>([])
+  const [workItemsLoading, setWorkItemsLoading] = useState(false)
+  const [workItemsError, setWorkItemsError] = useState("")
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
-  const [uploadPolicy, setUploadPolicy] = useState<any>(null)
+  const [uploadPolicy, setUploadPolicy] = useState<UploadPolicy | null>(null)
   const [permissions, setPermissions] = useState<Record<string,string[]> | null>(null)
 
   // File browser extras
@@ -138,6 +152,10 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const [fileHistory, setFileHistory] = useState<any[]>([])
   const [fileVersions, setFileVersions] = useState<any[]>([])
   const [uploadStorageKey, setUploadStorageKey] = useState("incoming/example.txt")
+  const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
+  const workItemsRequestSequence = useRef(0)
 
   // Dialog
   const [confirm, setConfirm] = useState<{ open: boolean; title: string; msg: string; label: string; resolve?: (v:boolean)=>void }>({ open: false, title: "", msg: "", label: "" })
@@ -148,6 +166,17 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const showMessage = (msg: string, kind: "success" | "error" = "success") => {
     setFlash({ msg, kind }); setShowFlash(true); setTimeout(()=>setShowFlash(false), 4000)
   }
+
+  useEffect(() => {
+    function handleWorkspaceShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault()
+        setCommandOpen(true)
+      }
+    }
+    window.addEventListener("keydown", handleWorkspaceShortcut)
+    return () => window.removeEventListener("keydown", handleWorkspaceShortcut)
+  }, [])
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -177,6 +206,28 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const refreshFiles = useCallback(async (projectId: string) => {
     if (!projectId) return
     try { const data = await apiRequest<FileRecord[]>(`/projects/${projectId}/files`); setFiles(data.filter(f=>f.status==="active")) } catch { setFiles([]) }
+  }, [])
+  const refreshWorkItems = useCallback(async (projectId: string) => {
+    const requestSequence = ++workItemsRequestSequence.current
+    if (!projectId) {
+      setWorkItems([])
+      setWorkItemsError("")
+      setWorkItemsLoading(false)
+      return
+    }
+    setWorkItemsLoading(true)
+    try {
+      const data = await apiRequest<WorkItem[]>(`/projects/${projectId}/work-items`)
+      if (requestSequence !== workItemsRequestSequence.current) return
+      setWorkItems(data)
+      setWorkItemsError("")
+    } catch (error) {
+      if (requestSequence !== workItemsRequestSequence.current) return
+      setWorkItems([])
+      setWorkItemsError(error instanceof Error ? error.message : "Project work could not be loaded.")
+    } finally {
+      if (requestSequence === workItemsRequestSequence.current) setWorkItemsLoading(false)
+    }
   }, [])
   const refreshKnowledgeSources = useCallback(async (projectId: string) => {
     if (!projectId) return
@@ -244,7 +295,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       const [healthResult, permissionsResult, uploadPolicyResult] = await Promise.allSettled([
         apiRequest<{ status: string }>("/health"),
         apiRequest<{ roles: Record<string, string[]> }>("/permissions"),
-        apiRequest("/upload-policy"),
+        apiRequest<UploadPolicy>("/upload-policy"),
       ])
       if (!active) return
 
@@ -284,6 +335,8 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setOrganizerPlan(null)
     setOrganizerResult("")
     setFiles([])
+    setWorkItems([])
+    setWorkItemsError("")
     setKnowledgeSources([])
     setResearchReview(null)
     setWorkflows([])
@@ -294,10 +347,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setAgentHandoffs({})
     setWorkflowError("")
     void refreshFiles(projectId)
+    void refreshWorkItems(projectId)
     void refreshKnowledgeSources(projectId)
     void refreshResearchReviews(projectId)
     void refreshWorkflows(projectId)
-  }, [refreshFiles, refreshKnowledgeSources, refreshResearchReviews, refreshWorkflows])
+  }, [refreshFiles, refreshKnowledgeSources, refreshResearchReviews, refreshWorkItems, refreshWorkflows])
 
   // Actions
   async function handleInviteMember(e: React.FormEvent<HTMLFormElement>) {
@@ -1037,25 +1091,15 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   }
 
   // File browser
-  async function handleFileSearch() {
+  async function handleFileSearch(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault()
     if (!selectedId) return
     const q = fileSearch.trim()
     if (!q) { refreshFiles(selectedId); return }
-    try { const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?query=${encodeURIComponent(q)}`); setFiles(data) } catch (e: any) { showMessage(e.message, "error") }
-  }
-  async function handleGlobalSearch(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const query = globalSearch.trim()
-    if (!query) return
-    if (!selectedId) return showMessage("Select a project before searching its files.", "error")
-    setFileSearch(query)
-    openView("files")
     try {
-      const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?query=${encodeURIComponent(query)}`)
+      const data = await apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?query=${encodeURIComponent(q)}`)
       setFiles(data.filter((file) => file.status === "active"))
-    } catch (err: any) {
-      showMessage((err as Error).message, "error")
-    }
+    } catch (err: any) { showMessage((err as Error).message, "error") }
   }
   async function openFileDetail(f: FileRecord) {
     setSelectedFile(f)
@@ -1076,20 +1120,77 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     } catch (e: any) { showMessage(e.message, "error") }
   }
   async function handleUpload() {
-    if (!selectedId) return showMessage("Select a project", "error")
-    if (!uploadStorageKey) return showMessage("Enter storage key", "error")
-    const content = prompt("File content to upload (text, for demo):", "Hello CCL")
-    if (content===null) return
+    if (!selectedId) return showMessage("Select a project before uploading.", "error")
+    if (!selectedUploadFile) return showMessage("Choose a file to upload.", "error")
+    if (!uploadPolicy) return showMessage("Upload rules are still loading. Try again in a moment.", "error")
+
+    const destination = uploadStorageKey.trim()
+    const filename = destination.split("/").pop() || ""
+    const pathSegments = destination.split("/")
+    const extensionMatches = filename.match(/\.[^.]+/g) || []
+    if (
+      !destination || destination.startsWith("/") || destination.includes("\\") ||
+      pathSegments.some((segment) => !segment || segment === "." || segment === "..") ||
+      extensionMatches.length !== 1 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(filename)
+    ) {
+      return showMessage("Use a project-relative path without traversal segments and a simple filename, such as incoming/notes.txt.", "error")
+    }
+    const extension = extensionMatches[0].toLowerCase()
+    const allowedTypes = uploadPolicy.allowed_extensions[extension]
+    if (!allowedTypes) return showMessage(`Files with the ${extension} extension are not supported.`, "error")
+    if (selectedUploadFile.size > uploadPolicy.max_size_bytes) {
+      return showMessage(`This file is larger than the ${Math.ceil(uploadPolicy.max_size_bytes / 1024 / 1024)} MB upload limit.`, "error")
+    }
+    const browserType = selectedUploadFile.type.toLowerCase()
+    const contentType = browserType || allowedTypes[0]
+    if (!allowedTypes.includes(contentType)) {
+      return showMessage("The file type does not match the selected filename extension.", "error")
+    }
+
+    setUploading(true)
     try {
-      const blob = new Blob([content], { type: "text/plain" })
-      const result = await apiRequest<any>(`/projects/${selectedId}/uploads/${encodeURIComponent(uploadStorageKey)}`, {
+      const encodedDestination = destination.split("/").map(encodeURIComponent).join("/")
+      const result = await apiRequest<UploadResponse>(`/projects/${selectedId}/uploads/${encodedDestination}`, {
         method: "PUT",
-        headers: { "Content-Type": "text/plain" },
-        body: blob
+        headers: { "Content-Type": contentType },
+        body: selectedUploadFile,
       })
       showMessage(`Uploaded ${result.name} · ${result.size_bytes} bytes · ${result.checksum_sha256.slice(0,12)}…`)
-      refreshFiles(selectedId)
-    } catch (e: any) { showMessage(e.message, "error") }
+      setSelectedUploadFile(null)
+      if (uploadInputRef.current) uploadInputRef.current.value = ""
+      void refreshFiles(selectedId)
+    } catch (err: any) { showMessage((err as Error).message, "error") }
+    finally { setUploading(false) }
+  }
+
+  async function handleCreateWorkItem(workItem: WorkItemCreate) {
+    if (!selectedId) throw new Error("Select a project before creating work.")
+    try {
+      await apiRequest<WorkItem>(`/projects/${selectedId}/work-items`, {
+        method: "POST",
+        body: JSON.stringify(workItem),
+      })
+      showMessage("Work item added to the active project.")
+      await refreshWorkItems(selectedId)
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "The work item could not be created.", "error")
+      throw error
+    }
+  }
+
+  async function handleUpdateWorkItem(workItemId: string, changes: WorkItemUpdate) {
+    if (!selectedId) return
+    try {
+      await apiRequest<WorkItem>(`/projects/${selectedId}/work-items/${workItemId}`, {
+        method: "PATCH",
+        body: JSON.stringify(changes),
+      })
+      await refreshWorkItems(selectedId)
+      showMessage("Work item updated.")
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "The work item could not be updated.", "error")
+      throw error
+    }
   }
 
   const selectedProjectName = selectedProject?.title || "No project selected"
@@ -1097,6 +1198,8 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   function activateProject(project: Project) {
     setSelectedId(project.id)
     setSelectedProject(project)
+    setSelectedUploadFile(null)
+    if (uploadInputRef.current) uploadInputRef.current.value = ""
     setAnswerResponse(null)
     setAnswerError("")
     setResearchClaims([])
@@ -1123,6 +1226,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
 
   const navigationItems: Array<{ view: WorkspaceView; label: string; icon: typeof Gauge }> = [
     { view: "overview", label: "Overview", icon: Gauge },
+    { view: "workboard", label: "Workboard", icon: ListChecks },
     { view: "operations", label: "Operations", icon: Gauge },
     { view: "files", label: "Files", icon: Files },
     { view: "knowledge", label: "Knowledge", icon: Library },
@@ -1134,12 +1238,13 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   ]
   const permissionRole = account.role === "member" ? "staff" : account.role === "reviewer" ? "supervisor" : account.role
   const canReadSecurity = Boolean(permissions?.[permissionRole]?.includes("security.read"))
+  const canManageWorkItems = Boolean(permissions?.[permissionRole]?.includes("work_item.manage"))
   const canEvaluateSecurityAlerts = Boolean(permissions?.[permissionRole]?.includes("security.alerts.evaluate"))
   const canManageSecurityAlerts = Boolean(permissions?.[permissionRole]?.includes("security.alerts.manage"))
   const navigation = navigationItems.filter(({ view }) => view !== "security" || canReadSecurity)
-
   const viewCopy: Record<WorkspaceView, { title: string; description: string }> = {
     overview: { title: "Overview", description: "See project health, workflow progress, evidence readiness, and the next decision." },
+    workboard: { title: "Workboard", description: "Add, prioritize, and track project deliverables through to completion." },
     operations: { title: "Operations", description: "Preview and run controlled work inside the active project." },
     files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
     knowledge: { title: "Knowledge", description: "Register, review, ingest, search, and answer from approved sources." },
@@ -1149,6 +1254,50 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setup: { title: "Workspace setup", description: "Provision an owner, register a project, and prepare local storage." },
     security: { title: "Security overview", description: "Review audit activity, agent outcomes, and project controls within your access scope." },
   }
+  const pendingApprovalItems = workflows.flatMap((workflow) =>
+    (workflowApprovals[workflow.id] || [])
+      .filter((approval) => approval.status === "pending")
+      .map((approval) => ({ workflow, approval })),
+  )
+  const pendingSourceItems = knowledgeSources.filter((source) => source.approval_status === "pending")
+  const now = new Date()
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+  const overdueWorkItems = workItems.filter((item) =>
+    !["done", "cancelled"].includes(item.status) && item.due_date !== null && item.due_date < todayKey,
+  )
+  const attentionCount = pendingApprovalItems.length + pendingSourceItems.length + overdueWorkItems.length
+  const uploadAccept = Object.keys(uploadPolicy?.allowed_extensions || {}).join(",")
+  const commandQuery = commandSearch.trim().toLowerCase()
+  const matchesCommand = (...values: Array<string | undefined>) => !commandQuery || values.some((value) => value?.toLowerCase().includes(commandQuery))
+  const matchingPages = navigation.filter(({ view, label }) => matchesCommand(label, viewCopy[view].description))
+  const matchingProjects = projects.filter((project) => matchesCommand(project.title, project.description, project.storage_slug))
+  const matchingFiles = selectedId ? commandFiles : []
+  const matchingSources = selectedId ? knowledgeSources.filter((source) => matchesCommand(source.title, source.file_name, source.file_storage_key, source.approval_status)).slice(0, 12) : []
+
+  useEffect(() => {
+    if (!commandOpen || !selectedId) return
+
+    let active = true
+    const timeout = window.setTimeout(() => {
+      setCommandFilesLoading(true)
+      setCommandFilesError("")
+      const parameters = new URLSearchParams({ status: "active", limit: "12" })
+      if (commandQuery) parameters.set("query", commandQuery)
+      void apiRequest<FileRecord[]>(`/projects/${selectedId}/files/search?${parameters.toString()}`)
+        .then((results) => { if (active) setCommandFiles(results.filter((file) => file.status === "active")) })
+        .catch((error: unknown) => {
+          if (!active) return
+          setCommandFiles([])
+          setCommandFilesError(error instanceof Error ? error.message : "Project files could not be searched.")
+        })
+        .finally(() => { if (active) setCommandFilesLoading(false) })
+    }, commandQuery ? 180 : 0)
+
+    return () => {
+      active = false
+      window.clearTimeout(timeout)
+    }
+  }, [commandOpen, commandQuery, selectedId])
 
   const openView = (view: WorkspaceView) => {
     setActiveView(view)
@@ -1159,6 +1308,20 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   return (
     <div className="min-h-screen">
       <a className="skip-link" href="#main-content">Skip to main content</a>
+      <input
+        ref={uploadInputRef}
+        id="project-upload-input"
+        type="file"
+        accept={uploadAccept || undefined}
+        disabled={uploading}
+        className="sr-only"
+        aria-label="Choose a project file to upload"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0] || null
+          setSelectedUploadFile(file)
+          if (file) setUploadStorageKey(`incoming/${file.name}`)
+        }}
+      />
 
       <aside className="app-sidebar hidden lg:flex" aria-label="Primary navigation">
         <div className="sidebar-inner">
@@ -1211,20 +1374,88 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             </Select>
           </div>
         </div>
-        <form id="global-search-form" className="global-search hidden xl:flex" onSubmit={handleGlobalSearch} role="search">
-          <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <Input id="global-search" aria-label="Search project files" value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} placeholder="Search projects, files, or knowledge…" />
-          <kbd>⌘K</kbd>
-        </form>
+        <Button
+          type="button"
+          variant="outline"
+          className="global-search-trigger h-9 w-9 shrink-0 p-0 md:w-10 xl:w-[21rem] xl:justify-between xl:px-3"
+          aria-label="Search workspace"
+          aria-haspopup="dialog"
+          aria-keyshortcuts="Control+K Meta+K"
+          onClick={() => setCommandOpen(true)}
+        >
+          <span className="inline-flex items-center gap-2"><Search className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden xl:inline">Search workspace</span></span>
+          <span className="hidden items-center gap-1.5 xl:inline-flex"><span className="text-xs font-normal text-muted-foreground">Projects, files, sources</span><kbd>⌘K</kbd></span>
+        </Button>
         <div className="flex items-center gap-3">
           <span className={`service-state ${health.ok ? "is-online" : "is-offline"}`}><span />{health.ok ? "Ready" : "Unavailable"}</span>
           <Separator orientation="vertical" className="hidden h-6 sm:block" />
           <Button variant="ghost" size="icon" className="hidden sm:inline-flex" asChild><a href="/docs" target="_blank" rel="noreferrer" aria-label="Open API documentation"><CircleHelp className="h-4 w-4" /></a></Button>
-          <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="View notifications"><Bell className="h-4 w-4" /></Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="relative"
+            aria-label={`Open project inbox${attentionCount ? `, ${attentionCount} items need attention` : ""}`}
+            title="Project inbox"
+            onClick={() => setAttentionOpen(true)}
+          >
+            <Bell className="h-4 w-4" />
+            {attentionCount > 0 && <span aria-hidden="true" className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-[#bf5d42] px-1 text-[0.58rem] font-semibold leading-none text-white">{attentionCount > 9 ? "9+" : attentionCount}</span>}
+          </Button>
           <div className="operator-menu"><span className="operator-copy"><small>{account.role}</small><strong title={account.email}>{account.email}</strong></span><span className="operator-avatar">{account.email.slice(0, 2).toUpperCase()}</span></div>
           <Button variant="outline" size="sm" onClick={() => void onLogout()}>Log out</Button>
         </div>
       </header>
+
+      <Sheet open={attentionOpen} onOpenChange={setAttentionOpen}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
+          <SheetHeader className="text-left">
+            <SheetTitle>Project inbox</SheetTitle>
+            <SheetDescription>Pending reviews and overdue work for {selectedProjectName.toLowerCase()}.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-6 space-y-5">
+            {!selectedId ? (
+              <div className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">Select a project to see its pending review items.</div>
+            ) : attentionCount === 0 ? (
+              <div className="grid justify-items-center gap-2 rounded-xl border border-dashed bg-muted/20 p-8 text-center">
+                <CheckCircle2 className="h-6 w-6 text-emerald-700" aria-hidden="true" />
+                <p className="text-sm font-semibold text-foreground">You’re caught up</p>
+                <p className="max-w-xs text-xs leading-5 text-muted-foreground">There are no pending reviews or overdue work items in this project.</p>
+              </div>
+            ) : (
+              <>
+                {pendingApprovalItems.length > 0 && <section aria-labelledby="inbox-approvals-heading">
+                  <h3 id="inbox-approvals-heading" className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Workflow approvals <span className="ml-1 normal-case tracking-normal">{pendingApprovalItems.length}</span></h3>
+                  <div className="divide-y rounded-xl border">
+                    {pendingApprovalItems.map(({ workflow, approval }) => <button key={approval.id} type="button" className="flex w-full items-start gap-3 p-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setAttentionOpen(false); openView("workflows") }}>
+                      <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-800"><ClipboardCheck className="h-4 w-4" aria-hidden="true" /></span>
+                      <span className="min-w-0"><strong className="block truncate text-sm font-semibold text-foreground">{workflow.name}</strong><span className="mt-0.5 block text-xs text-muted-foreground">Waiting for an authorized reviewer</span><time className="mt-1 block text-[0.68rem] text-muted-foreground">Requested {new Date(approval.requested_at).toLocaleDateString()}</time></span>
+                    </button>)}
+                  </div>
+                </section>}
+                {pendingSourceItems.length > 0 && <section aria-labelledby="inbox-sources-heading">
+                  <h3 id="inbox-sources-heading" className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Knowledge-source reviews <span className="ml-1 normal-case tracking-normal">{pendingSourceItems.length}</span></h3>
+                  <div className="divide-y rounded-xl border">
+                    {pendingSourceItems.map((source) => <button key={source.id} type="button" className="flex w-full items-start gap-3 p-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setAttentionOpen(false); openView("knowledge") }}>
+                      <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-800"><Library className="h-4 w-4" aria-hidden="true" /></span>
+                      <span className="min-w-0"><strong className="block truncate text-sm font-semibold text-foreground">{source.title}</strong><span className="mt-0.5 block truncate text-xs text-muted-foreground">{source.file_name} · awaiting review</span></span>
+                    </button>)}
+                  </div>
+                </section>}
+                {overdueWorkItems.length > 0 && <section aria-labelledby="inbox-overdue-heading">
+                  <h3 id="inbox-overdue-heading" className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Overdue work <span className="ml-1 normal-case tracking-normal">{overdueWorkItems.length}</span></h3>
+                  <div className="divide-y rounded-xl border">
+                    {overdueWorkItems.map((item) => <button key={item.id} type="button" className="flex w-full items-start gap-3 p-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setAttentionOpen(false); openView("workboard") }}>
+                      <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-rose-50 text-rose-800"><AlertCircle className="h-4 w-4" aria-hidden="true" /></span>
+                      <span className="min-w-0"><strong className="block truncate text-sm font-semibold text-foreground">{item.title}</strong><span className="mt-0.5 block text-xs text-muted-foreground">Due {item.due_date}{item.assignee ? ` · ${item.assignee}` : ""}</span></span>
+                    </button>)}
+                  </div>
+                </section>}
+              </>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <main id="main-content" className="app-main" data-view={activeView}>
         <header className={activeView === "operations" || activeView === "overview" || activeView === "security" ? "sr-only" : "workspace-heading"}>
@@ -1245,8 +1476,22 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             researchClaims={researchClaims}
             researchReview={researchReview}
             workflows={workflows}
+            workItems={workItems}
             approvals={workflowApprovals}
             onNavigate={openView}
+          />
+        </section>
+
+        <section className={activeView === "workboard" ? "block" : "hidden"}>
+          <ProjectWorkboard
+            project={selectedProject}
+            items={workItems}
+            loading={workItemsLoading}
+            error={workItemsError}
+            canManage={canManageWorkItems}
+            onCreate={handleCreateWorkItem}
+            onUpdate={handleUpdateWorkItem}
+            onRefresh={() => { if (selectedId) void refreshWorkItems(selectedId) }}
           />
         </section>
 
@@ -1402,13 +1647,21 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
               <CardHeader className="pb-2">
                 <p className="panel-label">Upload</p>
                 <CardTitle className="text-[1rem] flex items-center gap-1.5"><HardDriveUpload className="w-4 h-4 text-primary" />Secure upload</CardTitle>
-                <CardDescription className="text-xs">Allowlisted upload with size, extension, MIME checks.</CardDescription>
+                <CardDescription className="text-xs">Choose a supported document or image. Video upload is not supported by the current file policy.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {uploadPolicy && <div className="flex flex-wrap gap-1">{Object.entries(uploadPolicy.allowed_extensions as any).map(([cat, exts]: any)=><Badge key={cat} variant="outline" className="text-[0.68rem]">{cat}: {(exts as string[]).join(", ")}</Badge>)}<Badge className="bg-amber-100 text-amber-800 border-amber-200">max {Math.round(uploadPolicy.max_size_bytes/1024/1024)}MB</Badge></div>}
-                <div className="grid gap-1.5"><Label className="text-xs">Storage key</Label><Input value={uploadStorageKey} onChange={e=>setUploadStorageKey(e.target.value)} placeholder="incoming/example.txt" /></div>
-                <Button onClick={handleUpload} className="w-full" variant="outline">PUT Upload (text demo)</Button>
-                <p className="text-[0.68rem] text-muted-foreground">Real endpoint: <code className="bg-muted px-1 rounded">PUT /projects/{`{id}`}/uploads/{`{key}`}</code></p>
+                <div className="rounded-xl border border-dashed bg-muted/20 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{selectedUploadFile?.name || "No file selected"}</p>
+                      <p className="text-xs text-muted-foreground">{selectedUploadFile ? `${formatUploadSize(selectedUploadFile.size)} · ${selectedUploadFile.type || "Type will be checked on upload"}` : "Files are checked against the project upload policy."}</p>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={() => uploadInputRef.current?.click()} disabled={uploading}>{selectedUploadFile ? "Choose another" : "Choose file"}</Button>
+                  </div>
+                </div>
+                <div className="grid gap-1.5"><Label htmlFor="setup-upload-storage-key" className="text-xs">Save to project path</Label><Input id="setup-upload-storage-key" value={uploadStorageKey} onChange={e=>setUploadStorageKey(e.target.value)} placeholder="incoming/notes.txt" /></div>
+                <Button type="button" onClick={() => void handleUpload()} disabled={!selectedId || !selectedUploadFile || uploading} className="w-full">{uploading ? "Uploading…" : "Upload to active project"}</Button>
               </CardContent>
             </Card>
           </div>
@@ -1457,11 +1710,18 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             <TabsContent value="upload" className="mt-0">
               <div className="task-layout">
                 <div className="task-surface">
-                  <div className="task-header"><div><h2>Upload a file</h2><p>Add an allowlisted text file to the active project and index its metadata.</p></div><Badge variant="outline">Maximum {uploadPolicy ? `${Math.round(uploadPolicy.max_size_bytes/1024/1024)} MB` : "size loading"}</Badge></div>
+                  <div className="task-header"><div><h2>Upload a file</h2><p>Add a supported document or image to the active project and index its metadata.</p></div><Badge variant="outline">Maximum {uploadPolicy ? `${Math.round(uploadPolicy.max_size_bytes/1024/1024)} MB` : "loading policy"}</Badge></div>
                   <div className="task-body grid gap-5">
-                    <div className="grid gap-2"><Label htmlFor="operation-upload-key">Storage key</Label><Input id="operation-upload-key" value={uploadStorageKey} onChange={event => setUploadStorageKey(event.target.value)} placeholder="incoming/example.txt" /></div>
+                    <div className="rounded-xl border border-dashed bg-muted/20 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0"><p className="truncate text-sm font-medium">{selectedUploadFile?.name || "Choose a file from your device"}</p><p className="mt-1 text-xs text-muted-foreground">{selectedUploadFile ? `${formatUploadSize(selectedUploadFile.size)} · ${selectedUploadFile.type || "Type will be checked on upload"}` : "Supported file types and size limits are shown below."}</p></div>
+                        <Button type="button" variant="outline" onClick={() => uploadInputRef.current?.click()} disabled={uploading}>{selectedUploadFile ? "Choose another file" : "Browse files"}</Button>
+                      </div>
+                    </div>
+                    <div className="grid gap-2"><Label htmlFor="operation-upload-key">Save to project path</Label><Input id="operation-upload-key" value={uploadStorageKey} onChange={event => setUploadStorageKey(event.target.value)} placeholder="incoming/notes.txt" /></div>
                     {uploadPolicy && <div className="flex flex-wrap gap-1.5">{Object.entries(uploadPolicy.allowed_extensions as any).map(([category, extensions]: any) => <Badge key={category} variant="secondary">{category}: {(extensions as string[]).join(", ")}</Badge>)}</div>}
-                    <Button onClick={handleUpload} className="w-fit"><HardDriveUpload className="h-4 w-4" />Upload text file</Button>
+                    <p className="text-xs text-muted-foreground">The current policy accepts CSV, JSON, Markdown, text, JPEG, and PNG files up to 1 MB. Video ingest is a separate upcoming capability.</p>
+                    <Button type="button" onClick={() => void handleUpload()} disabled={!selectedId || !selectedUploadFile || uploading} className="w-fit"><HardDriveUpload className="h-4 w-4" />{uploading ? "Uploading…" : "Upload file"}</Button>
                   </div>
                 </div>
                 <aside className="evidence-rail" aria-label="Upload safeguards"><div className="evidence-panel"><div className="evidence-title"><ShieldCheck className="h-4 w-4" />Upload policy</div><ul><li><CheckCircle2 />Extension and MIME type must agree</li><li><CheckCircle2 />Storage paths remain project-scoped</li><li><CheckCircle2 />Rejected attempts are audited</li></ul></div><div className="evidence-panel"><div className="evidence-title"><FolderKanban className="h-4 w-4" />Destination</div><p><code>{uploadStorageKey || "Choose a storage key"}</code></p></div></aside>
@@ -1572,11 +1832,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
           <CardContent className="space-y-3">
             {!selectedId ? <Alert><AlertCircle className="w-4 h-4" /><AlertDescription className="text-xs">Select a project to browse its files.</AlertDescription></Alert> : (
               <>
-                <div className="flex gap-2">
-                  <Input placeholder="Search file name / MIME / checksum (use API /files/search)" value={fileSearch} onChange={e=>setFileSearch(e.target.value)} className="flex-1" />
-                  <Button variant="secondary" onClick={handleFileSearch}><Search className="w-3.5 h-3.5 mr-1" />Search</Button>
-                  <Button variant="outline" onClick={()=>refreshFiles(selectedId)}>Refresh</Button>
-                </div>
+                <form role="search" className="flex flex-wrap gap-2" onSubmit={(event) => void handleFileSearch(event)}>
+                  <Input aria-label="Search files in the active project" placeholder="Search by name, path, type, or checksum" value={fileSearch} onChange={e=>setFileSearch(e.target.value)} className="min-w-[12rem] flex-1" />
+                  <Button type="submit" variant="secondary"><Search className="w-3.5 h-3.5 mr-1" />Search</Button>
+                  <Button type="button" variant="outline" onClick={()=>{ setFileSearch(""); void refreshFiles(selectedId) }}>Clear search</Button>
+                </form>
                 <div className="overflow-x-auto border rounded-xl">
                   <Table>
                     <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Storage key</TableHead><TableHead>MIME</TableHead><TableHead>Size</TableHead><TableHead>Status</TableHead><TableHead></TableHead></TableRow></TableHeader>
@@ -2027,6 +2287,72 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         {activeView === "security" && canReadSecurity && <SecurityDashboard canEvaluateAlerts={canEvaluateSecurityAlerts} canManageAlerts={canManageSecurityAlerts} />}
 
       </main>
+
+      <Dialog open={commandOpen} onOpenChange={(open) => {
+        setCommandOpen(open)
+        if (!open) {
+          setCommandSearch("")
+          setCommandFiles([])
+          setCommandFilesError("")
+          setCommandFilesLoading(false)
+        }
+      }}>
+        <DialogContent className="overflow-hidden p-0 sm:max-w-2xl">
+          <DialogHeader className="sr-only"><DialogTitle>Search workspace</DialogTitle><DialogDescription>Find a page, project, file, or knowledge source.</DialogDescription></DialogHeader>
+          <div className="flex items-center gap-3 border-b px-4">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Input
+              autoFocus
+              value={commandSearch}
+              onChange={(event) => setCommandSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault()
+                  document.querySelector<HTMLButtonElement>("[data-workspace-command-result]")?.focus()
+                } else if (event.key === "Enter") {
+                  event.preventDefault()
+                  document.querySelector<HTMLButtonElement>("[data-workspace-command-result]")?.click()
+                }
+              }}
+              aria-label="Search workspace"
+              placeholder={selectedId ? "Search pages, projects, files, and sources…" : "Search pages and projects…"}
+              className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+            />
+            <kbd className="hidden shrink-0 rounded border bg-muted px-1.5 py-0.5 font-mono text-[0.62rem] text-muted-foreground sm:inline">ESC</kbd>
+          </div>
+          <div className="max-h-[min(65vh,28rem)] overflow-y-auto p-2">
+            {matchingPages.length === 0 && matchingProjects.length === 0 && matchingFiles.length === 0 && matchingSources.length === 0 && !commandFilesLoading && !commandFilesError ? <p className="px-4 py-10 text-center text-sm text-muted-foreground">No matching pages or project items.</p> : <>
+              {matchingPages.length > 0 && <section aria-labelledby="workspace-command-pages" className="mb-2">
+                <h3 id="workspace-command-pages" className="px-2 py-2 text-xs font-medium text-muted-foreground">Pages</h3>
+                {matchingPages.map(({ view, label, icon: Icon }, index) => <button key={view} type="button" data-workspace-command-result={index === 0 || undefined} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setCommandOpen(false); openView(view) }}>
+                  <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" /><span>{label}</span><span className="ml-auto text-xs text-muted-foreground">Open</span>
+                </button>)}
+              </section>}
+              {matchingProjects.length > 0 && <section aria-labelledby="workspace-command-projects" className="mb-2">
+                <h3 id="workspace-command-projects" className="px-2 py-2 text-xs font-medium text-muted-foreground">Projects</h3>
+                {matchingProjects.map((project, index) => <button key={project.id} type="button" data-workspace-command-result={matchingPages.length === 0 && index === 0 || undefined} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setCommandOpen(false); activateProject(project); openView("overview") }}>
+                  <FolderKanban className="h-4 w-4 text-muted-foreground" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{project.title}</span>{project.id === selectedId && <Badge variant="secondary">Current</Badge>}
+                </button>)}
+              </section>}
+              {matchingFiles.length > 0 && <section aria-labelledby="workspace-command-files" className="mb-2">
+                <h3 id="workspace-command-files" className="px-2 py-2 text-xs font-medium text-muted-foreground">Files · {selectedProjectName}</h3>
+                {matchingFiles.map((file, index) => <button key={file.id} type="button" data-workspace-command-result={matchingPages.length === 0 && matchingProjects.length === 0 && index === 0 ? "true" : undefined} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setCommandOpen(false); openView("files"); void openFileDetail(file) }}>
+                  <Files className="h-4 w-4 text-muted-foreground" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{file.name}</span><span className="max-w-40 truncate text-xs text-muted-foreground">{file.storage_key}</span>
+                </button>)}
+              </section>}
+              {commandFilesLoading && <p className="px-3 py-2 text-xs text-muted-foreground" role="status">Searching active project files…</p>}
+              {commandFilesError && <p className="px-3 py-2 text-xs text-destructive" role="status">File search is temporarily unavailable: {commandFilesError}</p>}
+              {matchingSources.length > 0 && <section aria-labelledby="workspace-command-sources">
+                <h3 id="workspace-command-sources" className="px-2 py-2 text-xs font-medium text-muted-foreground">Knowledge sources</h3>
+                {matchingSources.map((source, index) => <button key={source.id} type="button" data-workspace-command-result={matchingPages.length === 0 && matchingProjects.length === 0 && matchingFiles.length === 0 && index === 0 || undefined} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setCommandOpen(false); openView("knowledge") }}>
+                  <Library className="h-4 w-4 text-muted-foreground" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{source.title}</span><Badge variant="outline">{source.approval_status}</Badge>
+                </button>)}
+              </section>}
+            </>}
+          </div>
+          <div className="border-t px-4 py-2 text-[0.68rem] text-muted-foreground">Files and sources are limited to the active project. Press ↓ to enter results, then use Tab or Enter to open.</div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirm.open} onOpenChange={(open)=>!open && setConfirm(c=>{ c.resolve?.(false); return {...c, open:false}})}>
         <DialogContent id="confirm-dialog" className="sm:max-w-[28rem]" aria-describedby="confirm-message">
