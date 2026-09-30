@@ -680,3 +680,34 @@ def test_dashboard_overview_surfaces_active_project_control(dashboard_page: Page
     expect(overview.locator(".overview-health-card")).not_to_contain_text("100%")
     expect(overview.locator(".overview-workflow-card")).to_contain_text("Project delivery path")
     expect(overview.locator(".overview-actions-card")).to_contain_text("Move the work forward")
+
+
+def test_dashboard_mobile_header_controls_do_not_overlap(dashboard_page: Page) -> None:
+    """Keep the mobile navigation, project, search, and account controls distinct."""
+
+    page = dashboard_page
+    viewport_width = 390
+    page.set_viewport_size({"width": viewport_width, "height": 844})
+
+    menu = page.get_by_role("button", name="Open navigation").bounding_box()
+    project = page.get_by_role("combobox", name="Active project").bounding_box()
+    search = page.get_by_role("button", name="Search workspace").bounding_box()
+    service = page.locator(".service-state").bounding_box()
+    inbox = page.get_by_role("button", name="Open project inbox").bounding_box()
+    logout = page.get_by_role("button", name="Log out").bounding_box()
+    assert all(box is not None for box in (menu, project, search, service, inbox, logout))
+
+    controls = (menu, project, search)
+    for box in controls:
+        assert box["x"] >= 0
+        assert box["x"] + box["width"] <= viewport_width
+    assert menu["x"] + menu["width"] <= project["x"] + 1
+    assert project["x"] + project["width"] <= search["x"] + 1
+    assert search["y"] <= service["y"]
+
+    actions = (service, inbox, logout)
+    for box in actions:
+        assert box["x"] >= 0
+        assert box["x"] + box["width"] <= viewport_width
+    assert service["x"] + service["width"] <= inbox["x"] + 1
+    assert inbox["x"] + inbox["width"] <= logout["x"] + 1

@@ -241,6 +241,33 @@
 ::-webkit-scrollbar-track { background: #e8ecf2; }
 
 @media (max-width: 767px) {
+  .app-topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    height: auto;
+    min-height: 4.5rem;
+    column-gap: 0.5rem;
+    row-gap: 0.5rem;
+    justify-content: stretch;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+  .app-topbar > div:first-child {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    gap: 0.5rem;
+  }
+  .project-switcher { min-width: 0; flex: 1; }
+  .project-switcher [role="combobox"] { width: 100%; }
+  .app-topbar > .global-search-trigger { grid-column: 2; grid-row: 1; }
+  .app-topbar > div:last-child {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+    gap: 0.5rem;
+  }
   .overview-heading { @apply items-start; }
   .overview-heading h1 { @apply text-xl; }
   .overview-heading-actions { @apply hidden; }
