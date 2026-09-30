@@ -265,6 +265,21 @@ suite remains self-contained.
 
 The dashboard uses the signed-in account as the owner when creating a project.
 
+## Frontend workflow
+
+The maintainable React source is in `frontend/`. The API serves the generated
+single-file dashboard at `static/index.html`, so use the standalone build after
+changing the UI:
+
+```bash
+pnpm --dir frontend lint
+pnpm --dir frontend build:standalone
+```
+
+`build:standalone` type-checks and builds the app, inlines its assets, and
+refreshes the API-served HTML. Rebuild the API image after that before testing
+the updated dashboard in Docker.
+
 ## Tests
 
 ```bash

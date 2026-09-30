@@ -13,9 +13,9 @@ export default defineConfig({
     // The API serves one self-contained static HTML artifact; inline the
     // bundled Geist fonts so it does not depend on an unserved /assets path.
     assetsInlineLimit: 100_000,
-    // Keep the single-file app artifact warning-free at its measured size:
-    // 525 kB minified (about 147 kB gzip). Splitting runtime chunks would
-    // require changing the API's static-asset serving contract.
+    // Keep 550 kB as a visible review threshold; do not raise it just to hide
+    // growth. Runtime code splitting needs a separate change to the API's
+    // single-file static-asset serving contract.
     chunkSizeWarningLimit: 550,
   },
   server: {

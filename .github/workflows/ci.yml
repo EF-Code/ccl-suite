@@ -68,7 +68,7 @@ jobs:
       - name: Lint frontend
         run: pnpm --dir frontend lint
       - name: Build frontend
-        run: pnpm --dir frontend build
+        run: pnpm --dir frontend build:standalone
       - name: Audit production frontend dependencies
         run: pnpm --dir frontend audit --prod --audit-level high
 
