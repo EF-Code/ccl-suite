@@ -1,0 +1,13 @@
+[Unit]
+Description=Create and verify a local CCL Suite PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ccl-suite
+Environment=CCL_DATABASE_BACKUP_DIR=%h/.local/share/ccl-suite/database-backups
+Environment=CCL_DATABASE_BACKUP_RETENTION_DAYS=14
+UMask=0077
+ExecStart=%h/ccl-suite/scripts/backup_postgres.sh
+TimeoutStartSec=2h

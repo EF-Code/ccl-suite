@@ -85,10 +85,72 @@ window.
 
 ## Database recovery and evidence record
 
-PostgreSQL requires its own backup schedule, retention policy, encryption,
-owner, and tested restore procedure. Do not treat the Compose database volume
-or project-file backups as a substitute for that procedure. Record the
-provider and database restore test separately.
+PostgreSQL is backed up separately from project files. The host-side
+`scripts/backup_postgres.sh` creates a custom-format `pg_dump`, verifies that
+PostgreSQL can read its archive, writes a SHA-256 sidecar, and publishes both
+files with owner-only permissions. Its default location is
+`$XDG_DATA_HOME/ccl-suite/database-backups` or
+`$HOME/.local/share/ccl-suite/database-backups`; the default retention is 14
+days. It never writes into the repository or deletes files outside that
+dedicated directory.
+
+The Compose API uses a dedicated non-superuser database role. Its generated
+password is stored in the private `database_app_credentials` named volume and
+is not included in a `pg_dump`. If restoring a database into a new or replaced
+PostgreSQL volume, start the database and run the role initializer before the
+API so it recreates the role, grants access, and assigns restored application
+tables to that role:
+
+```bash
+docker compose up -d db
+docker compose run --rm db-role-init
+docker compose up -d api
+```
+
+This sequence preserves database rows; do not remove `postgres_data` or use
+`docker compose down --volumes` during an ordinary restore.
+
+For the local CCL Suite checkout at `~/ccl-suite`, install and enable the
+user-level daily timer:
+
+```bash
+systemctl --user link \
+  "$HOME/ccl-suite/systemd/user/ccl-suite-postgres-backup.service" \
+  "$HOME/ccl-suite/systemd/user/ccl-suite-postgres-backup.timer"
+systemctl --user daemon-reload
+systemctl --user enable --now ccl-suite-postgres-backup.timer
+systemctl --user start ccl-suite-postgres-backup.service
+systemctl --user list-timers ccl-suite-postgres-backup.timer
+```
+
+The timer runs daily at 02:30 host-local time, with a randomized delay of up
+to 15 minutes. `Persistent=true` runs a missed backup when the user service
+manager next starts. The service uses the rootless Docker user service and the
+checkout at `~/ccl-suite`; edit its unit paths before linking if the checkout
+is elsewhere. Inspect status and logs with:
+
+```bash
+systemctl --user status ccl-suite-postgres-backup.service
+journalctl --user -u ccl-suite-postgres-backup.service
+```
+
+Run a non-destructive restore rehearsal against a selected archive with:
+
+```bash
+./scripts/verify_postgres_backup.sh \
+  "$HOME/.local/share/ccl-suite/database-backups/<backup-name>.dump"
+```
+
+The verifier checks the checksum, restores to a uniquely named temporary
+database, checks its migration version and core record counts, and drops only
+that temporary database on exit. It does not replace or write to the live
+database. Keep the backup directory on an encrypted filesystem. The current
+local home directory is on LUKS; this protects the dump at rest on this host,
+but this single-disk policy does not protect against loss of the physical disk.
+
+Do not treat the Compose database volume or project-file backups as a
+PostgreSQL backup. Assign a local operator to review timer failures, available
+disk space, retention, and restore rehearsals.
 
 For each project-file rehearsal, record the backup ID, checksums, selected
 file comparison, response counts, destination, timestamp, actor, and outcome.

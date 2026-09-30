@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the CCL Suite PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=ccl-suite-postgres-backup.service
+
+[Install]
+WantedBy=timers.target
