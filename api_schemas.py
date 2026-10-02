@@ -14,7 +14,7 @@ from knowledge_contract import (
     ANSWER_CONTRACT_VERSION,
     ANSWER_MODE,
 )
-from models import KnowledgeSource, Project, UserNotification
+from models import KnowledgeSource, Project, ProjectTemplate, UserNotification
 from research_evidence import (
     EVIDENCE_WARNING_CODES,
     MAX_RESEARCH_WARNING_COUNT,
@@ -331,6 +331,54 @@ class NotificationInboxResponse(BaseModel):
 
 class NotificationReadAllResponse(BaseModel):
     updated: int
+
+
+class ProjectTemplateWorkItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    priority: WorkItemPriority = "normal"
+    due_in_days: int | None = Field(default=None, ge=0, le=3650)
+
+
+class ProjectTemplateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=100)
+
+
+class ProjectTemplateResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    category: str
+    scope: str
+    outputs: list[str]
+    responsible_person: str
+    work_items: list[ProjectTemplateWorkItem]
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, template: ProjectTemplate) -> ProjectTemplateResponse:
+        return cls(
+            id=template.id,
+            name=template.name,
+            description=template.description,
+            category=template.category,
+            scope=template.scope,
+            outputs=list(template.outputs or []),
+            responsible_person=template.responsible_person,
+            work_items=[ProjectTemplateWorkItem.model_validate(item) for item in template.work_items_json],
+            created_at=template.created_at,
+        )
+
+
+class ProjectTemplateProjectCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=100)
+    deadline: date | None = None
 
 
 class MyWorkItemResponse(WorkItemResponse):
