@@ -711,3 +711,38 @@ def test_dashboard_mobile_header_controls_do_not_overlap(dashboard_page: Page) -
         assert box["x"] + box["width"] <= viewport_width
     assert service["x"] + service["width"] <= inbox["x"] + 1
     assert inbox["x"] + inbox["width"] <= logout["x"] + 1
+
+
+def test_administrator_can_deactivate_and_reactivate_team_accounts(dashboard_page: Page) -> None:
+    """Make account offboarding visible and reversible from the admin workspace."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    email = f"offboard-{uuid4().hex}@example.test"
+    invitation = page.request.post(
+        f"{BASE_URL}/auth/invitations",
+        headers=csrf_headers(page),
+        data={"email": email, "role": "staff"},
+    )
+    assert invitation.status == 201, invitation.text()
+    token = invitation.json()["invite_url"].partition("#invite=")[2]
+    assert token
+    accepted = httpx.post(
+        f"{BASE_URL}/auth/invitations/accept",
+        json={"token": token, "password": "Browser-Offboarding-Password-2026!"},
+        timeout=10,
+    )
+    assert accepted.status_code == 201, accepted.text
+
+    open_workspace(page, "Setup")
+    team = page.locator("#team-account-management")
+    account_row = team.get_by_role("listitem").filter(has_text=email)
+    account_row.wait_for(state="visible")
+    expect(account_row.get_by_text("Active", exact=True)).to_be_visible()
+
+    account_row.get_by_role("button", name=f"Deactivate {email}").click()
+    confirm_protected_action(page)
+    expect(account_row.get_by_text("Deactivated", exact=True)).to_be_visible()
+
+    account_row.get_by_role("button", name=f"Reactivate {email}").click()
+    expect(account_row.get_by_text("Active", exact=True)).to_be_visible()

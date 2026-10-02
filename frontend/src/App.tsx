@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
-import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type WorkItem, type WorkItemCreate, type WorkItemUpdate, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult, type UploadPolicy, type UploadResponse } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type ManagedAccount, type AccountOffboardingImpact, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type ProjectMember, type ProjectMemberCandidate, type MyWorkItem, type MyWorkItemsResponse, type WorkItem, type WorkItemCreate, type WorkItemUpdate, type WorkItemComment, type WorkItemCommentsResponse, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult, type UploadPolicy, type UploadResponse } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
@@ -24,6 +24,7 @@ const OverviewDashboard = lazy(() => import("@/components/overview-dashboard").t
 const SecurityDashboard = lazy(() => import("@/components/security-dashboard").then((module) => ({ default: module.SecurityDashboard })))
 const WorkflowOrchestrator = lazy(() => import("@/components/workflow-orchestrator").then((module) => ({ default: module.WorkflowOrchestrator })))
 const ProjectWorkboard = lazy(() => import("@/components/project-workboard").then((module) => ({ default: module.ProjectWorkboard })))
+const MyWork = lazy(() => import("@/components/my-work").then((module) => ({ default: module.MyWork })))
 
 // Helpers
 function escapeForTest(v: string) { return v }
@@ -38,7 +39,7 @@ function formatUploadSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
-type WorkspaceView = "overview" | "workboard" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
+type WorkspaceView = "overview" | "my-work" | "workboard" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
 type OrganizationPlanAction = {
   source: string
   destination: string
@@ -104,6 +105,14 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
 
   // Forms + results
   const [ownerResult, setOwnerResult] = useState("")
+  const [managedAccounts, setManagedAccounts] = useState<ManagedAccount[]>([])
+  const [managedAccountsLoading, setManagedAccountsLoading] = useState(account.role === "administrator")
+  const [managedAccountsError, setManagedAccountsError] = useState("")
+  const [accountActionId, setAccountActionId] = useState("")
+  const [offboardingTarget, setOffboardingTarget] = useState<ManagedAccount | null>(null)
+  const [offboardingImpact, setOffboardingImpact] = useState<AccountOffboardingImpact | null>(null)
+  const [offboardingReplacementId, setOffboardingReplacementId] = useState("")
+  const [offboardingError, setOffboardingError] = useState("")
   const [folderResult, setFolderResult] = useState("")
   const [inventoryResult, setInventoryResult] = useState("")
   const [conversionResult, setConversionResult] = useState("")
@@ -144,6 +153,14 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const [workItems, setWorkItems] = useState<WorkItem[]>([])
   const [workItemsLoading, setWorkItemsLoading] = useState(false)
   const [workItemsError, setWorkItemsError] = useState("")
+  const [myWorkItems, setMyWorkItems] = useState<MyWorkItem[]>([])
+  const [myWorkTotal, setMyWorkTotal] = useState(0)
+  const [myWorkLoading, setMyWorkLoading] = useState(false)
+  const [myWorkError, setMyWorkError] = useState("")
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
+  const [projectMemberCandidates, setProjectMemberCandidates] = useState<ProjectMemberCandidate[]>([])
+  const [projectTeamLoading, setProjectTeamLoading] = useState(false)
+  const [projectTeamError, setProjectTeamError] = useState("")
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
   const [uploadPolicy, setUploadPolicy] = useState<UploadPolicy | null>(null)
   const [permissions, setPermissions] = useState<Record<string,string[]> | null>(null)
@@ -158,6 +175,8 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const [uploading, setUploading] = useState(false)
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const workItemsRequestSequence = useRef(0)
+  const myWorkRequestSequence = useRef(0)
+  const projectTeamRequestSequence = useRef(0)
 
   // Dialog
   const [confirm, setConfirm] = useState<{ open: boolean; title: string; msg: string; label: string; resolve?: (v:boolean)=>void }>({ open: false, title: "", msg: "", label: "" })
@@ -205,6 +224,19 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     }
   }, [selectedId])
 
+  const refreshManagedAccounts = useCallback(async () => {
+    if (account.role !== "administrator") return
+    setManagedAccountsLoading(true)
+    setManagedAccountsError("")
+    try {
+      setManagedAccounts(await apiRequest<ManagedAccount[]>("/auth/users"))
+    } catch (error) {
+      setManagedAccountsError(error instanceof Error ? error.message : "Could not load team accounts.")
+    } finally {
+      setManagedAccountsLoading(false)
+    }
+  }, [account.role])
+
   const refreshFiles = useCallback(async (projectId: string) => {
     if (!projectId) return
     try { const data = await apiRequest<FileRecord[]>(`/projects/${projectId}/files`); setFiles(data.filter(f=>f.status==="active")) } catch { setFiles([]) }
@@ -231,6 +263,78 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       if (requestSequence === workItemsRequestSequence.current) setWorkItemsLoading(false)
     }
   }, [])
+  const refreshMyWorkItems = useCallback(async () => {
+    const requestSequence = ++myWorkRequestSequence.current
+    setMyWorkLoading(true)
+    try {
+      const data = await apiRequest<MyWorkItemsResponse>("/my/work-items?limit=200")
+      if (requestSequence !== myWorkRequestSequence.current) return
+      setMyWorkItems(data.items)
+      setMyWorkTotal(data.total)
+      setMyWorkError("")
+    } catch (error) {
+      if (requestSequence !== myWorkRequestSequence.current) return
+      setMyWorkItems([])
+      setMyWorkTotal(0)
+      setMyWorkError(error instanceof Error ? error.message : "Your assigned work could not be loaded.")
+    } finally {
+      if (requestSequence === myWorkRequestSequence.current) setMyWorkLoading(false)
+    }
+  }, [])
+  const loadMoreMyWorkItems = useCallback(async () => {
+    const offset = myWorkItems.length
+    if (offset >= myWorkTotal || myWorkLoading) return
+    const requestSequence = ++myWorkRequestSequence.current
+    setMyWorkLoading(true)
+    try {
+      const data = await apiRequest<MyWorkItemsResponse>(`/my/work-items?limit=200&offset=${offset}`)
+      if (requestSequence !== myWorkRequestSequence.current) return
+      setMyWorkItems((current) => {
+        const seen = new Set(current.map((item) => item.id))
+        return [...current, ...data.items.filter((item) => !seen.has(item.id))]
+      })
+      setMyWorkTotal(data.total)
+      setMyWorkError("")
+    } catch (error) {
+      if (requestSequence !== myWorkRequestSequence.current) return
+      setMyWorkError(error instanceof Error ? error.message : "More assigned work could not be loaded.")
+    } finally {
+      if (requestSequence === myWorkRequestSequence.current) setMyWorkLoading(false)
+    }
+  }, [myWorkItems.length, myWorkLoading, myWorkTotal])
+  const refreshProjectTeam = useCallback(async (projectId: string, ownerId: string) => {
+    const requestSequence = ++projectTeamRequestSequence.current
+    if (!projectId) {
+      setProjectMembers([])
+      setProjectMemberCandidates([])
+      setProjectTeamError("")
+      setProjectTeamLoading(false)
+      return
+    }
+    setProjectTeamLoading(true)
+    setProjectTeamError("")
+    try {
+      const members = await apiRequest<ProjectMember[]>(`/projects/${projectId}/members`)
+      if (requestSequence !== projectTeamRequestSequence.current) return
+      setProjectMembers(members)
+      const isGlobalOperator = ["administrator", "supervisor"].includes(account.role)
+      const isProjectManager = ownerId === account.id || isGlobalOperator || members.some((member) => member.user_id === account.id && member.role === "manager")
+      if (isProjectManager) {
+        const candidates = await apiRequest<ProjectMemberCandidate[]>(`/projects/${projectId}/member-candidates`)
+        if (requestSequence !== projectTeamRequestSequence.current) return
+        setProjectMemberCandidates(candidates)
+      } else {
+        setProjectMemberCandidates([])
+      }
+    } catch (error) {
+      if (requestSequence !== projectTeamRequestSequence.current) return
+      setProjectMembers([])
+      setProjectMemberCandidates([])
+      setProjectTeamError(error instanceof Error ? error.message : "Project team details could not be loaded.")
+    } finally {
+      if (requestSequence === projectTeamRequestSequence.current) setProjectTeamLoading(false)
+    }
+  }, [account.id, account.role])
   const refreshKnowledgeSources = useCallback(async (projectId: string) => {
     if (!projectId) return
     try { const data = await apiRequest<KnowledgeSource[]>(`/projects/${projectId}/knowledge-sources`); setKnowledgeSources(data) } catch { setKnowledgeSources([]) }
@@ -294,10 +398,13 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   useEffect(() => {
     let active = true
     async function loadDashboardConfiguration() {
-      const [healthResult, permissionsResult, uploadPolicyResult] = await Promise.allSettled([
+      const [healthResult, permissionsResult, uploadPolicyResult, accountsResult] = await Promise.allSettled([
         apiRequest<{ status: string }>("/health"),
         apiRequest<{ roles: Record<string, string[]> }>("/permissions"),
         apiRequest<UploadPolicy>("/upload-policy"),
+        account.role === "administrator"
+          ? apiRequest<ManagedAccount[]>("/auth/users")
+          : Promise.resolve<ManagedAccount[]>([]),
       ])
       if (!active) return
 
@@ -311,18 +418,32 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       }
       if (permissionsResult.status === "fulfilled") setPermissions(permissionsResult.value.roles)
       if (uploadPolicyResult.status === "fulfilled") setUploadPolicy(uploadPolicyResult.value)
+      if (account.role === "administrator") {
+        if (accountsResult.status === "fulfilled") {
+          setManagedAccounts(accountsResult.value)
+          setManagedAccountsError("")
+        } else {
+          setManagedAccountsError(accountsResult.reason instanceof Error
+            ? accountsResult.reason.message
+            : "Could not load team accounts.")
+        }
+        setManagedAccountsLoading(false)
+      }
     }
 
     void loadDashboardConfiguration()
     return () => { active = false }
-  }, [])
+  }, [account.role])
 
   useEffect(() => {
     let active = true
     async function loadProjectsForSession() {
       if (!getOwnerId()) return
       try {
-        const data = await apiRequest<Project[]>("/projects")
+        const [data] = await Promise.all([
+          apiRequest<Project[]>("/projects"),
+          refreshMyWorkItems(),
+        ])
         if (active) setProjects(data)
       } catch {
         if (active) setProjects([])
@@ -330,15 +451,18 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     }
 
     void loadProjectsForSession()
-    return () => { active = false }
-  }, [])
+    return () => { active = false; myWorkRequestSequence.current += 1 }
+  }, [account.id, refreshMyWorkItems])
 
-  const loadSelectedProjectData = useCallback((projectId: string) => {
+  const loadSelectedProjectData = useCallback((projectId: string, ownerId = "") => {
     setOrganizerPlan(null)
     setOrganizerResult("")
     setFiles([])
     setWorkItems([])
     setWorkItemsError("")
+    setProjectMembers([])
+    setProjectMemberCandidates([])
+    setProjectTeamError("")
     setKnowledgeSources([])
     setResearchReview(null)
     setWorkflows([])
@@ -350,10 +474,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setWorkflowError("")
     void refreshFiles(projectId)
     void refreshWorkItems(projectId)
+    void refreshProjectTeam(projectId, ownerId)
     void refreshKnowledgeSources(projectId)
     void refreshResearchReviews(projectId)
     void refreshWorkflows(projectId)
-  }, [refreshFiles, refreshKnowledgeSources, refreshResearchReviews, refreshWorkItems, refreshWorkflows])
+  }, [refreshFiles, refreshKnowledgeSources, refreshProjectTeam, refreshResearchReviews, refreshWorkItems, refreshWorkflows])
 
   // Actions
   async function handleInviteMember(e: React.FormEvent<HTMLFormElement>) {
@@ -374,6 +499,97 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       showMessage(err.message, "error")
     } finally {
       if (btn) { btn.disabled=false; btn.removeAttribute("aria-busy"); btn.textContent="Create invitation" }
+    }
+  }
+
+  async function openAccountOffboarding(member: ManagedAccount) {
+    setOffboardingTarget(member)
+    setOffboardingImpact(null)
+    setOffboardingReplacementId("")
+    setOffboardingError("")
+    setAccountActionId(member.id)
+    try {
+      setOffboardingImpact(await apiRequest<AccountOffboardingImpact>(
+        `/auth/users/${member.id}/offboarding-impact`,
+      ))
+    } catch (error) {
+      setOffboardingError(error instanceof Error ? error.message : "The account impact could not be loaded.")
+    } finally {
+      setAccountActionId("")
+    }
+  }
+
+  async function refreshAccountOffboardingImpact() {
+    if (!offboardingTarget) return
+    setAccountActionId(offboardingTarget.id)
+    setOffboardingError("")
+    try {
+      const impact = await apiRequest<AccountOffboardingImpact>(
+        `/auth/users/${offboardingTarget.id}/offboarding-impact`,
+      )
+      setOffboardingImpact(impact)
+      if (!impact.eligible_replacements.some(candidate => candidate.id === offboardingReplacementId)) {
+        setOffboardingReplacementId("")
+      }
+    } catch (error) {
+      setOffboardingError(error instanceof Error ? error.message : "The account impact could not be refreshed.")
+    } finally {
+      setAccountActionId("")
+    }
+  }
+
+  async function handleAccountAccessChange(member: ManagedAccount) {
+    if (member.is_active) {
+      await openAccountOffboarding(member)
+      return
+    }
+
+    const confirmed = await confirmAction(
+      "Reactivate this account?",
+      `Sign-in access will be restored for ${member.email}. Previously revoked sessions remain closed; they must sign in again.`,
+      "Reactivate account",
+    )
+    if (!confirmed) return
+    setAccountActionId(member.id)
+    try {
+      await apiRequest<void>(`/auth/users/${member.id}/enable`, {
+        method: "POST",
+      })
+      showMessage(`Access reactivated for ${member.email}. They must sign in again.`)
+      await refreshManagedAccounts()
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "Account access could not be updated.", "error")
+    } finally {
+      setAccountActionId("")
+    }
+  }
+
+  async function submitAccountOffboarding() {
+    if (!offboardingTarget || !offboardingImpact) return
+    const transferRequired = offboardingImpact.projects.some(
+      project => project.ownership_transfers || project.open_work_items_to_reassign > 0,
+    )
+    if (transferRequired && !offboardingReplacementId) return
+    setAccountActionId(offboardingTarget.id)
+    setOffboardingError("")
+    try {
+      await apiRequest<void>(`/auth/users/${offboardingTarget.id}/disable`, {
+        method: "POST",
+        body: JSON.stringify({ replacement_user_id: offboardingReplacementId || null }),
+      })
+      showMessage(`Offboarding completed for ${offboardingTarget.email}. Project access was removed and any required handoff was recorded.`)
+      setOffboardingTarget(null)
+      setOffboardingImpact(null)
+      await Promise.all([
+        refreshManagedAccounts(),
+        refreshProjects(),
+        refreshWorkItems(selectedId),
+        refreshMyWorkItems(),
+      ])
+    } catch (error) {
+      setOffboardingError(error instanceof Error ? error.message : "The account could not be offboarded.")
+    } finally {
+      setAccountActionId("")
     }
   }
 
@@ -405,7 +621,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       setResearchRegister(null)
       setResearchReview(null)
       setApprovalDecisionCodes({})
-      loadSelectedProjectData(proj.id)
+      loadSelectedProjectData(proj.id, proj.owner_id)
       // sync fields
       const setVal = (sel: string, v: string) => { const el = document.querySelector<HTMLInputElement>(sel); if (el) el.value = v; };
       setVal("#conversion-project-id", proj.id)
@@ -1173,7 +1389,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         body: JSON.stringify(workItem),
       })
       showMessage("Work item added to the active project.")
-      await refreshWorkItems(selectedId)
+      await Promise.all([refreshWorkItems(selectedId), refreshMyWorkItems()])
     } catch (error) {
       showMessage(error instanceof Error ? error.message : "The work item could not be created.", "error")
       throw error
@@ -1187,12 +1403,59 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         method: "PATCH",
         body: JSON.stringify(changes),
       })
-      await refreshWorkItems(selectedId)
+      await Promise.all([refreshWorkItems(selectedId), refreshMyWorkItems()])
       showMessage("Work item updated.")
     } catch (error) {
       showMessage(error instanceof Error ? error.message : "The work item could not be updated.", "error")
       throw error
     }
+  }
+
+  async function handleListWorkItemComments(projectId: string, workItemId: string, offset: number) {
+    return apiRequest<WorkItemCommentsResponse>(
+      `/projects/${projectId}/work-items/${workItemId}/comments?limit=50&offset=${offset}`,
+    )
+  }
+
+  async function handleAddWorkItemComment(projectId: string, workItemId: string, body: string) {
+    return apiRequest<WorkItemComment>(
+      `/projects/${projectId}/work-items/${workItemId}/comments`,
+      { method: "POST", body: JSON.stringify({ body }) },
+    )
+  }
+
+  async function handleUpdateMyWorkItem(projectId: string, workItemId: string, changes: WorkItemUpdate) {
+    try {
+      await apiRequest<WorkItem>(`/projects/${projectId}/work-items/${workItemId}`, {
+        method: "PATCH",
+        body: JSON.stringify(changes),
+      })
+      await Promise.all([
+        refreshMyWorkItems(),
+        selectedId === projectId ? refreshWorkItems(projectId) : Promise.resolve(),
+      ])
+      showMessage("Work item updated.")
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "The work item could not be updated.", "error")
+      throw error
+    }
+  }
+
+  async function handleAddProjectMember(userId: string, role: "manager" | "member") {
+    if (!selectedId) throw new Error("Select a project before managing its team.")
+    await apiRequest<ProjectMember>(`/projects/${selectedId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId, role }),
+    })
+    await Promise.all([refreshProjectTeam(selectedId, selectedProject?.owner_id || ""), refreshProjects()])
+    showMessage("Account added to the project team.")
+  }
+
+  async function handleRemoveProjectMember(userId: string) {
+    if (!selectedId) throw new Error("Select a project before managing its team.")
+    await apiRequest<void>(`/projects/${selectedId}/members/${userId}`, { method: "DELETE" })
+    await Promise.all([refreshProjectTeam(selectedId, selectedProject?.owner_id || ""), refreshProjects()])
+    showMessage("Account removed from the project team.")
   }
 
   const selectedProjectName = selectedProject?.title || "No project selected"
@@ -1223,11 +1486,12 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setVal("#knowledge-project-id", project.id)
     setVal("#knowledge-owner-id", project.owner_id || "")
     setVal("#research-project-id", project.id)
-    loadSelectedProjectData(project.id)
+    loadSelectedProjectData(project.id, project.owner_id)
   }
 
   const navigationItems: Array<{ view: WorkspaceView; label: string; icon: typeof Gauge }> = [
     { view: "overview", label: "Overview", icon: Gauge },
+    { view: "my-work", label: "My Work", icon: ClipboardCheck },
     { view: "workboard", label: "Workboard", icon: ListChecks },
     { view: "operations", label: "Operations", icon: Gauge },
     { view: "files", label: "Files", icon: Files },
@@ -1244,8 +1508,16 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const canEvaluateSecurityAlerts = Boolean(permissions?.[permissionRole]?.includes("security.alerts.evaluate"))
   const canManageSecurityAlerts = Boolean(permissions?.[permissionRole]?.includes("security.alerts.manage"))
   const navigation = navigationItems.filter(({ view }) => view !== "security" || canReadSecurity)
+  const isGlobalOperator = ["administrator", "supervisor"].includes(account.role)
+  const canManageProjectMembers = Boolean(selectedProject && (
+    selectedProject.owner_id === account.id
+    || isGlobalOperator
+    || projectMembers.some((member) => member.user_id === account.id && member.role === "manager")
+  ))
+  const canPromoteProjectMembers = Boolean(selectedProject && (selectedProject.owner_id === account.id || isGlobalOperator))
   const viewCopy: Record<WorkspaceView, { title: string; description: string }> = {
     overview: { title: "Overview", description: "See project health, workflow progress, evidence readiness, and the next decision." },
+    "my-work": { title: "My Work", description: "See and update the work assigned to you across your projects." },
     workboard: { title: "Workboard", description: "Add, prioritize, and track project deliverables through to completion." },
     operations: { title: "Operations", description: "Preview and run controlled work inside the active project." },
     files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
@@ -1270,9 +1542,15 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const attentionCount = pendingApprovalItems.length + pendingSourceItems.length + overdueWorkItems.length
   const uploadAccept = Object.keys(uploadPolicy?.allowed_extensions || {}).join(",")
   const commandQuery = commandSearch.trim().toLowerCase()
-  const matchesCommand = (...values: Array<string | undefined>) => !commandQuery || values.some((value) => value?.toLowerCase().includes(commandQuery))
+  const matchesCommand = (...values: Array<string | undefined>): boolean => !commandQuery || values.some((value) => Boolean(value?.toLowerCase().includes(commandQuery)))
   const matchingPages = navigation.filter(({ view, label }) => matchesCommand(label, viewCopy[view].description))
   const matchingProjects = projects.filter((project) => matchesCommand(project.title, project.description, project.storage_slug))
+  const availableWorkItems: Array<WorkItem | MyWorkItem> = [...workItems, ...myWorkItems]
+  const matchingWorkItems = Array.from(new Map<string, WorkItem | MyWorkItem>(
+    availableWorkItems
+      .filter((item) => matchesCommand(item.title, item.description, item.assignee || "", "project_title" in item ? item.project_title : selectedProjectName))
+      .map((item) => [item.id, item] as const),
+  ).values()).slice(0, 12)
   const matchingFiles = selectedId ? commandFiles : []
   const matchingSources = selectedId ? knowledgeSources.filter((source) => matchesCommand(source.title, source.file_name, source.file_storage_key, source.approval_status)).slice(0, 12) : []
 
@@ -1334,14 +1612,14 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
           </a>
           <nav className="app-links">
             <p className="nav-label">Operate</p>
-            {navigation.slice(0, 7).map(({ view, label, icon: Icon }) => (
+            {navigation.slice(0, 8).map(({ view, label, icon: Icon }) => (
               <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
                 <Icon className="h-4 w-4" />{label}
               </Button>
             ))}
             <Separator className="my-3 bg-white/10" />
             <p className="nav-label">Administration</p>
-            {navigation.slice(7).map(({ view, label, icon: Icon }) => (
+            {navigation.slice(8).map(({ view, label, icon: Icon }) => (
               <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
                 <Icon className="h-4 w-4" />{label}
               </Button>
@@ -1387,7 +1665,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
           onClick={() => setCommandOpen(true)}
         >
           <span className="inline-flex items-center gap-2"><Search className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden 2xl:inline">Search workspace</span></span>
-          <span className="hidden items-center gap-1.5 2xl:inline-flex"><span className="text-xs font-normal text-muted-foreground">Projects, files, sources</span><kbd>⌘K</kbd></span>
+          <span className="hidden items-center gap-1.5 2xl:inline-flex"><span className="text-xs font-normal text-muted-foreground">Projects, tasks, files</span><kbd>⌘K</kbd></span>
         </Button>
         <div className="flex items-center gap-3">
           <span className={`service-state ${health.ok ? "is-online" : "is-offline"}`}><span />{health.ok ? "Ready" : "Unavailable"}</span>
@@ -1485,15 +1763,48 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
           /></Suspense>}
         </section>
 
+        <section className={activeView === "my-work" ? "block" : "hidden"}>
+          {visitedViews.has("my-work") && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading your work…</div>}><MyWork
+            items={myWorkItems}
+            total={myWorkTotal}
+            loading={myWorkLoading}
+            error={myWorkError}
+            canManage={canManageWorkItems}
+            onRefresh={() => { void refreshMyWorkItems() }}
+            onLoadMore={() => { void loadMoreMyWorkItems() }}
+            onUpdate={handleUpdateMyWorkItem}
+            onOpenProject={(projectId) => {
+              const project = projects.find((item) => item.id === projectId)
+              if (project) {
+                activateProject(project)
+                openView("workboard")
+              } else {
+                showMessage("That project is no longer available in your workspace.", "error")
+              }
+            }}
+          /></Suspense>}
+        </section>
+
         <section className={activeView === "workboard" ? "block" : "hidden"}>
           {visitedViews.has("workboard") && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading workspace…</div>}><ProjectWorkboard
+            key={selectedId || "no-project"}
             project={selectedProject}
             items={workItems}
             loading={workItemsLoading}
             error={workItemsError}
             canManage={canManageWorkItems}
+            members={projectMembers}
+            candidates={projectMemberCandidates}
+            membersLoading={projectTeamLoading}
+            membersError={projectTeamError}
+            canManageMembers={canManageProjectMembers}
+            canPromoteMembers={canPromoteProjectMembers}
             onCreate={handleCreateWorkItem}
             onUpdate={handleUpdateWorkItem}
+            onListComments={handleListWorkItemComments}
+            onAddComment={handleAddWorkItemComment}
+            onAddMember={handleAddProjectMember}
+            onRemoveMember={handleRemoveProjectMember}
             onRefresh={() => { if (selectedId) void refreshWorkItems(selectedId) }}
           /></Suspense>}
         </section>
@@ -1586,6 +1897,50 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
                     <Button type="submit">Create invitation</Button>
                   </form>
                   {ownerResult && <div id="user-result" className="quiet-result grid gap-2 text-xs" role="status" aria-live="polite"><span>One-time invitation link:</span><Input aria-label="Invitation link" value={ownerResult} readOnly onFocus={(event) => event.currentTarget.select()} /><Button type="button" size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(ownerResult).then(() => showMessage("Invitation link copied.")).catch(() => showMessage("Select and copy the link manually.", "error"))}>Copy link</Button></div>}
+                  <Separator />
+                  <section id="team-account-management" aria-labelledby="team-account-heading" className="grid gap-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 id="team-account-heading" className="text-sm font-semibold">Team accounts</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">Offboarding revokes sign-in, removes project access, and preserves audit history. Ownership and open tasks are handed to a teammate first.</p>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => void refreshManagedAccounts()} disabled={managedAccountsLoading} aria-label="Refresh team accounts">
+                        <RefreshCw className={`mr-1.5 h-3.5 w-3.5 motion-reduce:animate-none ${managedAccountsLoading ? "animate-spin" : ""}`} aria-hidden="true" />
+                        {managedAccountsLoading ? "Refreshing" : "Refresh"}
+                      </Button>
+                    </div>
+                    {managedAccountsError && <p className="text-sm text-destructive" role="alert">Team accounts could not be loaded: {managedAccountsError}</p>}
+                    {managedAccountsLoading && managedAccounts.length === 0 && <p className="text-sm text-muted-foreground" role="status">Loading team accounts…</p>}
+                    {!managedAccountsLoading && !managedAccountsError && managedAccounts.length === 0 && <p className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">No team accounts were found.</p>}
+                    {managedAccounts.length > 0 && <div className="divide-y rounded-lg border" role="list" aria-label="Team accounts" aria-busy={managedAccountsLoading}>
+                      {managedAccounts.map(member => <div key={member.id} role="listitem" className="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-sm font-medium">{member.email}</span>
+                            {member.id === account.id && <Badge variant="outline" className="shrink-0">You</Badge>}
+                          </div>
+                          <p className="mt-1 text-xs capitalize text-muted-foreground">{member.role}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
+                          <Badge variant={member.is_active ? "secondary" : "outline"}>{member.is_active ? "Active" : "Deactivated"}</Badge>
+                          {member.id !== account.id && <div className="flex flex-wrap gap-2">
+                            {member.is_active
+                              ? <Button type="button" size="sm" variant="outline" disabled={accountActionId === member.id} onClick={() => void handleAccountAccessChange(member)} aria-label={`Offboard ${member.email}`}>
+                                {accountActionId === member.id ? "Loading…" : "Offboard"}
+                              </Button>
+                              : <>
+                                <Button type="button" size="sm" variant="outline" disabled={accountActionId === member.id} onClick={() => void openAccountOffboarding(member)} aria-label={`Review offboarding for ${member.email}`}>
+                                  {accountActionId === member.id ? "Loading…" : "Review handoff"}
+                                </Button>
+                                <Button type="button" size="sm" variant="secondary" disabled={accountActionId === member.id} onClick={() => void handleAccountAccessChange(member)} aria-label={`Reactivate ${member.email}`}>
+                                  Reactivate
+                                </Button>
+                              </>}
+                          </div>}
+                        </div>
+                      </div>)}
+                    </div>}
+                  </section>
                 </>}
               </CardContent>
             </Card>
@@ -2301,7 +2656,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         }
       }}>
         <DialogContent className="overflow-hidden p-0 sm:max-w-2xl">
-          <DialogHeader className="sr-only"><DialogTitle>Search workspace</DialogTitle><DialogDescription>Find a page, project, file, or knowledge source.</DialogDescription></DialogHeader>
+          <DialogHeader className="sr-only"><DialogTitle>Search workspace</DialogTitle><DialogDescription>Find a page, project, task, file, or knowledge source.</DialogDescription></DialogHeader>
           <div className="flex items-center gap-3 border-b px-4">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <Input
@@ -2318,13 +2673,13 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
                 }
               }}
               aria-label="Search workspace"
-              placeholder={selectedId ? "Search pages, projects, files, and sources…" : "Search pages and projects…"}
+              placeholder={selectedId ? "Search pages, projects, tasks, files, and sources…" : "Search pages, projects, and assigned tasks…"}
               className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
             />
             <kbd className="hidden shrink-0 rounded border bg-muted px-1.5 py-0.5 font-mono text-[0.62rem] text-muted-foreground sm:inline">ESC</kbd>
           </div>
           <div className="max-h-[min(65vh,28rem)] overflow-y-auto p-2">
-            {matchingPages.length === 0 && matchingProjects.length === 0 && matchingFiles.length === 0 && matchingSources.length === 0 && !commandFilesLoading && !commandFilesError ? <p className="px-4 py-10 text-center text-sm text-muted-foreground">No matching pages or project items.</p> : <>
+            {matchingPages.length === 0 && matchingProjects.length === 0 && matchingWorkItems.length === 0 && matchingFiles.length === 0 && matchingSources.length === 0 && !commandFilesLoading && !commandFilesError ? <p className="px-4 py-10 text-center text-sm text-muted-foreground">No matching pages or project items.</p> : <>
               {matchingPages.length > 0 && <section aria-labelledby="workspace-command-pages" className="mb-2">
                 <h3 id="workspace-command-pages" className="px-2 py-2 text-xs font-medium text-muted-foreground">Pages</h3>
                 {matchingPages.map(({ view, label, icon: Icon }, index) => <button key={view} type="button" data-workspace-command-result={index === 0 || undefined} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setCommandOpen(false); openView(view) }}>
@@ -2335,6 +2690,20 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
                 <h3 id="workspace-command-projects" className="px-2 py-2 text-xs font-medium text-muted-foreground">Projects</h3>
                 {matchingProjects.map((project, index) => <button key={project.id} type="button" data-workspace-command-result={matchingPages.length === 0 && index === 0 || undefined} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => { setCommandOpen(false); activateProject(project); openView("overview") }}>
                   <FolderKanban className="h-4 w-4 text-muted-foreground" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{project.title}</span>{project.id === selectedId && <Badge variant="secondary">Current</Badge>}
+                </button>)}
+                </section>}
+              {matchingWorkItems.length > 0 && <section aria-labelledby="workspace-command-work-items" className="mb-2">
+                <h3 id="workspace-command-work-items" className="px-2 py-2 text-xs font-medium text-muted-foreground">Tasks</h3>
+                {matchingWorkItems.map((item, index) => <button key={item.id} type="button" data-workspace-command-result={matchingPages.length === 0 && matchingProjects.length === 0 && index === 0 ? "true" : undefined} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => {
+                  setCommandOpen(false)
+                  const project = projects.find((entry) => entry.id === item.project_id)
+                  if (project) activateProject(project)
+                  openView("workboard")
+                }}>
+                  <ListChecks className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                  <span className="max-w-40 truncate text-xs text-muted-foreground">{"project_title" in item ? item.project_title : selectedProjectName}</span>
+                  <Badge variant="outline">{item.status.replaceAll("_", " ")}</Badge>
                 </button>)}
               </section>}
               {matchingFiles.length > 0 && <section aria-labelledby="workspace-command-files" className="mb-2">
@@ -2364,6 +2733,87 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             <Button variant="secondary" onClick={()=>{ confirm.resolve?.(false); setConfirm(c=>({...c, open:false})) }}>Cancel</Button>
             <Button id="confirm-accept" variant="destructive" onClick={()=>{ confirm.resolve?.(true); setConfirm(c=>({...c, open:false})) }}>{confirm.label}</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(offboardingTarget)} onOpenChange={(open) => {
+        if (!open && !accountActionId) {
+          setOffboardingTarget(null)
+          setOffboardingImpact(null)
+          setOffboardingError("")
+        }
+      }}>
+        <DialogContent className="sm:max-w-xl" aria-describedby="offboarding-description">
+          <DialogHeader>
+            <DialogTitle>Review account offboarding</DialogTitle>
+            <DialogDescription id="offboarding-description">
+              {offboardingTarget?.is_active
+                ? "Review project ownership and open work before sign-in is disabled. Completed work and audit history stay intact."
+                : "Complete any remaining project handoff for this already-disabled account. Completed work and audit history stay intact."}
+            </DialogDescription>
+          </DialogHeader>
+          {offboardingTarget && <div className="grid gap-4">
+            <div className="rounded-xl border bg-muted/30 px-4 py-3">
+              <p className="text-sm font-semibold">{offboardingTarget.email}</p>
+              <p className="mt-1 text-xs capitalize text-muted-foreground">{offboardingTarget.role} · {offboardingTarget.is_active ? "sign-in access will be revoked" : "sign-in access is already disabled"}</p>
+            </div>
+
+            {accountActionId === offboardingTarget.id && !offboardingImpact && !offboardingError &&
+              <p className="text-sm text-muted-foreground" role="status">Checking projects, memberships, and open tasks…</p>}
+            {offboardingError && <div className="grid gap-2">
+              <Alert variant="destructive" role="alert"><AlertDescription>{offboardingError}</AlertDescription></Alert>
+              <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => void refreshAccountOffboardingImpact()} disabled={accountActionId === offboardingTarget.id}>Refresh impact and eligible teammates</Button>
+            </div>}
+            {offboardingImpact && <>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border px-3 py-2"><p className="text-xl font-semibold tabular-nums">{offboardingImpact.projects.filter(project => project.ownership_transfers).length}</p><p className="text-xs text-muted-foreground">Projects owned</p></div>
+                <div className="rounded-lg border px-3 py-2"><p className="text-xl font-semibold tabular-nums">{offboardingImpact.open_work_items_total}</p><p className="text-xs text-muted-foreground">Open tasks</p></div>
+                <div className="col-span-2 rounded-lg border px-3 py-2 sm:col-span-1"><p className="text-xl font-semibold tabular-nums">{offboardingImpact.memberships_to_remove}</p><p className="text-xs text-muted-foreground">Project memberships to remove</p></div>
+              </div>
+              {offboardingImpact.projects.length > 0 ? <section aria-label="Affected projects" className="grid gap-2">
+                <h3 className="text-sm font-semibold">Affected projects</h3>
+                <ul className="max-h-48 divide-y overflow-y-auto rounded-lg border">
+                  {offboardingImpact.projects.map(project => <li key={project.project_id} className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
+                    <span className="min-w-0 font-medium">{project.project_title}</span>
+                    <span className="shrink-0 text-right text-xs text-muted-foreground">
+                      {project.ownership_transfers && <span className="block">Ownership transfer</span>}
+                      {project.open_work_items_to_reassign > 0 && <span className="block">{project.open_work_items_to_reassign} open {project.open_work_items_to_reassign === 1 ? "task" : "tasks"}</span>}
+                      {project.legacy_email_assignments > 0 && <span className="block">{project.legacy_email_assignments} legacy email {project.legacy_email_assignments === 1 ? "label" : "labels"}</span>}
+                    </span>
+                  </li>)}
+                </ul>
+              </section> : <Alert><AlertDescription>No owned projects or open task assignments need transfer. Current project memberships will be removed; completed work and audit history will remain.</AlertDescription></Alert>}
+
+              {offboardingImpact.projects.some(project => project.ownership_transfers || project.open_work_items_to_reassign > 0) && offboardingImpact.eligible_replacements.length > 0 && <div className="grid gap-2">
+                <Label htmlFor="offboarding-replacement">Replacement teammate · required</Label>
+                <Select value={offboardingReplacementId} onValueChange={setOffboardingReplacementId}>
+                  <SelectTrigger id="offboarding-replacement"><SelectValue placeholder="Select an active teammate" /></SelectTrigger>
+                  <SelectContent>
+                    {offboardingImpact.eligible_replacements.map(candidate => <SelectItem key={candidate.id} value={candidate.id}>{candidate.email} · {candidate.role}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">A replacement receives transferred project ownership as a manager and takes over open tasks, including legacy labels that exactly match this account's email. Completed work is unchanged; other free-text labels are not guessed at.</p>
+              </div>}
+              {offboardingImpact.projects.some(project => project.ownership_transfers || project.open_work_items_to_reassign > 0) && offboardingImpact.eligible_replacements.length === 0 &&
+                <Alert variant="destructive"><AlertDescription>There is no active assignable teammate available. Invite or reactivate a teammate before offboarding this account.</AlertDescription></Alert>}
+            </>}
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={() => { setOffboardingTarget(null); setOffboardingImpact(null); setOffboardingError("") }} disabled={accountActionId === offboardingTarget.id}>Cancel</Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => void submitAccountOffboarding()}
+                disabled={!offboardingImpact || accountActionId === offboardingTarget.id || (offboardingImpact.projects.some(project => project.ownership_transfers || project.open_work_items_to_reassign > 0) && (!offboardingReplacementId || offboardingImpact.eligible_replacements.length === 0))}
+              >
+                {accountActionId === offboardingTarget.id
+                  ? "Processing…"
+                  : offboardingImpact?.projects.some(project => project.ownership_transfers || project.open_work_items_to_reassign > 0)
+                    ? offboardingTarget.is_active ? "Transfer work & disable access" : "Transfer work & complete offboarding"
+                    : offboardingTarget.is_active ? "Disable access" : "Complete offboarding"}
+              </Button>
+            </div>
+          </div>}
         </DialogContent>
       </Dialog>
 
