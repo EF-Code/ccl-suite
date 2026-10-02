@@ -38,10 +38,25 @@ bootstrap command prompts for the first administrator's password.
   authenticated session.
 - Administrators create, list, and revoke one-time account invitations under
   `/auth/invitations`; invitees accept them at `/auth/invitations/accept`.
-- Administrators can list and disable accounts under `/auth/users`.
+- Administrators can list accounts under `/auth/users`, review the impact at
+  `/auth/users/{user_id}/offboarding-impact`, and safely offboard accounts by
+  transferring owned projects and open tasks before access is removed.
 - `POST /projects` creates a database-backed project from a title, description,
   and existing user `owner_id`.
 - `GET /projects` lists projects persisted in the database.
+- `GET /projects/{project_id}/members` lists the active project's access list;
+  managers can add invited accounts and remove members after their open work
+  has been reassigned.
+- `GET /projects/{project_id}/member-candidates` lists eligible invited
+  accounts for managers. Membership grants project access independently from
+  task assignment.
+- `GET /projects/{project_id}/work-items` lists project work; `POST` and
+  `PATCH` create and update tasks with account-backed assignments.
+- `GET /my/work-items` returns the signed-in user's assigned work across
+  accessible projects, with bounded pagination and no-store caching.
+- `GET` and `POST /projects/{project_id}/work-items/{work_item_id}/comments`
+  provide project-scoped task discussions with role checks and content-free
+  audit events.
 - `POST` and `GET /projects/{project_id}/files` manage searchable file
   metadata. Inventory scans persist file names, extensions, MIME types, sizes,
   modification times, SHA-256 hashes, and lifecycle status.
