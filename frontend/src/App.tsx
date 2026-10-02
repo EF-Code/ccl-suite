@@ -1446,7 +1446,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         body: JSON.stringify(workItem),
       })
       showMessage("Work item added to the active project.")
-      await Promise.all([refreshWorkItems(selectedId), refreshMyWorkItems()])
+      await Promise.all([refreshWorkItems(selectedId), refreshMyWorkItems(), refreshNotifications()])
     } catch (error) {
       showMessage(error instanceof Error ? error.message : "The work item could not be created.", "error")
       throw error
@@ -1460,7 +1460,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         method: "PATCH",
         body: JSON.stringify(changes),
       })
-      await Promise.all([refreshWorkItems(selectedId), refreshMyWorkItems()])
+      await Promise.all([refreshWorkItems(selectedId), refreshMyWorkItems(), refreshNotifications()])
       showMessage("Work item updated.")
     } catch (error) {
       showMessage(error instanceof Error ? error.message : "The work item could not be updated.", "error")
@@ -1475,10 +1475,12 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   }
 
   async function handleAddWorkItemComment(projectId: string, workItemId: string, body: string) {
-    return apiRequest<WorkItemComment>(
+    const comment = await apiRequest<WorkItemComment>(
       `/projects/${projectId}/work-items/${workItemId}/comments`,
       { method: "POST", body: JSON.stringify({ body }) },
     )
+    await refreshNotifications()
+    return comment
   }
 
   async function handleUpdateMyWorkItem(projectId: string, workItemId: string, changes: WorkItemUpdate) {
@@ -1490,6 +1492,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       await Promise.all([
         refreshMyWorkItems(),
         selectedId === projectId ? refreshWorkItems(projectId) : Promise.resolve(),
+        refreshNotifications(),
       ])
       showMessage("Work item updated.")
     } catch (error) {
