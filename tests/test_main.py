@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import re
 from collections.abc import AsyncIterator, Generator
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -976,6 +976,129 @@ def test_task_notifications_are_private_persistent_and_markable() -> None:
     assert cleared.status_code == 200
     assert cleared.json()["total"] == 3
     assert cleared.json()["unread_total"] == 0
+
+
+def test_project_templates_capture_safe_tasks_and_create_private_projects() -> None:
+    source = request(
+        "POST",
+        "/projects",
+        json={
+            "title": "Reusable campaign brief",
+            "owner_id": TEST_OWNER_ID,
+            "description": "A repeatable editorial campaign.",
+            "category": "content production",
+            "scope": "Plan, produce, and review the campaign.",
+            "outputs": ["approved scripts", "published clips"],
+            "responsible_person": "Editorial lead",
+        },
+    )
+    project_id = source.json()["id"]
+    source_work_items = f"/projects/{project_id}/work-items"
+    member_id = create_active_account("template-task-assignee@example.test")
+    outsider_id = create_active_account("template-outsider@example.test")
+    member = request(
+        "POST",
+        f"/projects/{project_id}/members",
+        json={"user_id": member_id},
+    )
+    due_date = date.today() + timedelta(days=4)
+    source_task = request(
+        "POST",
+        source_work_items,
+        json={
+            "title": "Write the launch script",
+            "description": "Prepare a reviewed first draft.",
+            "assignee_id": member_id,
+            "priority": "high",
+            "due_date": due_date.isoformat(),
+        },
+    )
+    cancelled_task = request(
+        "POST", source_work_items, json={"title": "Discarded task"}
+    )
+    request(
+        "PATCH",
+        f"{source_work_items}/{cancelled_task.json()['id']}",
+        json={"status": "cancelled"},
+    )
+    template_response = request(
+        "POST",
+        f"/projects/{project_id}/templates",
+        json={"name": "Editorial campaign"},
+    )
+    template_id = template_response.json()["id"]
+    listed = request("GET", "/project-templates")
+    outsider_list = request(
+        "GET", "/project-templates", headers={"X-User-ID": outsider_id}
+    )
+    member_save = request(
+        "POST",
+        f"/projects/{project_id}/templates",
+        headers={"X-User-ID": member_id},
+        json={"name": "Not allowed"},
+    )
+    outsider_use = request(
+        "POST",
+        f"/project-templates/{template_id}/projects",
+        headers={"X-User-ID": outsider_id},
+        json={"title": "Private template copy"},
+    )
+    created_project = request(
+        "POST",
+        f"/project-templates/{template_id}/projects",
+        json={"title": "Q4 editorial campaign", "deadline": "2026-12-01"},
+    )
+    copied_items = request(
+        "GET", f"/projects/{created_project.json()['id']}/work-items"
+    )
+    duplicate_title = request(
+        "POST",
+        f"/project-templates/{template_id}/projects",
+        json={"title": "Q4 editorial campaign"},
+    )
+    outsider_delete = request(
+        "DELETE",
+        f"/project-templates/{template_id}",
+        headers={"X-User-ID": outsider_id},
+    )
+    deleted = request("DELETE", f"/project-templates/{template_id}")
+    after_delete = request("GET", "/project-templates")
+
+    assert source.status_code == 201
+    assert member.status_code == 201
+    assert source_task.status_code == 201
+    assert template_response.status_code == 201
+    assert template_response.json()["work_items"] == [
+        {
+            "title": "Write the launch script",
+            "description": "Prepare a reviewed first draft.",
+            "priority": "high",
+            "due_in_days": 4,
+        }
+    ]
+    assert listed.status_code == 200
+    assert [template["id"] for template in listed.json()] == [template_id]
+    assert outsider_list.status_code == 200
+    assert outsider_list.json() == []
+    assert member_save.status_code == 403
+    assert outsider_use.status_code == 404
+    assert created_project.status_code == 201
+    assert created_project.json()["title"] == "Q4 editorial campaign"
+    assert created_project.json()["description"] == "A repeatable editorial campaign."
+    assert created_project.json()["category"] == "content production"
+    assert created_project.json()["scope"] == "Plan, produce, and review the campaign."
+    assert created_project.json()["outputs"] == ["approved scripts", "published clips"]
+    assert created_project.json()["deadline"] == "2026-12-01"
+    assert len(copied_items.json()) == 1
+    assert copied_items.json()[0]["title"] == "Write the launch script"
+    assert copied_items.json()[0]["status"] == "todo"
+    assert copied_items.json()[0]["priority"] == "high"
+    assert copied_items.json()[0]["assignee_id"] is None
+    assert copied_items.json()[0]["due_date"] == due_date.isoformat()
+    assert duplicate_title.status_code == 409
+    assert outsider_delete.status_code == 404
+    assert deleted.status_code == 204
+    assert after_delete.json() == []
 
 
 def test_project_work_items_reject_cross_project_updates_and_intern_writes() -> None:
