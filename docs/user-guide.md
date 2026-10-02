@@ -12,6 +12,25 @@ authorized to work on from the active-project control. If the list is empty,
 ask an administrator or supervisor to register a project or invite you to the
 appropriate workflow. Sign out when finished, especially on a shared device.
 
+## Your work and project team
+
+Use **My Work** to review account-backed tasks assigned to you across projects.
+Search by task, project, or details; filter by status; and open a project from
+the task row. Older tasks may still show a legacy assignee label. That label is
+preserved until a manager explicitly reassigns the task to an account.
+
+Project membership controls access and is separate from assignment. A project
+manager can add an invited account to the active project; the owner, an
+administrator, or a supervisor can also grant the manager role. Only active,
+assignable project members can receive tasks. Before removing a member, move or
+clear their open assignments; completed work remains in the project history.
+
+Open **Discuss** on a workboard task to read its project-scoped discussion.
+Members with task-management access can add an update; interns can read but not
+post. Comments are retained as project history and cannot be edited or deleted.
+Each new comment creates an audit event that records the task and actor, not the
+comment text.
+
 ## File operations
 
 In Setup, register a project and generate its standard folder layout. In
