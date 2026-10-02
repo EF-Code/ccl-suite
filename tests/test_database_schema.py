@@ -57,6 +57,7 @@ REQUIRED_TABLES = {
     "operational_alerts",
     "work_items",
     "work_item_comments",
+    "user_notifications",
     "knowledge_sources",
     "ingestion_runs",
     "document_chunks",
