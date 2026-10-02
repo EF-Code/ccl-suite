@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 from starlette.concurrency import run_in_threadpool
@@ -94,6 +94,8 @@ from api_schemas import (
     KnowledgeSourceResponse,
     LoginRequest,
     ManagedAccountResponse,
+    NotificationInboxResponse,
+    NotificationReadAllResponse,
     MyWorkItemResponse,
     MyWorkItemsResponse,
     ProjectMemberCandidateResponse,
@@ -144,6 +146,7 @@ from api_schemas import (
     SecurityEventCreate,
     SecurityEventResponse,
     UserCreate,
+    UserNotificationResponse,
     UserResponse,
     UploadResponse,
     UploadPolicyResponse,
@@ -2271,6 +2274,143 @@ async def list_my_work_items(
         limit=limit,
         offset=offset,
     )
+
+
+@app.get(
+    "/my/notifications",
+    response_model=NotificationInboxResponse,
+    tags=["notifications"],
+)
+async def list_my_notifications(
+    response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    actor: User = Depends(require_permission("work_item.read")),
+    db: Session = Depends(get_db),
+) -> NotificationInboxResponse:
+    """Return only this user's notifications for projects they can still access."""
+
+    response.headers["Cache-Control"] = "no-store"
+    global_operator = canonical_role(actor.role) in {"administrator", "supervisor"}
+    project_scope = or_(
+        Project.owner_id == actor.id,
+        Project.memberships.any(ProjectMembership.user_id == actor.id),
+        global_operator,
+    )
+    filters = [UserNotification.recipient_id == actor.id, project_scope]
+    try:
+        total = db.scalar(
+            select(func.count())
+            .select_from(UserNotification)
+            .join(Project, Project.id == UserNotification.project_id)
+            .where(*filters)
+        ) or 0
+        unread_total = db.scalar(
+            select(func.count())
+            .select_from(UserNotification)
+            .join(Project, Project.id == UserNotification.project_id)
+            .where(*filters, UserNotification.read_at.is_(None))
+        ) or 0
+        rows = db.execute(
+            select(UserNotification, Project.name)
+            .join(Project, Project.id == UserNotification.project_id)
+            .where(*filters)
+            .order_by(UserNotification.created_at.desc(), UserNotification.id.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+    except SQLAlchemyError as exc:
+        logger.error("Notification inbox could not be loaded because the database was unavailable.")
+        raise HTTPException(status_code=503, detail="Notification inbox is temporarily unavailable.") from exc
+    return NotificationInboxResponse(
+        items=[UserNotificationResponse.from_model(notification, project_name) for notification, project_name in rows],
+        total=total,
+        unread_total=unread_total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.patch(
+    "/my/notifications/{notification_id}/read",
+    response_model=UserNotificationResponse,
+    tags=["notifications"],
+)
+async def mark_my_notification_read(
+    notification_id: UUID,
+    response: Response,
+    actor: User = Depends(require_permission("work_item.read")),
+    db: Session = Depends(get_db),
+) -> UserNotificationResponse:
+    """Mark a notification read without allowing access to another user's inbox."""
+
+    response.headers["Cache-Control"] = "no-store"
+    global_operator = canonical_role(actor.role) in {"administrator", "supervisor"}
+    project_scope = or_(
+        Project.owner_id == actor.id,
+        Project.memberships.any(ProjectMembership.user_id == actor.id),
+        global_operator,
+    )
+    try:
+        row = db.execute(
+            select(UserNotification, Project.name)
+            .join(Project, Project.id == UserNotification.project_id)
+            .where(
+                UserNotification.id == notification_id,
+                UserNotification.recipient_id == actor.id,
+                project_scope,
+            )
+        ).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Notification was not found.")
+        notification, project_name = row
+        if notification.read_at is None:
+            notification.read_at = utc_now()
+            db.commit()
+            db.refresh(notification)
+        return UserNotificationResponse.from_model(notification, project_name)
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Notification could not be marked read because the database was unavailable.")
+        raise HTTPException(status_code=503, detail="Notification could not be updated.") from exc
+
+
+@app.post(
+    "/my/notifications/read-all",
+    response_model=NotificationReadAllResponse,
+    tags=["notifications"],
+)
+async def mark_all_my_notifications_read(
+    actor: User = Depends(require_permission("work_item.read")),
+    db: Session = Depends(get_db),
+) -> NotificationReadAllResponse:
+    """Mark all currently accessible unread notifications as read."""
+
+    global_operator = canonical_role(actor.role) in {"administrator", "supervisor"}
+    project_scope = or_(
+        Project.owner_id == actor.id,
+        Project.memberships.any(ProjectMembership.user_id == actor.id),
+        global_operator,
+    )
+    accessible_project_ids = select(Project.id).where(project_scope)
+    try:
+        result = db.execute(
+            update(UserNotification)
+            .where(
+                UserNotification.recipient_id == actor.id,
+                UserNotification.read_at.is_(None),
+                UserNotification.project_id.in_(accessible_project_ids),
+            )
+            .values(read_at=utc_now())
+        )
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Notification inbox could not be marked read because the database was unavailable.")
+        raise HTTPException(status_code=503, detail="Notification inbox could not be updated.") from exc
+    return NotificationReadAllResponse(updated=result.rowcount or 0)
 
 
 @app.get(
