@@ -193,6 +193,25 @@ export type NotificationInboxResponse = {
   offset: number;
 };
 
+export type ProjectTemplateWorkItem = {
+  title: string;
+  description: string;
+  priority: WorkItemPriority;
+  due_in_days: number | null;
+};
+
+export type ProjectTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  scope: string;
+  outputs: string[];
+  responsible_person: string;
+  work_items: ProjectTemplateWorkItem[];
+  created_at: string;
+};
+
 export type Workflow = {
   id: string;
   project_id: string;
