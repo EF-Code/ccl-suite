@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -893,3 +894,87 @@ def test_project_template_can_be_saved_and_used(dashboard_page: Page) -> None:
     workboard = page.locator("section[aria-labelledby='workboard-title']")
     expect(workboard.get_by_role("heading", name=task_title)).to_be_visible()
     expect(workboard).to_contain_text("To do")
+
+
+def test_task_notification_inbox_marks_read_and_opens_assigned_work(dashboard_page: Page) -> None:
+    """Verify bulk reading and opening an inbox update reaches its project."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    suffix = uuid4().hex[:8]
+    project_title = f"Inbox project {suffix}"
+    open_workspace(page, "Setup")
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_id = project_row.get_by_role("button", name="Use project").get_attribute("data-project-id")
+    assert project_id
+
+    member_email = f"inbox-member-{uuid4().hex}@example.test"
+    member_password = "Browser-Inbox-Only-Password-2026!"
+    invitation = page.request.post(
+        f"{BASE_URL}/auth/invitations",
+        headers=csrf_headers(page),
+        data={"email": member_email, "role": "staff"},
+    )
+    assert invitation.status == 201, invitation.text()
+    token = invitation.json()["invite_url"].partition("#invite=")[2]
+    assert token
+    accepted = httpx.post(
+        f"{BASE_URL}/auth/invitations/accept",
+        json={"token": token, "password": member_password},
+        timeout=10,
+    )
+    assert accepted.status_code == 201, accepted.text
+    member_id = accepted.json()["id"]
+    membership = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/members",
+        headers={**csrf_headers(page), "Content-Type": "application/json"},
+        data=json.dumps({"user_id": member_id, "role": "member"}),
+    )
+    assert membership.status == 201, membership.text()
+
+    task_title = f"Assigned inbox task {suffix}"
+    created = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/work-items",
+        headers={**csrf_headers(page), "Content-Type": "application/json"},
+        data=json.dumps({"title": task_title, "assignee_id": member_id}),
+    )
+    assert created.status == 201, created.text()
+    follow_up_title = f"Second inbox task {suffix}"
+    follow_up = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/work-items",
+        headers={**csrf_headers(page), "Content-Type": "application/json"},
+        data=json.dumps({"title": follow_up_title, "assignee_id": member_id}),
+    )
+    assert follow_up.status == 201, follow_up.text()
+
+    browser = page.context.browser
+    assert browser is not None
+    member_page = browser.new_page()
+    member_page.set_default_timeout(10_000)
+    try:
+        member_page.goto(BASE_URL, wait_until="networkidle")
+        member_page.locator("#login-email").fill(member_email)
+        member_page.locator("#login-password").fill(member_password)
+        member_page.locator("#login-form").get_by_role("button", name="Sign in").click()
+        member_page.locator("#health-badge").wait_for(state="visible")
+        inbox_button = member_page.locator('button[aria-label^="Open project inbox"]')
+        expect(inbox_button).to_have_attribute("aria-label", re.compile(r"2 unread task notifications"))
+        inbox_button.click()
+        notification = member_page.get_by_role("button", name=re.compile(task_title))
+        expect(notification).to_be_visible()
+        expect(notification).to_contain_text(project_title)
+        member_page.get_by_role("button", name="Mark all read").click()
+        expect(inbox_button).to_have_attribute("aria-label", "Open project inbox")
+        follow_up_notification = member_page.get_by_role("button", name=re.compile(follow_up_title))
+        expect(follow_up_notification).to_be_visible()
+        follow_up_notification.click()
+        expect(member_page.locator("#active-project-title")).to_have_text(project_title)
+        expect(member_page.locator("#page-title")).to_have_text("Workboard")
+        workboard = member_page.locator("section[aria-labelledby='workboard-title']")
+        expect(workboard.get_by_role("heading", name=follow_up_title)).to_be_visible()
+        expect(inbox_button).to_have_attribute("aria-label", "Open project inbox")
+    finally:
+        member_page.close()
