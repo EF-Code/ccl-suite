@@ -41,6 +41,31 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
 }
 
 export type AuthUser = { id: string; email: string; role: string };
+export type ManagedAccount = {
+  id: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+};
+
+export type AccountOffboardingProjectImpact = {
+  project_id: string;
+  project_title: string;
+  ownership_transfers: boolean;
+  open_work_items_to_reassign: number;
+  legacy_email_assignments: number;
+};
+
+export type AccountOffboardingImpact = {
+  user_id: string;
+  email: string;
+  is_active: boolean;
+  projects: AccountOffboardingProjectImpact[];
+  open_work_items_total: number;
+  memberships_to_remove: number;
+  eligible_replacements: ManagedAccount[];
+};
+
 export type InvitationResult = {
   id: string;
   email: string;
@@ -92,6 +117,7 @@ export type WorkItem = {
   project_id: string;
   title: string;
   description: string;
+  assignee_id: string | null;
   assignee: string | null;
   priority: WorkItemPriority;
   status: WorkItemStatus;
@@ -102,8 +128,50 @@ export type WorkItem = {
   updated_at: string;
 };
 
-export type WorkItemCreate = Pick<WorkItem, "title" | "description" | "assignee" | "priority" | "due_date">;
-export type WorkItemUpdate = Partial<Pick<WorkItem, "title" | "description" | "assignee" | "priority" | "status" | "due_date">>;
+export type WorkItemComment = {
+  id: string;
+  work_item_id: string;
+  author_id: string | null;
+  author_label: string;
+  body: string;
+  created_at: string;
+};
+
+export type WorkItemCommentsResponse = {
+  comments: WorkItemComment[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type WorkItemCreate = Pick<WorkItem, "title" | "description" | "assignee_id" | "priority" | "due_date">;
+export type WorkItemUpdate = Partial<Pick<WorkItem, "title" | "description" | "assignee_id" | "priority" | "status" | "due_date">>;
+
+export type ProjectMember = {
+  project_id: string;
+  user_id: string;
+  email: string | null;
+  account_role: string;
+  role: "manager" | "member";
+  is_active: boolean;
+  created_at: string;
+};
+
+export type ProjectMemberCandidate = {
+  user_id: string;
+  email: string;
+  account_role: string;
+  is_member: boolean;
+  can_be_assigned: boolean;
+};
+
+export type MyWorkItem = WorkItem & { project_title: string };
+export type MyWorkItemsResponse = {
+  items: MyWorkItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
 
 export type Workflow = {
   id: string;
