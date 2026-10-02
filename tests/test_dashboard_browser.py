@@ -713,8 +713,8 @@ def test_dashboard_mobile_header_controls_do_not_overlap(dashboard_page: Page) -
     assert inbox["x"] + inbox["width"] <= logout["x"] + 1
 
 
-def test_administrator_can_deactivate_and_reactivate_team_accounts(dashboard_page: Page) -> None:
-    """Make account offboarding visible and reversible from the admin workspace."""
+def test_administrator_can_offboard_and_reactivate_team_accounts(dashboard_page: Page) -> None:
+    """Exercise the current impact-first offboarding and reactivation workflow."""
 
     page = dashboard_page
     page.goto(BASE_URL, wait_until="networkidle")
@@ -736,13 +736,22 @@ def test_administrator_can_deactivate_and_reactivate_team_accounts(dashboard_pag
 
     open_workspace(page, "Setup")
     team = page.locator("#team-account-management")
+    team.get_by_role("button", name="Refresh team accounts").click()
     account_row = team.get_by_role("listitem").filter(has_text=email)
     account_row.wait_for(state="visible")
     expect(account_row.get_by_text("Active", exact=True)).to_be_visible()
 
-    account_row.get_by_role("button", name=f"Deactivate {email}").click()
-    confirm_protected_action(page)
+    account_row.get_by_role("button", name=f"Offboard {email}").click()
+    offboarding_dialog = page.get_by_role("dialog")
+    expect(offboarding_dialog.get_by_role("heading", name="Review account offboarding")).to_be_visible()
+    expect(offboarding_dialog).to_contain_text(
+        "No owned projects or open task assignments need transfer"
+    )
+    disable_button = offboarding_dialog.get_by_role("button", name="Disable access")
+    expect(disable_button).to_be_enabled()
+    disable_button.click()
     expect(account_row.get_by_text("Deactivated", exact=True)).to_be_visible()
 
     account_row.get_by_role("button", name=f"Reactivate {email}").click()
+    confirm_protected_action(page)
     expect(account_row.get_by_text("Active", exact=True)).to_be_visible()
