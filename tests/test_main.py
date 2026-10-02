@@ -904,6 +904,80 @@ def test_project_work_items_support_audited_status_lifecycle() -> None:
     } == {"work_item.created", "work_item.status_changed"}
 
 
+def test_task_notifications_are_private_persistent_and_markable() -> None:
+    project = create_project("Notification inbox")
+    project_id = str(project["id"])
+    endpoint = f"/projects/{project_id}/work-items"
+    member_id = create_active_account("notification-recipient@example.test")
+    outsider_id = create_active_account("notification-outsider@example.test")
+    added_member = request(
+        "POST",
+        f"/projects/{project_id}/members",
+        json={"user_id": member_id},
+    )
+    created = request(
+        "POST",
+        endpoint,
+        json={"title": "Prepare launch assets", "assignee_id": member_id},
+    )
+    item_id = created.json()["id"]
+    recipient_headers = {"X-User-ID": member_id}
+    initial = request("GET", "/my/notifications", headers=recipient_headers)
+    owner_cannot_read = request(
+        "PATCH", f"/my/notifications/{initial.json()['items'][0]['id']}/read"
+    )
+    changed = request(
+        "PATCH", f"{endpoint}/{item_id}", json={"status": "in_progress"}
+    )
+    comment = request(
+        "POST",
+        f"{endpoint}/{item_id}/comments",
+        json={"body": "Internal note that should not be copied into the inbox."},
+    )
+    inbox = request("GET", "/my/notifications?limit=10", headers=recipient_headers)
+    outsider_inbox = request(
+        "GET", "/my/notifications", headers={"X-User-ID": outsider_id}
+    )
+    first_read = request(
+        "PATCH",
+        f"/my/notifications/{initial.json()['items'][0]['id']}/read",
+        headers=recipient_headers,
+    )
+    read_all = request(
+        "POST", "/my/notifications/read-all", headers=recipient_headers
+    )
+    cleared = request("GET", "/my/notifications", headers=recipient_headers)
+
+    assert added_member.status_code == 201
+    assert created.status_code == 201
+    assert initial.status_code == 200
+    assert initial.headers["cache-control"] == "no-store"
+    assert initial.json()["total"] == initial.json()["unread_total"] == 1
+    assert initial.json()["items"][0]["event_type"] == "task.assigned"
+    assert initial.json()["items"][0]["project_title"] == "Notification inbox"
+    assert owner_cannot_read.status_code == 404
+    assert changed.status_code == 200
+    assert comment.status_code == 201
+    assert inbox.status_code == 200
+    assert inbox.json()["total"] == inbox.json()["unread_total"] == 3
+    assert {item["event_type"] for item in inbox.json()["items"]} == {
+        "task.assigned",
+        "task.status_changed",
+        "task.comment_added",
+    }
+    assert all(item["work_item_id"] == item_id for item in inbox.json()["items"])
+    assert all("Internal note" not in item["message"] for item in inbox.json()["items"])
+    assert outsider_inbox.status_code == 200
+    assert outsider_inbox.json()["total"] == 0
+    assert first_read.status_code == 200
+    assert first_read.json()["read_at"] is not None
+    assert read_all.status_code == 200
+    assert read_all.json() == {"updated": 2}
+    assert cleared.status_code == 200
+    assert cleared.json()["total"] == 3
+    assert cleared.json()["unread_total"] == 0
+
+
 def test_project_work_items_reject_cross_project_updates_and_intern_writes() -> None:
     project = create_project("Work-item access")
     other_project = create_project("Other work-item project")
