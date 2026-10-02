@@ -2637,6 +2637,7 @@ async def update_project_work_item(
     if item.project_id != project_id:
         raise HTTPException(status_code=404, detail="Work item was not found.")
 
+    previous_assignee_id = item.assignee_id
     updates = changes.model_dump(exclude_unset=True)
     assignee_user: User | None = None
     if "assignee_id" in updates:
@@ -2677,7 +2678,17 @@ async def update_project_work_item(
         event_code = "work_item.assigned" if item.assignee_id else "work_item.unassigned"
     else:
         event_code = "work_item.updated"
-    saved = persist_work_item_change(db, item, actor.id, event_code)
+    notifications: list[tuple[UUID, str, str, str]] = []
+    if item.assignee_id is not None and item.assignee_id != previous_assignee_id:
+        notifications.append(
+            (
+                item.assignee_id,
+                "task.assigned",
+                "Task assigned to you",
+                f'You were assigned "{item.title}".',
+            )
+        )
+    saved = persist_work_item_change(db, item, actor.id, event_code, notifications)
     return WorkItemResponse.model_validate(saved)
 
 
