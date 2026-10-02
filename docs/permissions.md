@@ -17,12 +17,34 @@ request is rejected and recorded as `access.denied`.
 | --- | --- |
 | `administrator` | All project, work-item, file, backup, conversion, workflow, approval, security, knowledge-source, and user-management operations |
 | `supervisor` | Project and work-item management, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/review/ingestion, security-event writes, and alert management |
-| `staff` | Owned-project and work-item management, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read/ingestion, scoped security reads, and alert evaluation |
+| `staff` | Work-item management in projects they own or are explicitly a member of, file read/upload/restore/organise, backup create/read/verify/restore, conversion, workflow, approval decisions, knowledge-source registration/read/ingestion, scoped security reads, and alert evaluation |
 | `intern` | Project, work-item, and file metadata read only |
 
+Project owners are enrolled as project managers. Project managers can add or
+remove ordinary members; only the owner, an administrator, or a supervisor can
+promote or remove another project manager. Membership grants project access,
+but assigning a task never does. Assignments must reference an active project
+member with an assignable account role; interns remain read-only and cannot be
+assigned.
+
 Work-item operations use `work_item.read` and `work_item.manage` and remain
-inside the same project boundary as other project data. The optional assignee
-is a display label, not an account assignment or access grant.
+inside the same project boundary as other project data. Removing a member is
+blocked while they own open work items; reassign or unassign that work first.
+Older free-text assignee labels are retained as legacy labels and must be
+explicitly reassigned before they appear in an account's personal work list.
+`GET /my/work-items` returns the signed-in user's account-backed assignments
+across projects they can access and disables HTTP caching for that response.
+Task comments use the same boundaries: `work_item.read` permits reading, while
+`work_item.manage` permits posting. Comment audit events contain the task
+reference and actor but never the comment text.
+
+Only administrators can offboard invited accounts. The impact preview lists
+owned projects, open assignments, and memberships before any change. A
+replacement is required when ownership or open tasks need transfer and must be
+an active, non-intern account. Ownership, assignments, project memberships,
+session revocation, account deactivation, and their audit events are committed
+atomically. Completed assignments are preserved, and reactivation does not
+restore removed project memberships.
 
 Only administrators and supervisors have `security.write`. Staff cannot create
 security events or acknowledge and resolve alerts. Staff security views are
