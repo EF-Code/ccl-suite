@@ -2522,9 +2522,24 @@ async def create_work_item_comment(
         author_label=actor.email or actor.external_ref,
         body=comment_request.body,
     )
+    recipients = {item.assignee_id, item.created_by_id} - {None, actor.id}
     try:
         db.add(comment)
         db.flush()
+        for recipient_id in recipients:
+            recipient = db.get(User, recipient_id)
+            if recipient is not None and recipient.is_active:
+                db.add(
+                    UserNotification(
+                        recipient_id=recipient_id,
+                        actor_id=actor.id,
+                        project_id=project_id,
+                        work_item_id=item.id,
+                        event_type="task.comment_added",
+                        title="New task discussion update",
+                        message=f'A teammate added an update to "{item.title}".',
+                    )
+                )
         db.add(
             SecurityEvent(
                 actor_id=actor.id,
