@@ -50,6 +50,11 @@ class User(Base):
     )
 
     projects: Mapped[list[Project]] = relationship(back_populates="owner")
+    project_memberships: Mapped[list[ProjectMembership]] = relationship(
+        back_populates="user",
+        foreign_keys=lambda: [ProjectMembership.user_id],
+        cascade="all, delete-orphan",
+    )
     uploaded_files: Mapped[list[File]] = relationship(
         back_populates="uploaded_by",
         foreign_keys=lambda: [File.uploaded_by_id],
@@ -61,6 +66,10 @@ class User(Base):
     created_work_items: Mapped[list[WorkItem]] = relationship(
         back_populates="created_by",
         foreign_keys=lambda: [WorkItem.created_by_id],
+    )
+    work_item_comments: Mapped[list[WorkItemComment]] = relationship(
+        back_populates="author",
+        foreign_keys=lambda: [WorkItemComment.author_id],
     )
     created_backups: Mapped[list[Backup]] = relationship(
         back_populates="created_by",
@@ -224,6 +233,40 @@ class Project(Base):
     work_items: Mapped[list[WorkItem]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    memberships: Mapped[list[ProjectMembership]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class ProjectMembership(Base):
+    """Grant one account access to a project independently of task assignment."""
+
+    __tablename__ = "project_memberships"
+    __table_args__ = (
+        CheckConstraint("role IN ('manager', 'member')", name="ck_project_memberships_role"),
+        Index("ix_project_memberships_user_project", "user_id", "project_id"),
+    )
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
+    added_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    project: Mapped[Project] = relationship(back_populates="memberships")
+    user: Mapped[User] = relationship(
+        back_populates="project_memberships",
+        foreign_keys=[user_id],
+    )
+    added_by: Mapped[User | None] = relationship(foreign_keys=[added_by_id])
 
 
 class WorkItem(Base):
@@ -232,6 +275,7 @@ class WorkItem(Base):
     __tablename__ = "work_items"
     __table_args__ = (
         Index("ix_work_items_project_status_due", "project_id", "status", "due_date"),
+        Index("ix_work_items_assignee_status_due", "assignee_id", "status", "due_date"),
         CheckConstraint("length(trim(title)) > 0", name="ck_work_items_title_not_blank"),
         CheckConstraint(
             "status IN ('todo', 'in_progress', 'blocked', 'done', 'cancelled')",
@@ -246,6 +290,9 @@ class WorkItem(Base):
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     project_id: Mapped[UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    assignee_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -265,9 +312,59 @@ class WorkItem(Base):
     )
 
     project: Mapped[Project] = relationship(back_populates="work_items")
+    assignee_user: Mapped[User | None] = relationship(foreign_keys=[assignee_id])
     created_by: Mapped[User | None] = relationship(
         back_populates="created_work_items",
         foreign_keys=[created_by_id],
+    )
+    comments: Mapped[list[WorkItemComment]] = relationship(
+        back_populates="work_item",
+        cascade="all, delete-orphan",
+        order_by="WorkItemComment.created_at",
+    )
+
+    @property
+    def assignee_display(self) -> str | None:
+        """Show a real account when assigned, otherwise retain a legacy label."""
+
+        if self.assignee_user is not None:
+            return self.assignee_user.email or self.assignee_user.external_ref
+        return self.assignee
+
+    @property
+    def project_title(self) -> str:
+        """Expose the parent project label for cross-project personal work views."""
+
+        return self.project.name
+
+
+class WorkItemComment(Base):
+    """Project-scoped discussion entry that remains after account offboarding."""
+
+    __tablename__ = "work_item_comments"
+    __table_args__ = (
+        Index("ix_work_item_comments_item_created_at", "work_item_id", "created_at"),
+        CheckConstraint("length(trim(body)) > 0", name="ck_work_item_comments_body_not_blank"),
+        CheckConstraint("length(body) <= 4000", name="ck_work_item_comments_body_max_length"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    work_item_id: Mapped[UUID] = mapped_column(
+        ForeignKey("work_items.id", ondelete="CASCADE"), nullable=False
+    )
+    author_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    author_label: Mapped[str] = mapped_column(String(254), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    work_item: Mapped[WorkItem] = relationship(back_populates="comments")
+    author: Mapped[User | None] = relationship(
+        back_populates="work_item_comments",
+        foreign_keys=[author_id],
     )
 
 

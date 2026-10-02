@@ -1,10 +1,13 @@
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
+from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.engine import make_url
-from sqlalchemy.orm import configure_mappers
+from sqlalchemy.orm import Session, configure_mappers
 
 from database import Base, get_database_url
 from models import (
@@ -21,6 +24,7 @@ from models import (
     KnowledgeSource,
     OperationalAlert,
     Project,
+    ProjectMembership,
     ResearchReview,
     ResearchReviewClaim,
     ResearchReviewEvent,
@@ -30,6 +34,7 @@ from models import (
     WorkflowAction,
     WorkflowToolRun,
     WorkItem,
+    WorkItemComment,
 )
 
 REQUIRED_TABLES = {
@@ -38,6 +43,7 @@ REQUIRED_TABLES = {
     "auth_sessions",
     "auth_throttles",
     "projects",
+    "project_memberships",
     "files",
     "file_history",
     "file_versions",
@@ -50,6 +56,7 @@ REQUIRED_TABLES = {
     "security_events",
     "operational_alerts",
     "work_items",
+    "work_item_comments",
     "knowledge_sources",
     "ingestion_runs",
     "document_chunks",
@@ -69,6 +76,10 @@ def test_relationship_mappers_configure() -> None:
     configure_mappers()
 
     assert User.projects.property.mapper.class_ is Project
+    assert User.project_memberships.property.mapper.class_ is ProjectMembership
+    assert Project.memberships.property.mapper.class_ is ProjectMembership
+    assert ProjectMembership.user.property.mapper.class_ is User
+    assert ProjectMembership.project.property.mapper.class_ is Project
     assert Project.files.property.mapper.class_ is File
     assert Project.backups.property.mapper.class_ is Backup
     assert Project.knowledge_sources.property.mapper.class_ is KnowledgeSource
@@ -85,6 +96,11 @@ def test_relationship_mappers_configure() -> None:
     assert File.knowledge_sources.property.mapper.class_ is KnowledgeSource
     assert Project.workflows.property.mapper.class_ is Workflow
     assert Project.work_items.property.mapper.class_ is WorkItem
+    assert WorkItem.assignee_user.property.mapper.class_ is User
+    assert WorkItem.comments.property.mapper.class_ is WorkItemComment
+    assert WorkItemComment.work_item.property.mapper.class_ is WorkItem
+    assert WorkItemComment.author.property.mapper.class_ is User
+    assert User.work_item_comments.property.mapper.class_ is WorkItemComment
     assert User.created_work_items.property.mapper.class_ is WorkItem
     assert Workflow.approvals.property.mapper.class_ is Approval
     assert Workflow.actions.property.mapper.class_ is WorkflowAction
@@ -223,7 +239,16 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     }
     assert {
         index.name for index in WorkItem.__table__.indexes
-    } == {"ix_work_items_project_status_due"}
+    } == {"ix_work_items_project_status_due", "ix_work_items_assignee_status_due"}
+    assert {index.name for index in WorkItemComment.__table__.indexes} == {
+        "ix_work_item_comments_item_created_at"
+    }
+    assert {
+        constraint.name for constraint in WorkItemComment.__table__.constraints
+    } >= {"ck_work_item_comments_body_not_blank", "ck_work_item_comments_body_max_length"}
+    assert "ix_project_memberships_user_project" in {
+        index.name for index in ProjectMembership.__table__.indexes
+    }
     assert {
         constraint.name for constraint in WorkItem.__table__.constraints
     } >= {"ck_work_items_title_not_blank", "ck_work_items_status", "ck_work_items_priority"}
@@ -268,6 +293,10 @@ def test_required_indexes_and_foreign_keys_are_declared() -> None:
     review_claim_fk = next(iter(ResearchReviewClaim.__table__.c.review_id.foreign_keys))
     assert review_project_fk.ondelete == "CASCADE"
     assert review_claim_fk.ondelete == "CASCADE"
+    comment_item_fk = next(iter(WorkItemComment.__table__.c.work_item_id.foreign_keys))
+    comment_author_fk = next(iter(WorkItemComment.__table__.c.author_id.foreign_keys))
+    assert comment_item_fk.ondelete == "CASCADE"
+    assert comment_author_fk.ondelete == "SET NULL"
 
 
 def test_alembic_revision_ids_fit_version_column_limit() -> None:
@@ -277,6 +306,78 @@ def test_alembic_revision_ids_fit_version_column_limit() -> None:
     too_long = [revision.revision for revision in revisions if len(revision.revision) > 32]
 
     assert too_long == []
+
+
+def test_membership_migration_preserves_legacy_labels_and_enrolls_owners(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'membership-migration.sqlite3'}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    command.upgrade(config, "0017_project_work_items")
+
+    owner_id = uuid4()
+    project_id = uuid4()
+    work_item_id = uuid4()
+    engine = create_engine(database_url)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(
+            User.__table__.insert().values(
+                id=owner_id,
+                external_ref="migration-owner",
+                email="migration-owner@example.test",
+                is_active=True,
+                role="staff",
+            )
+        )
+        connection.execute(
+            Project.__table__.insert().values(
+                id=project_id,
+                owner_id=owner_id,
+                name="Legacy project",
+                storage_slug="legacy-project",
+                description="",
+                category="general",
+                scope="",
+                deadline=None,
+                outputs=[],
+                responsible_person="",
+                status="active",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        connection.execute(
+            WorkItem.__table__.insert().values(
+                id=work_item_id,
+                project_id=project_id,
+                title="Legacy assignment",
+                description="Keep its original label until reviewed.",
+                assignee="Video editor",
+                status="todo",
+                priority="normal",
+                due_date=None,
+                created_by_id=owner_id,
+                completed_at=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    migrated_engine = create_engine(database_url)
+    with Session(migrated_engine) as session:
+        membership = session.get(ProjectMembership, (project_id, owner_id))
+        work_item = session.get(WorkItem, work_item_id)
+
+    assert membership is not None
+    assert membership.role == "manager"
+    assert work_item is not None
+    assert work_item.assignee_id is None
+    assert work_item.assignee == "Video editor"
+    migrated_engine.dispose()
 
 
 def test_sensitive_payload_columns_are_not_stored() -> None:
