@@ -7,6 +7,9 @@ audit queries.
 ```mermaid
 erDiagram
     USER ||--o{ PROJECT : owns
+    USER ||--o{ PROJECT_MEMBERSHIP : joins
+    PROJECT ||--o{ PROJECT_MEMBERSHIP : has_team
+    USER ||--o{ WORK_ITEM : assigned_to
     USER ||--o{ FILE : uploads
     USER ||--o{ WORKFLOW : creates
     USER ||--o{ BACKUP : creates
@@ -20,6 +23,9 @@ erDiagram
     FILE ||--o{ FILE_HISTORY : records
     FILE ||--o{ FILE_VERSION : versions
     PROJECT ||--o{ WORKFLOW : defines
+    PROJECT ||--o{ WORK_ITEM : tracks
+    WORK_ITEM ||--o{ WORK_ITEM_COMMENT : discusses
+    USER ||--o{ WORK_ITEM_COMMENT : authors
     PROJECT ||--o{ BACKUP : stores
     PROJECT ||--o{ KNOWLEDGE_SOURCE : registers
     FILE ||--o{ KNOWLEDGE_SOURCE : references
@@ -48,6 +54,36 @@ erDiagram
         string status
         datetime created_at
         datetime updated_at
+    }
+    PROJECT_MEMBERSHIP {
+        UUID project_id PK, FK
+        UUID user_id PK, FK
+        string role
+        UUID added_by_id FK
+        datetime created_at
+    }
+    WORK_ITEM {
+        UUID id PK
+        UUID project_id FK
+        UUID assignee_id FK
+        UUID created_by_id FK
+        string title
+        text description
+        string assignee
+        string status
+        string priority
+        date due_date
+        datetime completed_at
+        datetime created_at
+        datetime updated_at
+    }
+    WORK_ITEM_COMMENT {
+        UUID id PK
+        UUID work_item_id FK
+        UUID author_id FK
+        string author_label
+        text body
+        datetime created_at
     }
     BACKUP {
         UUID id PK
@@ -206,8 +242,16 @@ erDiagram
 
 ## Design notes
 
-- `users.external_ref` is an opaque identity reference. The database does not
-  store passwords, access tokens, email addresses, or profile records.
+- `users.external_ref` is an opaque identity reference. User email addresses
+  support invitation-based accounts; passwords are stored only as hashes, and
+  session tokens are stored only as digests.
+- `project_memberships` separates project access from task assignment. Existing
+  project owners are backfilled as managers; legacy work-item assignee labels
+  remain unchanged and are not guessed into account identities.
+- `work_items.assignee_id` references an account independently from the legacy
+  `assignee` display-label field. New assignments use active project members;
+  `GET /my/work-items` exposes account-backed assignments across accessible
+  projects.
 - `files` stores searchable metadata, the latest SHA-256 checksum, and a
   lifecycle status. File contents remain in the approved filesystem boundary.
 - `file_history` stores immutable metadata snapshots for `created`, `updated`,
@@ -242,7 +286,8 @@ erDiagram
 - Project, file, and workflow relationships use cascading deletion within a
   project. Actor references use `SET NULL` so an identity record can be removed
   without destroying audit history.
-- Indexes cover project ownership/status, file lookup by project/status,
+- Indexes cover project ownership/status, project membership lookup by user,
+  assigned work-item lookup by account/status/due date, file lookup by project/status,
   file-history lookup by file/time, workflow status, approval status, and
   backup lookup by project/status and time, ingestion lookup by project/source
   and time, chunk lookup by project/source/index, feedback/report lookup by
@@ -258,5 +303,6 @@ export DATABASE_URL='postgresql+psycopg://localhost/ccl_suite'
 .venv/bin/python -m alembic upgrade head
 ```
 
-The migration creates tables and constraints only; it does not insert personal
-data or seed credentials.
+The migration adds project membership and account-backed assignments. It
+enrolls each existing project owner as a manager, preserves legacy assignee
+labels without inferring account identities, and does not seed credentials.
