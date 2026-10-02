@@ -272,11 +272,13 @@ from models import (
     OperationalAlert,
     Project,
     ProjectMembership,
+    ProjectTemplate,
     ResearchReview,
     ResearchReviewClaim,
     ResearchReviewEvent,
     SecurityEvent,
     User,
+    UserNotification,
     WorkItem,
     WorkItemComment,
     Workflow,
@@ -425,12 +427,26 @@ def persist_work_item_change(
     item: WorkItem,
     actor_id: UUID,
     event_code: str,
+    notifications: list[tuple[UUID, str, str, str]] | None = None,
 ) -> WorkItem:
     """Commit one work-item change and its content-free audit event atomically."""
 
     db.add(item)
     try:
         db.flush()
+        for recipient_id, event_type, title, message in notifications or []:
+            if recipient_id != actor_id:
+                db.add(
+                    UserNotification(
+                        recipient_id=recipient_id,
+                        actor_id=actor_id,
+                        project_id=item.project_id,
+                        work_item_id=item.id,
+                        event_type=event_type,
+                        title=title,
+                        message=message,
+                    )
+                )
         db.add(
             SecurityEvent(
                 actor_id=actor_id,
