@@ -368,6 +368,77 @@ class WorkItemComment(Base):
     )
 
 
+class UserNotification(Base):
+    """A durable, private inbox event linked to work the recipient can access."""
+
+    __tablename__ = "user_notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('task.assigned', 'task.status_changed', 'task.comment_added')",
+            name="ck_user_notifications_event_type",
+        ),
+        CheckConstraint("length(trim(title)) > 0", name="ck_user_notifications_title_not_blank"),
+        CheckConstraint("length(trim(message)) > 0", name="ck_user_notifications_message_not_blank"),
+        Index(
+            "ix_user_notifications_recipient_read_created",
+            "recipient_id",
+            "read_at",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    recipient_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    work_item_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("work_items.id", ondelete="SET NULL"), nullable=True
+    )
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ProjectTemplate(Base):
+    """A private reusable project brief and task checklist owned by one account."""
+
+    __tablename__ = "project_templates"
+    __table_args__ = (
+        CheckConstraint("length(trim(name)) > 0", name="ck_project_templates_name_not_blank"),
+        Index("ix_project_templates_owner_created", "owner_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    category: Mapped[str] = mapped_column(String(80), nullable=False, default="general")
+    scope: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    outputs: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    responsible_person: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    work_items_json: Mapped[list[dict[str, object]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
 class Backup(Base):
     """Metadata for an immutable project archive stored outside project data."""
 
