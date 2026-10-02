@@ -14,7 +14,7 @@ from knowledge_contract import (
     ANSWER_CONTRACT_VERSION,
     ANSWER_MODE,
 )
-from models import KnowledgeSource, Project
+from models import KnowledgeSource, Project, UserNotification
 from research_evidence import (
     EVIDENCE_WARNING_CODES,
     MAX_RESEARCH_WARNING_COUNT,
@@ -293,6 +293,44 @@ class WorkItemCommentsResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class UserNotificationResponse(BaseModel):
+    id: UUID
+    project_id: UUID
+    project_title: str
+    work_item_id: UUID | None
+    event_type: Literal["task.assigned", "task.status_changed", "task.comment_added"]
+    title: str
+    message: str
+    created_at: datetime
+    read_at: datetime | None
+
+    @classmethod
+    def from_model(cls, notification: UserNotification, project_title: str) -> UserNotificationResponse:
+        return cls(
+            id=notification.id,
+            project_id=notification.project_id,
+            project_title=project_title,
+            work_item_id=notification.work_item_id,
+            event_type=notification.event_type,
+            title=notification.title,
+            message=notification.message,
+            created_at=notification.created_at,
+            read_at=notification.read_at,
+        )
+
+
+class NotificationInboxResponse(BaseModel):
+    items: list[UserNotificationResponse]
+    total: int
+    unread_total: int
+    limit: int
+    offset: int
+
+
+class NotificationReadAllResponse(BaseModel):
+    updated: int
 
 
 class MyWorkItemResponse(WorkItemResponse):
