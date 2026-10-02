@@ -58,6 +58,7 @@ REQUIRED_TABLES = {
     "work_items",
     "work_item_comments",
     "user_notifications",
+    "project_templates",
     "knowledge_sources",
     "ingestion_runs",
     "document_chunks",
