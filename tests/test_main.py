@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import re
 from collections.abc import AsyncIterator, Generator
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -23,8 +23,8 @@ from main import (
     STATIC_DIR,
     app,
     health,
-    login,
     list_records,
+    login,
     persist_record,
     require_current_session,
     require_record,
@@ -1001,7 +1001,7 @@ def test_project_templates_capture_safe_tasks_and_create_private_projects() -> N
         f"/projects/{project_id}/members",
         json={"user_id": member_id},
     )
-    due_date = date.today() + timedelta(days=4)
+    due_date = datetime.now(timezone.utc).date() + timedelta(days=4)
     source_task = request(
         "POST",
         source_work_items,
