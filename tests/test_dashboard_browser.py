@@ -8,16 +8,17 @@ isolated development database and project root with a bootstrapped admin.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import httpx
 import pytest
-
 
 pytestmark = pytest.mark.browser
 
@@ -28,8 +29,8 @@ if os.getenv("RUN_BROWSER_TESTS") != "1":
     )
 
 playwright = pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright  # noqa: E402
-
+from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 BASE_URL = os.getenv("DASHBOARD_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 TEST_EMAIL = os.getenv("DASHBOARD_TEST_EMAIL")
@@ -755,3 +756,94 @@ def test_administrator_can_offboard_and_reactivate_team_accounts(dashboard_page:
     account_row.get_by_role("button", name=f"Reactivate {email}").click()
     confirm_protected_action(page)
     expect(account_row.get_by_text("Active", exact=True)).to_be_visible()
+
+
+def test_workboard_views_and_task_filters(dashboard_page: Page) -> None:
+    """Keep board, list, and calendar presentations aligned with shared filters."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    project_title = f"Task views {uuid4().hex[:8]}"
+    open_workspace(page, "Setup")
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.locator("textarea[name='description']").fill("View and filter acceptance test")
+    owner_id = project_form.locator("input[name='owner_id']").input_value()
+    project_form.get_by_role("button", name="Register project").click()
+    expect(page.locator("#active-project-title")).to_have_text(project_title)
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_id = project_row.get_by_role("button", name="Use project").get_attribute("data-project-id")
+    assert project_id and owner_id
+
+    today = datetime.now(timezone.utc).date()
+    due_date = today + timedelta(days=6 - today.weekday())
+    work_items_url = f"{BASE_URL}/projects/{project_id}/work-items"
+    headers = {**csrf_headers(page), "Content-Type": "application/json"}
+    urgent_title = f"Urgent task {uuid4().hex[:8]}"
+    unplanned_title = f"Unplanned task {uuid4().hex[:8]}"
+    urgent_response = page.request.post(
+        work_items_url,
+        headers=headers,
+        data=json.dumps({
+            "title": urgent_title,
+            "assignee_id": owner_id,
+            "priority": "urgent",
+            "due_date": due_date.isoformat(),
+        }),
+    )
+    unplanned_response = page.request.post(
+        work_items_url,
+        headers=headers,
+        data=json.dumps({"title": unplanned_title, "priority": "normal"}),
+    )
+    assert urgent_response.status == 201, urgent_response.text()
+    assert unplanned_response.status == 201, unplanned_response.text()
+    status_response = page.request.patch(
+        f"{work_items_url}/{unplanned_response.json()['id']}",
+        headers=headers,
+        data=json.dumps({"status": "in_progress"}),
+    )
+    assert status_response.status == 200, status_response.text()
+
+    open_workspace(page, "Workboard")
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.get_by_text(urgent_title, exact=True)).to_be_visible()
+    page.get_by_role("button", name="List", exact=True).click()
+    task_table = page.get_by_role("table")
+    expect(task_table).to_contain_text(urgent_title)
+    expect(task_table).to_contain_text(unplanned_title)
+
+    page.get_by_role("combobox", name="Filter by status").click()
+    page.get_by_role("option", name="In progress", exact=True).click()
+    expect(task_table).to_contain_text(unplanned_title)
+    expect(task_table).not_to_contain_text(urgent_title)
+    page.get_by_role("button", name="Clear", exact=True).click()
+
+    page.get_by_role("textbox", name="Search project tasks").fill(urgent_title)
+    expect(task_table).to_contain_text(urgent_title)
+    expect(task_table).not_to_contain_text(unplanned_title)
+    page.get_by_role("textbox", name="Search project tasks").fill("")
+
+    page.get_by_role("combobox", name="Filter by priority").click()
+    page.get_by_role("option", name="Urgent", exact=True).click()
+    expect(task_table).to_contain_text(urgent_title)
+    expect(task_table).not_to_contain_text(unplanned_title)
+
+    page.get_by_role("combobox", name="Filter by due date").click()
+    page.get_by_role("option", name="Due this week", exact=True).click()
+    expect(task_table).to_contain_text(urgent_title)
+    expect(task_table).not_to_contain_text(unplanned_title)
+
+    page.get_by_role("button", name="Clear", exact=True).click()
+    page.get_by_role("combobox", name="Filter by assignee").click()
+    page.get_by_role("option", name=TEST_EMAIL, exact=True).click()
+    expect(task_table).to_contain_text(urgent_title)
+    expect(task_table).not_to_contain_text(unplanned_title)
+
+    page.get_by_role("button", name="Calendar", exact=True).click()
+    calendar = page.get_by_role("region", name="Task calendar")
+    expect(calendar).to_contain_text(urgent_title)
+    expect(calendar).not_to_contain_text(unplanned_title)
+    page.get_by_role("button", name="Clear", exact=True).click()
+    expect(calendar).to_contain_text(unplanned_title)
+    expect(calendar.get_by_role("heading", name="Unscheduled work")).to_be_visible()
