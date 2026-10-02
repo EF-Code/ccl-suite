@@ -26,6 +26,7 @@ const WorkflowOrchestrator = lazy(() => import("@/components/workflow-orchestrat
 const ProjectWorkboard = lazy(() => import("@/components/project-workboard").then((module) => ({ default: module.ProjectWorkboard })))
 const MyWork = lazy(() => import("@/components/my-work").then((module) => ({ default: module.MyWork })))
 const NotificationsInbox = lazy(() => import("@/components/notifications-inbox").then((module) => ({ default: module.NotificationsInbox })))
+const ProjectTemplates = lazy(() => import("@/components/project-templates").then((module) => ({ default: module.ProjectTemplates })))
 
 // Helpers
 function escapeForTest(v: string) { return v }
@@ -40,7 +41,7 @@ function formatUploadSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
-type WorkspaceView = "overview" | "my-work" | "workboard" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
+type WorkspaceView = "overview" | "my-work" | "workboard" | "templates" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
 type OrganizationPlanAction = {
   source: string
   destination: string
@@ -1553,6 +1554,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     { view: "overview", label: "Overview", icon: Gauge },
     { view: "my-work", label: "My Work", icon: ClipboardCheck },
     { view: "workboard", label: "Workboard", icon: ListChecks },
+    { view: "templates", label: "Templates", icon: Copy },
     { view: "operations", label: "Operations", icon: Gauge },
     { view: "files", label: "Files", icon: Files },
     { view: "knowledge", label: "Knowledge", icon: Library },
@@ -1564,10 +1566,13 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   ]
   const permissionRole = account.role === "member" ? "staff" : account.role === "reviewer" ? "supervisor" : account.role
   const canReadSecurity = Boolean(permissions?.[permissionRole]?.includes("security.read"))
+  const canCreateProjects = Boolean(permissions?.[permissionRole]?.includes("project.create"))
   const canManageWorkItems = Boolean(permissions?.[permissionRole]?.includes("work_item.manage"))
   const canEvaluateSecurityAlerts = Boolean(permissions?.[permissionRole]?.includes("security.alerts.evaluate"))
   const canManageSecurityAlerts = Boolean(permissions?.[permissionRole]?.includes("security.alerts.manage"))
-  const navigation = navigationItems.filter(({ view }) => view !== "security" || canReadSecurity)
+  const navigation = navigationItems.filter(({ view }) =>
+    (view !== "security" || canReadSecurity) && (view !== "templates" || canCreateProjects),
+  )
   const isGlobalOperator = ["administrator", "supervisor"].includes(account.role)
   const canManageProjectMembers = Boolean(selectedProject && (
     selectedProject.owner_id === account.id
@@ -1579,6 +1584,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     overview: { title: "Overview", description: "See project health, workflow progress, evidence readiness, and the next decision." },
     "my-work": { title: "My Work", description: "See and update the work assigned to you across your projects." },
     workboard: { title: "Workboard", description: "Add, prioritize, and track project deliverables through to completion." },
+    templates: { title: "Project templates", description: "Reuse proven project briefs and task checklists to start new work consistently." },
     operations: { title: "Operations", description: "Preview and run controlled work inside the active project." },
     files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
     knowledge: { title: "Knowledge", description: "Register, review, ingest, search, and answer from approved sources." },
@@ -1644,6 +1650,13 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setVisitedViews((current) => current.has(view) ? current : new Set(current).add(view))
     setMobileNavOpen(false)
     window.scrollTo({ top: 0, behavior: "smooth" })
+  }
+
+  async function handleTemplateProjectCreated(project: Project) {
+    setProjects((current) => [...current.filter((entry) => entry.id !== project.id), project])
+    activateProject(project)
+    openView("workboard")
+    showMessage("Project created from template.")
   }
 
   async function openTaskNotification(notification: UserNotification) {
@@ -1915,6 +1928,14 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             onAddMember={handleAddProjectMember}
             onRemoveMember={handleRemoveProjectMember}
             onRefresh={() => { if (selectedId) void refreshWorkItems(selectedId) }}
+          /></Suspense>}
+        </section>
+
+        <section className={activeView === "templates" ? "block" : "hidden"}>
+          {visitedViews.has("templates") && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading templates…</div>}><ProjectTemplates
+            project={selectedProject}
+            canSaveFromProject={canManageProjectMembers}
+            onProjectCreated={handleTemplateProjectCreated}
           /></Suspense>}
         </section>
 
