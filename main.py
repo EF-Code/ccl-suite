@@ -110,6 +110,7 @@ from api_schemas import (
     ProjectCreate,
     ProjectResponse,
     ProjectTemplateCreate,
+    ProjectTemplateProjectCreate,
     ProjectTemplateResponse,
     ProjectTemplateWorkItem,
     WorkItemCreate,
@@ -1898,6 +1899,107 @@ async def delete_project_template(
     tags=["project templates"],
     dependencies=[Depends(reject_oversized_requests)],
 )
+async def create_project_from_template(
+    template_id: UUID,
+    project_request: ProjectTemplateProjectCreate,
+    actor: User = Depends(require_permission("project.create")),
+    db: Session = Depends(get_db),
+) -> ProjectResponse:
+    """Create a project and its reset, unassigned task checklist atomically."""
+
+    template = db.scalar(
+        select(ProjectTemplate).where(
+            ProjectTemplate.id == template_id,
+            ProjectTemplate.owner_id == actor.id,
+        )
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail="Project template was not found.")
+    try:
+        storage_slug = normalize_project_name(project_request.title)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if db.scalar(select(Project.id).where(Project.storage_slug == storage_slug)):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A project already uses this storage folder. "
+                "Choose a title that produces a different folder name."
+            ),
+        )
+
+    project = Project(
+        owner_id=actor.id,
+        name=project_request.title,
+        storage_slug=storage_slug,
+        description=template.description,
+        category=template.category,
+        scope=template.scope,
+        deadline=project_request.deadline,
+        outputs=list(template.outputs or []),
+        responsible_person=template.responsible_person,
+    )
+    try:
+        db.add(project)
+        db.flush()
+        db.add(
+            ProjectMembership(
+                project_id=project.id,
+                user_id=actor.id,
+                role="manager",
+                added_by_id=actor.id,
+            )
+        )
+        created_items: list[WorkItem] = []
+        for raw_task in template.work_items_json:
+            task_template = ProjectTemplateWorkItem.model_validate(raw_task)
+            item = WorkItem(
+                project_id=project.id,
+                created_by_id=actor.id,
+                title=task_template.title,
+                description=task_template.description,
+                priority=task_template.priority,
+                due_date=(
+                    date.today() + timedelta(days=task_template.due_in_days)
+                    if task_template.due_in_days is not None
+                    else None
+                ),
+            )
+            db.add(item)
+            created_items.append(item)
+        db.flush()
+        db.add(
+            SecurityEvent(
+                actor_id=actor.id,
+                event_code="project.created_from_template",
+                outcome="success",
+                resource_type="project",
+                resource_ref=str(project.id),
+            )
+        )
+        db.add_all(
+            SecurityEvent(
+                actor_id=actor.id,
+                event_code="work_item.created",
+                outcome="success",
+                resource_type="work_item",
+                resource_ref=str(item.id),
+            )
+            for item in created_items
+        )
+        db.commit()
+        db.refresh(project)
+    except IntegrityError as exc:
+        db.rollback()
+        logger.error("Project creation from a template failed because of a database constraint.")
+        raise HTTPException(status_code=409, detail="Project could not be created from this template.") from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Project creation from a template failed because the database was unavailable.")
+        raise HTTPException(status_code=503, detail="Project could not be created from this template.") from exc
+    return ProjectResponse.from_model(project)
+
+
 def project_member_response(membership: ProjectMembership) -> ProjectMemberResponse:
     """Format one project membership without exposing account credentials."""
 
