@@ -1,5 +1,5 @@
-import { useRef, useState, type FormEvent } from "react"
-import { CalendarDays, CircleAlert, ClipboardList, MessageSquare, Pencil, Plus, RefreshCw, Send, UserPlus, Users, X } from "lucide-react"
+import { useMemo, useRef, useState, type FormEvent } from "react"
+import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, ClipboardList, LayoutGrid, List, MessageSquare, Pencil, Plus, RefreshCw, RotateCcw, Search, Send, UserPlus, Users, X } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -63,6 +63,25 @@ const transitions: Record<WorkItemStatus, WorkItemStatus[]> = {
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" })
+const monthFormatter = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" })
+const weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+type WorkboardView = "board" | "list" | "calendar"
+type DueDateFilter = "all" | "overdue" | "this-week" | "no-date"
+
+function dateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+}
+
+function calendarDays(month: Date): Date[] {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1)
+  const mondayOffset = (firstDay.getDay() + 6) % 7
+  const dayCount = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()
+  const cellCount = Math.ceil((mondayOffset + dayCount) / 7) * 7
+  return Array.from({ length: cellCount }, (_, index) =>
+    new Date(month.getFullYear(), month.getMonth(), index - mondayOffset + 1),
+  )
+}
 
 function formatDueDate(value: string): string {
   const [year, month, day] = value.split("-").map(Number)
@@ -116,6 +135,13 @@ function WorkItemCard({ item, canManage, onUpdate, onEdit, onDiscuss }: {
 }
 
 export function ProjectWorkboard({ project, items, loading, error, canManage, members, candidates, membersLoading, membersError, canManageMembers, canPromoteMembers, onCreate, onUpdate, onListComments, onAddComment, onAddMember, onRemoveMember, onRefresh }: ProjectWorkboardProps) {
+  const [view, setView] = useState<WorkboardView>("board")
+  const [search, setSearch] = useState("")
+  const [statusFilter, setStatusFilter] = useState<WorkItemStatus | "all">("all")
+  const [priorityFilter, setPriorityFilter] = useState<WorkItemPriority | "all">("all")
+  const [assigneeFilter, setAssigneeFilter] = useState("all")
+  const [dueDateFilter, setDueDateFilter] = useState<DueDateFilter>("all")
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [dialogOpen, setDialogOpen] = useState(false)
   const [teamDialogOpen, setTeamDialogOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<WorkItem | null>(null)
@@ -290,6 +316,38 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
 
   const activeCount = items.filter((item) => !["done", "cancelled"].includes(item.status)).length
   const overdueCount = items.filter((item) => item.status !== "done" && item.status !== "cancelled" && item.due_date && isOverdue(item.due_date)).length
+  const today = dateKey(new Date())
+  const weekStart = new Date()
+  weekStart.setHours(0, 0, 0, 0)
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7))
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekEnd.getDate() + 6)
+  const weekStartKey = dateKey(weekStart)
+  const weekEndKey = dateKey(weekEnd)
+  const filteredItems = useMemo(() => {
+    const normalizedSearch = search.trim().toLocaleLowerCase()
+    return items.filter((item) => {
+      if (statusFilter !== "all" && item.status !== statusFilter) return false
+      if (priorityFilter !== "all" && item.priority !== priorityFilter) return false
+      if (assigneeFilter === "unassigned" && item.assignee_id !== null) return false
+      if (assigneeFilter !== "all" && assigneeFilter !== "unassigned" && item.assignee_id !== assigneeFilter) return false
+      if (dueDateFilter === "no-date" && item.due_date !== null) return false
+      if (dueDateFilter === "overdue" && (!item.due_date || item.due_date >= today || ["done", "cancelled"].includes(item.status))) return false
+      if (dueDateFilter === "this-week" && (!item.due_date || item.due_date < weekStartKey || item.due_date > weekEndKey)) return false
+      if (normalizedSearch && ![item.title, item.description, item.assignee || ""].some((value) => value.toLocaleLowerCase().includes(normalizedSearch))) return false
+      return true
+    })
+  }, [assigneeFilter, dueDateFilter, items, priorityFilter, search, statusFilter, today, weekEndKey, weekStartKey])
+  const visibleCalendarDays = useMemo(() => calendarDays(calendarMonth), [calendarMonth])
+  const hasFilters = Boolean(search.trim()) || statusFilter !== "all" || priorityFilter !== "all" || assigneeFilter !== "all" || dueDateFilter !== "all"
+
+  function clearFilters() {
+    setSearch("")
+    setStatusFilter("all")
+    setPriorityFilter("all")
+    setAssigneeFilter("all")
+    setDueDateFilter("all")
+  }
 
   return (
     <section className="space-y-5" aria-labelledby="workboard-title">
@@ -314,10 +372,46 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
           {!canManage && <Badge variant="secondary">Read only</Badge>}
         </div>
         {error && <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><span>{error}</span><Button type="button" variant="outline" size="sm" onClick={onRefresh}>Try again</Button></div>}
-        <div className="overflow-x-auto pb-2">
+        <div className="grid gap-3 rounded-2xl border border-[#e2e8ed] bg-white p-3 sm:p-4">
+          <div className="grid gap-3 lg:grid-cols-[minmax(12rem,1.5fr)_repeat(4,minmax(8rem,1fr))_auto]">
+            <label className="relative block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" placeholder="Search tasks or assignees" aria-label="Search project tasks" />
+            </label>
+            <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as WorkItemStatus | "all")}>
+              <SelectTrigger aria-label="Filter by status"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All statuses</SelectItem>{Object.entries(statusLabels).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}</SelectContent>
+            </Select>
+            <Select value={priorityFilter} onValueChange={(value) => setPriorityFilter(value as WorkItemPriority | "all")}>
+              <SelectTrigger aria-label="Filter by priority"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All priorities</SelectItem><SelectItem value="urgent">Urgent</SelectItem><SelectItem value="high">High</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent>
+            </Select>
+            <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+              <SelectTrigger aria-label="Filter by assignee"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All assignees</SelectItem><SelectItem value="unassigned">Unassigned</SelectItem>{members.filter((member) => member.is_active).map((member) => <SelectItem key={member.user_id} value={member.user_id}>{member.email || "Account without email"}</SelectItem>)}</SelectContent>
+            </Select>
+            <Select value={dueDateFilter} onValueChange={(value) => setDueDateFilter(value as DueDateFilter)}>
+              <SelectTrigger aria-label="Filter by due date"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="all">Any due date</SelectItem><SelectItem value="overdue">Overdue</SelectItem><SelectItem value="this-week">Due this week</SelectItem><SelectItem value="no-date">No due date</SelectItem></SelectContent>
+            </Select>
+            <Button type="button" variant="ghost" onClick={clearFilters} disabled={!hasFilters} className="justify-self-start"><RotateCcw className="h-4 w-4" />Clear</Button>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#edf1f3] pt-3">
+            <p className="text-xs text-muted-foreground" aria-live="polite">Showing <strong className="font-semibold text-foreground">{filteredItems.length}</strong> of {items.length} tasks</p>
+            <div role="group" aria-label="Task view" className="inline-flex rounded-xl border bg-[#f7faf9] p-1">
+              {([
+                ["board", "Board", LayoutGrid],
+                ["list", "List", List],
+                ["calendar", "Calendar", CalendarDays],
+              ] as const).map(([key, label, Icon]) => <button key={key} type="button" aria-pressed={view === key} className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${view === key ? "bg-white text-[#173b48] shadow-sm" : "text-muted-foreground hover:text-foreground"}`} onClick={() => setView(key)}><Icon className="h-4 w-4" aria-hidden="true" />{label}</button>)}
+            </div>
+          </div>
+        </div>
+        {filteredItems.length === 0 && <Card className="border-dashed"><CardContent className="grid justify-items-center gap-2 py-10 text-center"><Search className="h-7 w-7 text-muted-foreground" aria-hidden="true" /><p className="font-medium text-foreground">No tasks match these filters</p><p className="text-sm text-muted-foreground">Try changing a filter or clearing the search.</p>{hasFilters && <Button type="button" variant="outline" size="sm" onClick={clearFilters}>Clear filters</Button>}</CardContent></Card>}
+        {view === "board" && filteredItems.length > 0 && <div className="overflow-x-auto pb-2">
           <div className="grid min-w-[960px] grid-cols-4 gap-4">
             {columns.map((column) => {
-              const columnItems = items.filter((item) => item.status === column.status)
+              const columnItems = filteredItems.filter((item) => item.status === column.status)
               return <section key={column.status} aria-labelledby={`workboard-${column.status}`} className="min-w-0 rounded-2xl border border-[#e2e8ed] bg-[#f4f7f9] p-3">
                 <div className="mb-3 flex items-start justify-between gap-2 px-1">
                   <div><h3 id={`workboard-${column.status}`} className="text-sm font-semibold text-[#294052]">{column.title}</h3><p className="mt-0.5 text-[0.68rem] text-muted-foreground">{column.description}</p></div>
@@ -330,14 +424,58 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
               </section>
             })}
           </div>
-        </div>
-        {items.some((item) => item.status === "cancelled") && <details className="rounded-xl border bg-white px-4 py-3">
-          <summary className="cursor-pointer text-sm font-medium text-[#41576a]">Cancelled items <span className="text-muted-foreground">({items.filter((item) => item.status === "cancelled").length})</span></summary>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{items.filter((item) => item.status === "cancelled").map((item) => <div key={item.id} className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+        </div>}
+        {view === "board" && filteredItems.some((item) => item.status === "cancelled") && <details className="rounded-xl border bg-white px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-[#41576a]">Cancelled items <span className="text-muted-foreground">({filteredItems.filter((item) => item.status === "cancelled").length})</span></summary>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{filteredItems.filter((item) => item.status === "cancelled").map((item) => <div key={item.id} className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
             <div className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{item.title}</span><div className="flex items-center"><Button type="button" variant="ghost" size="icon" aria-label={`Discuss ${item.title}`} className="h-7 w-7" onClick={() => void openDiscussion(item)}><MessageSquare className="h-3.5 w-3.5" /></Button>{canManage && <Button type="button" variant="ghost" size="icon" aria-label={`Edit ${item.title}`} className="h-7 w-7" onClick={() => openEditDialog(item)}><Pencil className="h-3.5 w-3.5" /></Button>}</div></div>
             {canManage && <Select value={item.status} onValueChange={(status) => { void onUpdate(item.id, { status: status as WorkItemStatus }).catch(() => undefined) }}><SelectTrigger aria-label={`Change status for ${item.title}`} className="mt-2 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="cancelled">Cancelled</SelectItem><SelectItem value="todo">Reopen to do</SelectItem></SelectContent></Select>}
           </div>)}</div>
         </details>}
+        {view === "list" && filteredItems.length > 0 && <div className="overflow-x-auto rounded-2xl border border-[#e2e8ed] bg-white">
+          <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+            <thead className="bg-[#f7faf9] text-xs text-muted-foreground"><tr><th className="px-4 py-3 font-medium">Task</th><th className="px-4 py-3 font-medium">Assignee</th><th className="px-4 py-3 font-medium">Due date</th><th className="px-4 py-3 font-medium">Priority</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium"><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody className="divide-y">
+              {filteredItems.map((item) => <tr key={item.id} className="align-top hover:bg-[#fbfcfc]">
+                <td className="max-w-[24rem] px-4 py-3"><p className="font-semibold text-[#203448]">{item.title}</p>{item.description && <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>}</td>
+                <td className="px-4 py-3 text-xs text-[#41576a]">{item.assignee_id ? item.assignee || "Account" : item.assignee ? `Needs reassignment: ${item.assignee}` : "Unassigned"}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-xs text-[#41576a]">{item.due_date ? formatDueDate(item.due_date) : "No due date"}</td>
+                <td className="px-4 py-3"><Badge variant="outline" className={`capitalize ${priorityStyles[item.priority]}`}>{item.priority}</Badge></td>
+                <td className="min-w-36 px-4 py-3">{canManage ? <Select value={item.status} onValueChange={(status) => { void onUpdate(item.id, { status: status as WorkItemStatus }).catch(() => undefined) }}><SelectTrigger aria-label={`Change status for ${item.title}`} className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent>{[item.status, ...transitions[item.status]].map((status) => <SelectItem key={status} value={status}>{statusLabels[status]}</SelectItem>)}</SelectContent></Select> : <span className="text-xs">{statusLabels[item.status]}</span>}</td>
+                <td className="whitespace-nowrap px-3 py-2"><div className="flex items-center"><Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label={`Discuss ${item.title}`} onClick={() => void openDiscussion(item)}><MessageSquare className="h-4 w-4" /></Button>{canManage && <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label={`Edit ${item.title}`} onClick={() => openEditDialog(item)}><Pencil className="h-4 w-4" /></Button>}</div></td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>}
+        {view === "calendar" && filteredItems.length > 0 && <section className="space-y-4" aria-label="Task calendar">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e2e8ed] bg-white px-4 py-3">
+            <h3 className="text-lg font-semibold text-[#203448]">{monthFormatter.format(calendarMonth)}</h3>
+            <div className="flex items-center gap-2"><Button type="button" variant="outline" size="sm" onClick={() => setCalendarMonth(new Date())}>Today</Button><Button type="button" variant="outline" size="icon" aria-label="Previous month" onClick={() => setCalendarMonth((month) => new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft className="h-4 w-4" /></Button><Button type="button" variant="outline" size="icon" aria-label="Next month" onClick={() => setCalendarMonth((month) => new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight className="h-4 w-4" /></Button></div>
+          </div>
+          <div className="overflow-x-auto rounded-2xl border border-[#e2e8ed] bg-white">
+            <div className="min-w-[700px]">
+              <div className="grid grid-cols-7 border-b bg-[#f7faf9]">{weekdayLabels.map((label) => <div key={label} className="px-2 py-2.5 text-center text-xs font-semibold text-muted-foreground">{label}</div>)}</div>
+              <div className="grid grid-cols-7">
+                {visibleCalendarDays.map((day) => {
+                  const key = dateKey(day)
+                  const dayItems = filteredItems.filter((item) => item.due_date === key)
+                  const inMonth = day.getMonth() === calendarMonth.getMonth()
+                  return <div key={key} className={`min-h-28 border-b border-r border-[#edf1f3] p-1.5 ${inMonth ? "bg-white" : "bg-[#fafbfb]"}`}>
+                    <div className={`mb-1 grid h-7 w-7 place-items-center rounded-full text-xs ${key === today ? "bg-[#173b48] font-semibold text-white" : inMonth ? "text-[#41576a]" : "text-slate-400"}`}>{day.getDate()}</div>
+                    <div className="space-y-1">
+                      {dayItems.slice(0, 3).map((item) => <button key={item.id} type="button" title={`${item.title} · ${statusLabels[item.status]} · ${item.priority} priority`} className={`block w-full truncate rounded-md border px-1.5 py-1 text-left text-[0.68rem] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${item.status === "done" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : item.status === "blocked" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-[#dce7e6] bg-[#eef6f4] text-[#174b4b]"}`} onClick={() => canManage ? openEditDialog(item) : void openDiscussion(item)}>{item.title}</button>)}
+                      {dayItems.length > 3 && <p className="px-1 text-[0.65rem] text-muted-foreground">+{dayItems.length - 3} more</p>}
+                    </div>
+                  </div>
+                })}
+              </div>
+            </div>
+          </div>
+          {filteredItems.some((item) => !item.due_date) && <section aria-labelledby="workboard-unscheduled-title" className="space-y-2">
+            <h4 id="workboard-unscheduled-title" className="text-sm font-semibold text-[#294052]">Unscheduled work <span className="font-normal text-muted-foreground">({filteredItems.filter((item) => !item.due_date).length})</span></h4>
+            <div className="divide-y overflow-hidden rounded-xl border border-[#e2e8ed] bg-white">{filteredItems.filter((item) => !item.due_date).map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium text-[#203448]">{item.title}</p><p className="text-xs text-muted-foreground">{statusLabels[item.status]} · {item.assignee || "Unassigned"}</p></div><div className="flex items-center gap-1"><Badge variant="outline" className={`capitalize ${priorityStyles[item.priority]}`}>{item.priority}</Badge>{canManage && <Button type="button" variant="ghost" size="icon" aria-label={`Edit ${item.title}`} onClick={() => openEditDialog(item)}><Pencil className="h-4 w-4" /></Button>}</div></div>)}</div>
+          </section>}
+        </section>}
         {loading && items.length > 0 && <p className="text-xs text-muted-foreground" role="status">Refreshing work items…</p>}
       </>}
 
