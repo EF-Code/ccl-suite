@@ -30,8 +30,10 @@ if os.getenv("RUN_BROWSER_TESTS") != "1":
     )
 
 playwright = pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Page, expect, sync_playwright
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+Page = playwright.Page
+PlaywrightTimeoutError = playwright.TimeoutError
+expect = playwright.expect
+sync_playwright = playwright.sync_playwright
 
 BASE_URL = os.getenv("DASHBOARD_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 TEST_EMAIL = os.getenv("DASHBOARD_TEST_EMAIL")
