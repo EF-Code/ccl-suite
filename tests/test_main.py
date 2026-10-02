@@ -978,6 +978,50 @@ def test_task_notifications_are_private_persistent_and_markable() -> None:
     assert cleared.json()["unread_total"] == 0
 
 
+def test_task_notification_inbox_paginates_with_consistent_totals() -> None:
+    project = create_project("Notification pagination")
+    project_id = str(project["id"])
+    recipient_id = create_active_account("notification-page@example.test")
+    membership = request(
+        "POST",
+        f"/projects/{project_id}/members",
+        json={"user_id": recipient_id},
+    )
+    work_items = f"/projects/{project_id}/work-items"
+    created_items = [
+        request(
+            "POST",
+            work_items,
+            json={"title": f"Paginated task {index}", "assignee_id": recipient_id},
+        )
+        for index in range(3)
+    ]
+    headers = {"X-User-ID": recipient_id}
+    complete = request("GET", "/my/notifications?limit=100", headers=headers)
+    first_page = request("GET", "/my/notifications?limit=2&offset=0", headers=headers)
+    overlapping_page = request(
+        "GET", "/my/notifications?limit=2&offset=1", headers=headers
+    )
+    final_page = request("GET", "/my/notifications?limit=2&offset=2", headers=headers)
+
+    assert membership.status_code == 201
+    assert all(response.status_code == 201 for response in created_items)
+    assert complete.status_code == 200
+    assert [response.status_code for response in (first_page, overlapping_page, final_page)] == [
+        200,
+        200,
+        200,
+    ]
+    ordered_ids = [item["id"] for item in complete.json()["items"]]
+    assert len(ordered_ids) == 3
+    assert [item["id"] for item in first_page.json()["items"]] == ordered_ids[:2]
+    assert [item["id"] for item in overlapping_page.json()["items"]] == ordered_ids[1:]
+    assert [item["id"] for item in final_page.json()["items"]] == ordered_ids[2:]
+    for page in (complete, first_page, overlapping_page, final_page):
+        assert page.json()["total"] == 3
+        assert page.json()["unread_total"] == 3
+
+
 def test_project_templates_capture_safe_tasks_and_create_private_projects() -> None:
     source = request(
         "POST",
