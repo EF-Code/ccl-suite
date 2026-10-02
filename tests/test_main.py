@@ -40,6 +40,7 @@ from models import (
     KnowledgeSource,
     OperationalAlert,
     Project,
+    ProjectMembership,
     SecurityEvent,
     User,
     Workflow,
@@ -828,16 +829,37 @@ def create_project(title: str = "Endpoint Project") -> dict[str, object]:
     return response.json()
 
 
+def create_active_account(email: str, role: str = "staff") -> str:
+    with TestingSessionLocal() as session:
+        account = User(
+            external_ref=f"active-{uuid4().hex}",
+            email=email,
+            password_hash="test-password-hash",
+            is_active=True,
+            role=role,
+        )
+        session.add(account)
+        session.commit()
+        return str(account.id)
+
+
 def test_project_work_items_support_audited_status_lifecycle() -> None:
     project = create_project("Work-item lifecycle")
     endpoint = f"/projects/{project['id']}/work-items"
+    assignee_id = create_active_account("video-editor@example.test")
+    member = request(
+        "POST",
+        f"/projects/{project['id']}/members",
+        json={"user_id": assignee_id},
+    )
+    assert member.status_code == 201
     created = request(
         "POST",
         endpoint,
         json={
             "title": "Prepare the first edit",
             "description": "Collect the approved clips and create a rough cut.",
-            "assignee": "Video editor",
+            "assignee_id": assignee_id,
             "priority": "high",
             "due_date": "2026-10-05",
         },
@@ -849,7 +871,8 @@ def test_project_work_items_support_audited_status_lifecycle() -> None:
     assert item["created_by_id"] == TEST_OWNER_ID
     assert item["status"] == "todo"
     assert item["priority"] == "high"
-    assert item["assignee"] == "Video editor"
+    assert item["assignee_id"] == assignee_id
+    assert item["assignee"] == "video-editor@example.test"
     assert item["completed_at"] is None
 
     started = request(
@@ -912,6 +935,279 @@ def test_project_work_items_reject_cross_project_updates_and_intern_writes() -> 
     assert intern_write.status_code == 403
     assert invalid_input.status_code == 422
     assert empty_patch.status_code == 422
+
+
+def test_work_item_comments_are_project_scoped_and_audited_without_comment_text() -> None:
+    project = create_project("Work-item discussion")
+    other_project = create_project("Private work-item discussion")
+    endpoint = f"/projects/{project['id']}/work-items"
+    created = request("POST", endpoint, json={"title": "Review campaign brief"})
+    item_id = created.json()["id"]
+    comments_endpoint = f"{endpoint}/{item_id}/comments"
+    first = request(
+        "POST",
+        comments_endpoint,
+        json={"body": "  The first cut is ready for review.  "},
+    )
+    second = request(
+        "POST",
+        comments_endpoint,
+        json={"body": "I added the updated caption timings."},
+    )
+    listed = request("GET", comments_endpoint)
+    latest_page = request("GET", f"{comments_endpoint}?limit=1&offset=0")
+    earlier_page = request("GET", f"{comments_endpoint}?limit=1&offset=1")
+    blank = request("POST", comments_endpoint, json={"body": "   "})
+    cross_project = request(
+        "GET", f"/projects/{other_project['id']}/work-items/{item_id}/comments"
+    )
+
+    intern_id = create_active_account("discussion-intern@example.test", "intern")
+    member = request(
+        "POST",
+        f"/projects/{project['id']}/members",
+        json={"user_id": intern_id},
+    )
+    intern_read = request(
+        "GET", comments_endpoint, headers={"X-User-ID": intern_id}
+    )
+    intern_write = request(
+        "POST",
+        comments_endpoint,
+        headers={"X-User-ID": intern_id},
+        json={"body": "Interns cannot post comments."},
+    )
+    audit = request("GET", "/security-events")
+
+    assert created.status_code == 201
+    assert first.status_code == 201
+    assert first.json()["body"] == "The first cut is ready for review."
+    assert first.json()["author_label"] == "test-owner"
+    assert second.status_code == 201
+    assert listed.status_code == 200
+    assert listed.headers["cache-control"] == "no-store"
+    assert listed.json()["total"] == 2
+    assert [comment["id"] for comment in listed.json()["comments"]] == [
+        second.json()["id"],
+        first.json()["id"],
+    ]
+    assert latest_page.json()["comments"][0]["id"] == second.json()["id"]
+    assert earlier_page.json()["comments"][0]["id"] == first.json()["id"]
+    assert blank.status_code == 422
+    assert cross_project.status_code == 404
+    assert member.status_code == 201
+    assert intern_read.status_code == 200
+    assert intern_write.status_code == 403
+    comment_events = [
+        event
+        for event in audit.json()
+        if event["event_code"] == "work_item.comment.added"
+        and event["resource_ref"] == item_id
+    ]
+    assert len(comment_events) == 2
+    assert all("body" not in event for event in comment_events)
+
+
+def test_project_membership_scopes_access_and_drives_real_assignments() -> None:
+    project = create_project("Member project")
+    project_id = str(project["id"])
+    member_id = create_active_account("editor@example.test")
+    outsider_id = create_active_account("outsider@example.test")
+    intern_id = create_active_account("intern@example.test", role="intern")
+
+    added = request(
+        "POST",
+        f"/projects/{project_id}/members",
+        json={"user_id": member_id, "role": "member"},
+    )
+    assert added.status_code == 201
+    assert added.json()["role"] == "member"
+    assert added.json()["account_role"] == "staff"
+
+    member_headers = {"X-User-ID": member_id}
+    member_projects = request("GET", "/projects", headers=member_headers)
+    assert [item["id"] for item in member_projects.json()] == [project_id]
+    assert request(
+        "GET", f"/projects/{project_id}/work-items", headers=member_headers
+    ).status_code == 200
+
+    endpoint = f"/projects/{project_id}/work-items"
+    not_a_member = request(
+        "POST",
+        endpoint,
+        json={"title": "Do not assign by text or ID alone", "assignee_id": outsider_id},
+    )
+    intern_assignment = request(
+        "POST",
+        endpoint,
+        json={"title": "Do not assign to a read-only account", "assignee_id": intern_id},
+    )
+    assert not_a_member.status_code == 404
+    assert intern_assignment.status_code == 404
+
+    created = request(
+        "POST",
+        endpoint,
+        json={"title": "Edit the launch video", "assignee_id": member_id},
+    )
+    assert created.status_code == 201
+    item_id = created.json()["id"]
+    my_work = request("GET", "/my/work-items", headers=member_headers)
+    assert my_work.status_code == 200
+    assert my_work.headers["cache-control"] == "no-store"
+    assert my_work.json()["total"] == 1
+    assert my_work.json()["items"][0]["project_title"] == "Member project"
+    assert my_work.json()["items"][0]["assignee_id"] == member_id
+
+    cannot_remove_assignee = request(
+        "DELETE",
+        f"/projects/{project_id}/members/{member_id}",
+    )
+    assert cannot_remove_assignee.status_code == 409
+    assert "Reassign or unassign 1" in cannot_remove_assignee.json()["detail"]
+
+    unassigned = request(
+        "PATCH",
+        f"{endpoint}/{item_id}",
+        json={"assignee_id": None},
+    )
+    assert unassigned.status_code == 200
+    assert unassigned.json()["assignee_id"] is None
+    removed = request("DELETE", f"/projects/{project_id}/members/{member_id}")
+    assert removed.status_code == 204
+    assert request("GET", "/projects", headers=member_headers).json() == []
+    assert request(
+        "GET", f"/projects/{project_id}/work-items", headers=member_headers
+    ).status_code == 404
+
+    with TestingSessionLocal() as session:
+        assert session.get(
+            ProjectMembership, (UUID(project_id), UUID(member_id))
+        ) is None
+        events = session.scalars(
+            select(SecurityEvent).where(
+                SecurityEvent.event_code.in_(
+                    {"project.member.added", "project.member.removed"}
+                )
+            )
+        ).all()
+    assert {event.event_code for event in events} == {
+        "project.member.added",
+        "project.member.removed",
+    }
+
+
+def test_project_team_manager_permissions_and_assignable_candidates() -> None:
+    project = create_project("Team permissions")
+    project_id = str(project["id"])
+    manager_id = create_active_account("manager@example.test")
+    second_manager_id = create_active_account("second-manager@example.test")
+    member_id = create_active_account("project-member@example.test")
+    intern_id = create_active_account("project-intern@example.test", role="intern")
+    inactive_id = create_active_account("inactive@example.test")
+    with TestingSessionLocal() as session:
+        inactive = session.get(User, UUID(inactive_id))
+        assert inactive is not None
+        inactive.is_active = False
+        session.commit()
+
+    with TestingSessionLocal() as session:
+        owner_membership = session.get(
+            ProjectMembership, (UUID(project_id), UUID(TEST_OWNER_ID))
+        )
+    assert owner_membership is not None
+    assert owner_membership.role == "manager"
+
+    for user_id, role in (
+        (manager_id, "manager"),
+        (second_manager_id, "manager"),
+        (member_id, "member"),
+        (intern_id, "member"),
+    ):
+        added = request(
+            "POST",
+            f"/projects/{project_id}/members",
+            json={"user_id": user_id, "role": role},
+        )
+        assert added.status_code == 201
+
+    manager_headers = {"X-User-ID": manager_id}
+    member_headers = {"X-User-ID": member_id}
+    candidates = request(
+        "GET",
+        f"/projects/{project_id}/member-candidates",
+        headers=manager_headers,
+    )
+    candidate_by_id = {candidate["user_id"]: candidate for candidate in candidates.json()}
+    assert candidates.status_code == 200
+    assert candidate_by_id[intern_id]["is_member"] is True
+    assert candidate_by_id[intern_id]["can_be_assigned"] is False
+    assert inactive_id not in candidate_by_id
+    intern_assignment = request(
+        "POST",
+        f"/projects/{project_id}/work-items",
+        json={"title": "Intern accounts cannot be assigned", "assignee_id": intern_id},
+    )
+    assert intern_assignment.status_code == 404
+    assert request(
+        "GET",
+        f"/projects/{project_id}/member-candidates",
+        headers=member_headers,
+    ).status_code == 403
+
+    cannot_promote = request(
+        "POST",
+        f"/projects/{project_id}/members",
+        headers=manager_headers,
+        json={"user_id": create_active_account("new-manager@example.test"), "role": "manager"},
+    )
+    cannot_remove_manager = request(
+        "DELETE",
+        f"/projects/{project_id}/members/{second_manager_id}",
+        headers=manager_headers,
+    )
+    text_assignee_rejected = request(
+        "POST",
+        f"/projects/{project_id}/work-items",
+        json={"title": "No free-text assignment", "assignee": "Video editor"},
+    )
+    assert cannot_promote.status_code == 403
+    assert cannot_remove_manager.status_code == 403
+    assert text_assignee_rejected.status_code == 422
+
+
+def test_global_operator_retains_my_work_access_without_project_membership() -> None:
+    project = create_project("Operator work scope")
+    project_id = str(project["id"])
+    operator_id = create_active_account("operator@example.test", role="administrator")
+    added = request(
+        "POST",
+        f"/projects/{project_id}/members",
+        json={"user_id": operator_id, "role": "member"},
+    )
+    assert added.status_code == 201
+
+    created = request(
+        "POST",
+        f"/projects/{project_id}/work-items",
+        json={"title": "Review final handoff", "assignee_id": operator_id},
+    )
+    assert created.status_code == 201
+    completed = request(
+        "PATCH",
+        f"/projects/{project_id}/work-items/{created.json()['id']}",
+        json={"status": "done"},
+    )
+    assert completed.status_code == 200
+    removed = request(
+        "DELETE", f"/projects/{project_id}/members/{operator_id}"
+    )
+    assert removed.status_code == 204
+
+    my_work = request("GET", "/my/work-items", headers={"X-User-ID": operator_id})
+    assert my_work.status_code == 200
+    assert my_work.json()["total"] == 1
+    assert my_work.json()["items"][0]["title"] == "Review final handoff"
 
 
 def create_workflow(project_id: str) -> dict[str, object]:

@@ -16,9 +16,9 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -48,6 +48,9 @@ from auth import (
     verify_password,
 )
 from api_schemas import (
+    AccountOffboardingImpactResponse,
+    AccountOffboardingProjectImpactResponse,
+    AccountOffboardingRequest,
     AlertEvaluationResponse,
     ApprovalCreate,
     ApprovalDecisionRequest,
@@ -90,6 +93,12 @@ from api_schemas import (
     KnowledgeSourceDecision,
     KnowledgeSourceResponse,
     LoginRequest,
+    ManagedAccountResponse,
+    MyWorkItemResponse,
+    MyWorkItemsResponse,
+    ProjectMemberCandidateResponse,
+    ProjectMemberCreate,
+    ProjectMemberResponse,
     OrganizationActionResponse,
     OrganizationApplyCreate,
     OrganizationApplyResponse,
@@ -101,6 +110,9 @@ from api_schemas import (
     ProjectCreate,
     ProjectResponse,
     WorkItemCreate,
+    WorkItemCommentCreate,
+    WorkItemCommentResponse,
+    WorkItemCommentsResponse,
     WorkItemResponse,
     WorkItemStatus,
     WorkItemUpdate,
@@ -259,12 +271,14 @@ from models import (
     KnowledgeSource,
     OperationalAlert,
     Project,
+    ProjectMembership,
     ResearchReview,
     ResearchReviewClaim,
     ResearchReviewEvent,
     SecurityEvent,
     User,
     WorkItem,
+    WorkItemComment,
     Workflow,
     WorkflowAction,
     WorkflowToolRun,
@@ -605,19 +619,112 @@ async def require_project_scope(
     actor: User = Depends(require_permission("project.read")),
     db: Session = Depends(get_db),
 ) -> Project:
-    """Hide project-scoped operations from non-owners except global operators."""
+    """Hide project-scoped operations from users without project membership."""
 
     project = require_record(db, Project, project_id, "Project was not found.")
-    if (
-        canonical_role(actor.role) not in {"administrator", "supervisor"}
-        and project.owner_id != actor.id
-    ):
+    is_global_operator = canonical_role(actor.role) in {"administrator", "supervisor"}
+    is_member = db.get(ProjectMembership, (project_id, actor.id)) is not None
+    if not is_global_operator and project.owner_id != actor.id and not is_member:
         _record_access_denial(db, request, actor, "project.scope")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project was not found.",
         )
     return project
+
+
+def require_project_manager(
+    db: Session,
+    project: Project,
+    actor: User,
+    request: Request,
+) -> None:
+    """Require project ownership, project-manager membership, or a global operator."""
+
+    is_global_operator = canonical_role(actor.role) in {"administrator", "supervisor"}
+    membership = db.get(ProjectMembership, (project.id, actor.id))
+    if (
+        is_global_operator
+        or project.owner_id == actor.id
+        or (membership is not None and membership.role == "manager")
+    ):
+        return
+    _record_access_denial(db, request, actor, "project.members.manage")
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only a project manager can manage project membership.",
+    )
+
+
+def require_active_project_member(
+    db: Session,
+    project_id: UUID,
+    user_id: UUID | None,
+) -> User | None:
+    """Resolve an assignable account only when it is active and belongs to the project."""
+
+    if user_id is None:
+        return None
+    account = db.scalar(select(User).where(User.id == user_id).with_for_update())
+    if (
+        account is None
+        or not account.is_active
+        or not account.email
+        or canonical_role(account.role) == "intern"
+        or db.scalar(
+            select(ProjectMembership)
+            .where(
+                ProjectMembership.project_id == project_id,
+                ProjectMembership.user_id == user_id,
+            )
+            .with_for_update()
+        )
+        is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assignable project member was not found.",
+        )
+    return account
+
+
+def persist_project_membership(
+    db: Session,
+    membership: ProjectMembership,
+    actor_id: UUID,
+    event_code: str,
+) -> ProjectMembership:
+    """Persist a membership change and its content-free audit event atomically."""
+
+    try:
+        db.add(membership)
+        db.flush()
+        db.add(
+            SecurityEvent(
+                actor_id=actor_id,
+                event_code=event_code,
+                outcome="success",
+                resource_type="project_membership",
+                resource_ref=f"{membership.project_id}:{membership.user_id}",
+            )
+        )
+        db.commit()
+        db.refresh(membership)
+    except IntegrityError:
+        db.rollback()
+        logger.error("Project membership write failed because of a database constraint.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project membership could not be saved.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Project membership write failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    return membership
 
 
 def project_storage_root(project: Project) -> Path:
@@ -1162,29 +1269,359 @@ async def accept_invitation(
     return auth_user_response(account)
 
 
-@app.get("/auth/users", response_model=list[AuthUserResponse], tags=["authentication"])
+@app.get(
+    "/auth/users",
+    response_model=list[ManagedAccountResponse],
+    tags=["authentication"],
+)
 async def list_accounts(
+    response: Response,
     _actor: User = Depends(require_permission("user.manage")),
     db: Session = Depends(get_db),
-) -> list[AuthUserResponse]:
+) -> list[ManagedAccountResponse]:
+    response.headers["Cache-Control"] = "no-store"
     accounts = list_records(db, select(User).where(User.email.is_not(None)).order_by(User.email))
-    return [auth_user_response(item) for item in accounts]
+    return [
+        ManagedAccountResponse(
+            id=item.id,
+            email=item.email or "",
+            role=canonical_role(item.role),
+            is_active=item.is_active,
+        )
+        for item in accounts
+    ]
+
+
+@app.get(
+    "/auth/users/{user_id}/offboarding-impact",
+    response_model=AccountOffboardingImpactResponse,
+    tags=["authentication"],
+)
+async def account_offboarding_impact(
+    user_id: UUID,
+    response: Response,
+    _actor: User = Depends(require_permission("user.manage")),
+    db: Session = Depends(get_db),
+) -> AccountOffboardingImpactResponse:
+    """Show administrators which work and ownership need handoff before disabling access."""
+
+    response.headers["Cache-Control"] = "no-store"
+    account = require_record(db, User, user_id, "Account was not found.")
+    if account.email is None:
+        raise HTTPException(status_code=404, detail="Account was not found.")
+
+    legacy_email_match = func.lower(func.trim(WorkItem.assignee)) == account.email.strip().lower()
+    open_assignment_filter = and_(
+        WorkItem.status.not_in(("done", "cancelled")),
+        or_(
+            WorkItem.assignee_id == account.id,
+            and_(WorkItem.assignee_id.is_(None), legacy_email_match),
+        ),
+    )
+
+    owned_projects = list_records(
+        db,
+        select(Project).where(Project.owner_id == account.id).order_by(Project.name, Project.id),
+    )
+    try:
+        open_item_counts = db.execute(
+            select(WorkItem.project_id, Project.name, func.count(WorkItem.id))
+            .add_columns(func.sum(case((WorkItem.assignee_id.is_(None), 1), else_=0)))
+            .join(Project, Project.id == WorkItem.project_id)
+            .where(open_assignment_filter)
+            .group_by(WorkItem.project_id, Project.name)
+            .order_by(Project.name, WorkItem.project_id)
+        ).all()
+        membership_count = db.scalar(
+            select(func.count()).select_from(ProjectMembership).where(
+                ProjectMembership.user_id == account.id
+            )
+        ) or 0
+    except SQLAlchemyError:
+        logger.error("Account offboarding impact query failed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    projects_by_id = {
+        project.id: {
+            "project_id": project.id,
+            "project_title": project.name,
+                "ownership_transfers": True,
+                "open_work_items_to_reassign": 0,
+                "legacy_email_assignments": 0,
+        }
+        for project in owned_projects
+    }
+    for project_id, project_title, item_count, legacy_email_count in open_item_counts:
+        impact = projects_by_id.setdefault(
+            project_id,
+            {
+                "project_id": project_id,
+                "project_title": project_title,
+                "ownership_transfers": False,
+                "open_work_items_to_reassign": 0,
+                "legacy_email_assignments": 0,
+            },
+        )
+        impact["open_work_items_to_reassign"] = int(item_count)
+        impact["legacy_email_assignments"] = int(legacy_email_count or 0)
+    eligible_replacements = list_records(
+        db,
+        select(User)
+        .where(User.id != account.id, User.is_active.is_(True), User.email.is_not(None))
+        .order_by(User.email, User.id),
+    )
+    return AccountOffboardingImpactResponse(
+        user_id=account.id,
+        email=account.email,
+        is_active=account.is_active,
+        projects=[
+            AccountOffboardingProjectImpactResponse(**item)
+            for item in sorted(
+                projects_by_id.values(),
+                key=lambda project: (project["project_title"].casefold(), str(project["project_id"])),
+            )
+        ],
+        open_work_items_total=sum(int(row[2]) for row in open_item_counts),
+        memberships_to_remove=membership_count,
+        eligible_replacements=[
+            ManagedAccountResponse(
+                id=candidate.id,
+                email=candidate.email or "",
+                role=canonical_role(candidate.role),
+                is_active=candidate.is_active,
+            )
+            for candidate in eligible_replacements
+            if canonical_role(candidate.role) != "intern"
+        ],
+    )
 
 
 @app.post("/auth/users/{user_id}/disable", status_code=204, tags=["authentication"])
 async def disable_account(
     user_id: UUID,
+    offboarding: AccountOffboardingRequest | None = None,
     actor: User = Depends(require_permission("user.manage")),
     db: Session = Depends(get_db),
 ) -> None:
     if user_id == actor.id:
         raise HTTPException(status_code=409, detail="You cannot disable your own account.")
-    account = require_record(db, User, user_id, "Account was not found.")
+    try:
+        account = db.scalar(select(User).where(User.id == user_id).with_for_update())
+    except SQLAlchemyError:
+        logger.error("Account offboarding lookup failed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account was not found.")
     if account.email is None:
         raise HTTPException(status_code=404, detail="Account was not found.")
-    account.is_active = False
-    for session in db.scalars(select(AuthSession).where(AuthSession.user_id == user_id)):
-        session.revoked_at = utc_now()
+    was_active = account.is_active
+
+    owned_projects = list_records(
+        db,
+        select(Project).where(Project.owner_id == account.id).order_by(Project.id).with_for_update(),
+    )
+    legacy_email_match = func.lower(func.trim(WorkItem.assignee)) == account.email.strip().lower()
+    open_items = list_records(
+        db,
+        select(WorkItem)
+        .where(
+            and_(
+                WorkItem.status.not_in(("done", "cancelled")),
+                or_(
+                    WorkItem.assignee_id == account.id,
+                    and_(WorkItem.assignee_id.is_(None), legacy_email_match),
+                ),
+            ),
+        )
+        .order_by(WorkItem.project_id, WorkItem.id)
+        .with_for_update(),
+    )
+    replacement_id = offboarding.replacement_user_id if offboarding is not None else None
+    if (owned_projects or open_items) and replacement_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Choose an active replacement to transfer {len(owned_projects)} project(s) "
+                f"and reassign {len(open_items)} open work item(s) before disabling this account."
+            ),
+        )
+
+    replacement: User | None = None
+    if replacement_id is not None:
+        try:
+            replacement = db.scalar(
+                select(User).where(User.id == replacement_id).with_for_update()
+            )
+        except SQLAlchemyError:
+            logger.error("Account offboarding replacement lookup failed.")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database temporarily unavailable.",
+            )
+        if (
+            replacement is None
+            or replacement.id == account.id
+            or not replacement.is_active
+            or not replacement.email
+            or canonical_role(replacement.role) == "intern"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Choose an active, assignable teammate as the replacement.",
+            )
+
+    try:
+        ownership_project_ids = {project.id for project in owned_projects}
+        task_project_ids = {item.project_id for item in open_items}
+        if replacement is not None:
+            for project in owned_projects:
+                project.owner_id = replacement.id
+                membership = db.get(ProjectMembership, (project.id, replacement.id))
+                if membership is None:
+                    membership = ProjectMembership(
+                        project_id=project.id,
+                        user_id=replacement.id,
+                        role="manager",
+                        added_by_id=actor.id,
+                    )
+                    db.add(membership)
+                    db.add(
+                        SecurityEvent(
+                            actor_id=actor.id,
+                            event_code="project.member.added",
+                            outcome="success",
+                            resource_type="project_membership",
+                            resource_ref=f"{project.id}:{replacement.id}",
+                        )
+                    )
+                else:
+                    membership.role = "manager"
+                db.add(
+                    SecurityEvent(
+                        actor_id=actor.id,
+                        event_code="project.ownership.transferred",
+                        outcome="success",
+                        resource_type="project",
+                        resource_ref=str(project.id),
+                    )
+                )
+
+            for project_id in task_project_ids - ownership_project_ids:
+                membership = db.get(ProjectMembership, (project_id, replacement.id))
+                if membership is None:
+                    membership = ProjectMembership(
+                        project_id=project_id,
+                        user_id=replacement.id,
+                        role="member",
+                        added_by_id=actor.id,
+                    )
+                    db.add(membership)
+                    db.add(
+                        SecurityEvent(
+                            actor_id=actor.id,
+                            event_code="project.member.added",
+                            outcome="success",
+                            resource_type="project_membership",
+                            resource_ref=f"{project_id}:{replacement.id}",
+                        )
+                    )
+            for item in open_items:
+                item.assignee_id = replacement.id
+                item.assignee = None
+                db.add(item)
+                db.add(
+                    SecurityEvent(
+                        actor_id=actor.id,
+                        event_code="work_item.reassigned",
+                        outcome="success",
+                        resource_type="work_item",
+                        resource_ref=str(item.id),
+                    )
+                )
+
+        with db.no_autoflush:
+            memberships = list_records(
+                db,
+                select(ProjectMembership)
+                .where(ProjectMembership.user_id == account.id)
+                .order_by(ProjectMembership.project_id)
+                .with_for_update(),
+            )
+        for membership in memberships:
+            db.delete(membership)
+            db.add(
+                SecurityEvent(
+                    actor_id=actor.id,
+                    event_code="project.member.removed",
+                    outcome="success",
+                    resource_type="project_membership",
+                    resource_ref=f"{membership.project_id}:{account.id}",
+                )
+            )
+
+        account.is_active = False
+        for session in db.scalars(
+            select(AuthSession).where(AuthSession.user_id == user_id).with_for_update()
+        ):
+            if session.revoked_at is None:
+                session.revoked_at = utc_now()
+        if was_active:
+            db.add(
+                SecurityEvent(
+                    actor_id=actor.id,
+                    event_code="user.account.disabled",
+                    outcome="success",
+                    resource_type="user",
+                    resource_ref=str(account.id),
+                )
+            )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        logger.error("Account offboarding failed because of a database constraint.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Account offboarding could not be completed; no changes were saved.",
+        ) from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Account offboarding failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account offboarding could not be completed; no changes were saved.",
+        ) from exc
+
+
+@app.post("/auth/users/{user_id}/enable", status_code=204, tags=["authentication"])
+async def enable_account(
+    user_id: UUID,
+    actor: User = Depends(require_permission("user.manage")),
+    db: Session = Depends(get_db),
+) -> None:
+    """Restore sign-in access without restoring previously revoked sessions."""
+
+    account = db.scalar(select(User).where(User.id == user_id).with_for_update())
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account was not found.")
+    if account.email is None:
+        raise HTTPException(status_code=404, detail="Account was not found.")
+    if account.is_active:
+        return
+    account.is_active = True
+    db.add(
+        SecurityEvent(
+            actor_id=actor.id,
+            event_code="user.account.enabled",
+            outcome="success",
+            resource_type="user",
+            resource_ref=str(account.id),
+        )
+    )
     db.commit()
 
 
@@ -1210,7 +1647,23 @@ async def create_project(
     ):
         _record_access_denial(db, request, actor, "project.assign_owner")
         raise HTTPException(status_code=403, detail="You cannot assign this project owner.")
-    owner = require_record(db, User, project.owner_id, "Project owner was not found.")
+    try:
+        owner = db.scalar(select(User).where(User.id == project.owner_id).with_for_update())
+    except SQLAlchemyError:
+        logger.error("Project owner lookup failed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Project owner was not found.")
+    legacy_test_owner = (
+        ENVIRONMENT.lower() == "testing"
+        and "PYTEST_CURRENT_TEST" in os.environ
+        and owner.email is None
+    )
+    if not legacy_test_owner and (not owner.is_active or owner.email is None):
+        raise HTTPException(status_code=404, detail="Active project owner was not found.")
     try:
         storage_slug = normalize_project_name(project.title)
     except (TypeError, ValueError) as exc:
@@ -1226,21 +1679,44 @@ async def create_project(
                 "Choose a title that produces a different folder name."
             ),
         )
-    created_project = persist_record(
-        db,
-        Project(
-            owner_id=owner.id,
-            name=project.title,
-            storage_slug=storage_slug,
-            description=project.description,
-            category=project.category,
-            scope=project.scope,
-            deadline=project.deadline,
-            outputs=project.outputs,
-            responsible_person=project.responsible_person,
-        ),
-        "Project",
+    created_project = Project(
+        owner_id=owner.id,
+        name=project.title,
+        storage_slug=storage_slug,
+        description=project.description,
+        category=project.category,
+        scope=project.scope,
+        deadline=project.deadline,
+        outputs=project.outputs,
+        responsible_person=project.responsible_person,
     )
+    try:
+        db.add(created_project)
+        db.flush()
+        db.add(
+            ProjectMembership(
+                project_id=created_project.id,
+                user_id=owner.id,
+                role="manager",
+                added_by_id=actor.id,
+            )
+        )
+        db.commit()
+        db.refresh(created_project)
+    except IntegrityError:
+        db.rollback()
+        logger.error("Project creation failed because of a database constraint.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project could not be saved.",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Project creation failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
     return ProjectResponse.from_model(created_project)
 
 
@@ -1255,12 +1731,221 @@ async def list_projects(
 ) -> list[ProjectResponse]:
     statement = select(Project).order_by(Project.created_at, Project.id)
     if canonical_role(actor.role) not in {"administrator", "supervisor"}:
-        statement = statement.where(Project.owner_id == actor.id)
+        statement = statement.where(
+            or_(
+                Project.owner_id == actor.id,
+                Project.memberships.any(ProjectMembership.user_id == actor.id),
+            )
+        )
     projects = list_records(
         db,
         statement,
     )
     return [ProjectResponse.from_model(project) for project in projects]
+
+
+def project_member_response(membership: ProjectMembership) -> ProjectMemberResponse:
+    """Format one project membership without exposing account credentials."""
+
+    return ProjectMemberResponse(
+        project_id=membership.project_id,
+        user_id=membership.user_id,
+        email=membership.user.email,
+        account_role=canonical_role(membership.user.role),
+        role=membership.role,
+        is_active=membership.user.is_active,
+        created_at=membership.created_at,
+    )
+
+
+@app.get(
+    "/projects/{project_id}/members",
+    response_model=list[ProjectMemberResponse],
+    tags=["projects"],
+    dependencies=[Depends(require_project_scope), Depends(require_permission("project.read"))],
+)
+async def list_project_members(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[ProjectMemberResponse]:
+    memberships = list_records(
+        db,
+        select(ProjectMembership)
+        .options(joinedload(ProjectMembership.user))
+        .where(ProjectMembership.project_id == project_id)
+        .order_by(ProjectMembership.role, ProjectMembership.created_at, ProjectMembership.user_id),
+    )
+    return [project_member_response(item) for item in memberships]
+
+
+@app.get(
+    "/projects/{project_id}/member-candidates",
+    response_model=list[ProjectMemberCandidateResponse],
+    tags=["projects"],
+    dependencies=[Depends(require_project_scope), Depends(require_permission("project.read"))],
+)
+async def list_project_member_candidates(
+    project_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("project.read")),
+    db: Session = Depends(get_db),
+) -> list[ProjectMemberCandidateResponse]:
+    project = require_record(db, Project, project_id, "Project was not found.")
+    require_project_manager(db, project, actor, request)
+    memberships = set(
+        db.scalars(
+            select(ProjectMembership.user_id).where(ProjectMembership.project_id == project_id)
+        ).all()
+    )
+    accounts = list_records(
+        db,
+        select(User)
+        .where(User.is_active.is_(True), User.email.is_not(None))
+        .order_by(User.email, User.id),
+    )
+    return [
+        ProjectMemberCandidateResponse(
+            user_id=account.id,
+            email=account.email or "",
+            account_role=canonical_role(account.role),
+            is_member=account.id in memberships,
+            can_be_assigned=canonical_role(account.role) != "intern",
+        )
+        for account in accounts
+    ]
+
+
+@app.post(
+    "/projects/{project_id}/members",
+    response_model=ProjectMemberResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["projects"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_project_scope),
+        Depends(require_permission("project.read")),
+    ],
+)
+async def add_project_member(
+    project_id: UUID,
+    membership_request: ProjectMemberCreate,
+    request: Request,
+    actor: User = Depends(require_permission("project.read")),
+    db: Session = Depends(get_db),
+) -> ProjectMemberResponse:
+    project = require_record(db, Project, project_id, "Project was not found.")
+    require_project_manager(db, project, actor, request)
+    target = db.scalar(
+        select(User).where(User.id == membership_request.user_id).with_for_update()
+    )
+    if target is None or not target.is_active or not target.email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Active invited account was not found.",
+        )
+    if db.get(ProjectMembership, (project_id, target.id)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This account is already a project member.",
+        )
+    is_global_operator = canonical_role(actor.role) in {"administrator", "supervisor"}
+    if membership_request.role == "manager" and project.owner_id != actor.id and not is_global_operator:
+        _record_access_denial(db, request, actor, "project.members.promote")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the project owner or a global operator can add a project manager.",
+        )
+    membership = persist_project_membership(
+        db,
+        ProjectMembership(
+            project_id=project_id,
+            user_id=target.id,
+            role=membership_request.role,
+            added_by_id=actor.id,
+        ),
+        actor.id,
+        "project.member.added",
+    )
+    membership.user = target
+    return project_member_response(membership)
+
+
+@app.delete(
+    "/projects/{project_id}/members/{member_user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["projects"],
+    dependencies=[Depends(require_project_scope), Depends(require_permission("project.read"))],
+)
+async def remove_project_member(
+    project_id: UUID,
+    member_user_id: UUID,
+    request: Request,
+    actor: User = Depends(require_permission("project.read")),
+    db: Session = Depends(get_db),
+) -> None:
+    project = require_record(db, Project, project_id, "Project was not found.")
+    require_project_manager(db, project, actor, request)
+    if member_user_id == project.owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Transfer project ownership before removing its owner.",
+        )
+    member_exists = db.scalar(select(User.id).where(User.id == member_user_id).with_for_update())
+    if member_exists is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project member was not found.")
+    membership = db.scalar(
+        select(ProjectMembership)
+        .where(
+            ProjectMembership.project_id == project_id,
+            ProjectMembership.user_id == member_user_id,
+        )
+        .with_for_update()
+    )
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project member was not found.")
+    is_owner_or_global_operator = (
+        project.owner_id == actor.id
+        or canonical_role(actor.role) in {"administrator", "supervisor"}
+    )
+    if membership.role == "manager" and not is_owner_or_global_operator:
+        _record_access_denial(db, request, actor, "project.members.remove_manager")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the project owner or a global operator can remove a project manager.",
+        )
+    active_assignments = db.scalar(
+        select(func.count(WorkItem.id)).where(
+            WorkItem.project_id == project_id,
+            WorkItem.assignee_id == member_user_id,
+            WorkItem.status.not_in(("done", "cancelled")),
+        )
+    ) or 0
+    if active_assignments:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Reassign or unassign {active_assignments} open work item(s) before removing this member."
+            ),
+        )
+    try:
+        db.delete(membership)
+        db.add(
+            SecurityEvent(
+                actor_id=actor.id,
+                event_code="project.member.removed",
+                outcome="success",
+                resource_type="project_membership",
+                resource_ref=f"{project_id}:{member_user_id}",
+            )
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.error("Project membership removal failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
 
 
 WORK_ITEM_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
@@ -1270,6 +1955,66 @@ WORK_ITEM_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     "done": frozenset({"in_progress"}),
     "cancelled": frozenset({"todo"}),
 }
+
+
+@app.get(
+    "/my/work-items",
+    response_model=MyWorkItemsResponse,
+    tags=["work items"],
+)
+async def list_my_work_items(
+    response: Response,
+    status_filter: WorkItemStatus | None = Query(default=None, alias="status"),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    actor: User = Depends(require_permission("work_item.read")),
+    db: Session = Depends(get_db),
+) -> MyWorkItemsResponse:
+    """List active-user assignments across only projects they can access."""
+
+    response.headers["Cache-Control"] = "no-store"
+    global_operator = canonical_role(actor.role) in {"administrator", "supervisor"}
+    project_scope = or_(
+        Project.owner_id == actor.id,
+        Project.memberships.any(ProjectMembership.user_id == actor.id),
+        global_operator,
+    )
+    filters = [WorkItem.assignee_id == actor.id, project_scope]
+    if status_filter is not None:
+        filters.append(WorkItem.status == status_filter)
+    total = db.scalar(
+        select(func.count())
+        .select_from(WorkItem)
+        .join(Project, Project.id == WorkItem.project_id)
+        .where(*filters)
+    ) or 0
+    priority_order = case(
+        (WorkItem.priority == "urgent", 0),
+        (WorkItem.priority == "high", 1),
+        (WorkItem.priority == "normal", 2),
+        else_=3,
+    )
+    items = list_records(
+        db,
+        select(WorkItem)
+        .join(Project, Project.id == WorkItem.project_id)
+        .options(joinedload(WorkItem.project), joinedload(WorkItem.assignee_user))
+        .where(*filters)
+        .order_by(
+            WorkItem.due_date.asc().nulls_last(),
+            priority_order,
+            WorkItem.created_at.desc(),
+            WorkItem.id,
+        )
+        .limit(limit)
+        .offset(offset),
+    )
+    return MyWorkItemsResponse(
+        items=[MyWorkItemResponse.model_validate(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.get(
@@ -1308,6 +2053,116 @@ async def list_project_work_items(
     return [WorkItemResponse.model_validate(item) for item in items]
 
 
+@app.get(
+    "/projects/{project_id}/work-items/{work_item_id}/comments",
+    response_model=WorkItemCommentsResponse,
+    tags=["work items"],
+    dependencies=[Depends(require_project_scope), Depends(require_permission("work_item.read"))],
+)
+async def list_work_item_comments(
+    project_id: UUID,
+    work_item_id: UUID,
+    response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> WorkItemCommentsResponse:
+    """Return a page of comments only when the task belongs to the active project."""
+
+    response.headers["Cache-Control"] = "no-store"
+    require_project_work_item(db, project_id, work_item_id)
+    try:
+        total = db.scalar(
+            select(func.count(WorkItemComment.id)).where(
+                WorkItemComment.work_item_id == work_item_id
+            )
+        ) or 0
+    except SQLAlchemyError:
+        logger.error("Work-item comment count query failed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable.",
+        )
+    comments = list_records(
+        db,
+        select(WorkItemComment)
+        .where(WorkItemComment.work_item_id == work_item_id)
+        .order_by(WorkItemComment.created_at.desc(), WorkItemComment.id.desc())
+        .limit(limit)
+        .offset(offset),
+    )
+    return WorkItemCommentsResponse(
+        comments=[WorkItemCommentResponse.model_validate(comment) for comment in comments],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.post(
+    "/projects/{project_id}/work-items/{work_item_id}/comments",
+    response_model=WorkItemCommentResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["work items"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_project_scope),
+        Depends(require_permission("work_item.manage")),
+    ],
+)
+async def create_work_item_comment(
+    project_id: UUID,
+    work_item_id: UUID,
+    comment_request: WorkItemCommentCreate,
+    actor: User = Depends(require_permission("work_item.manage")),
+    db: Session = Depends(get_db),
+) -> WorkItemCommentResponse:
+    """Add an immutable project discussion entry and a content-free audit event."""
+
+    item = require_project_work_item(db, project_id, work_item_id)
+    comment = WorkItemComment(
+        work_item_id=item.id,
+        author_id=actor.id,
+        author_label=actor.email or actor.external_ref,
+        body=comment_request.body,
+    )
+    try:
+        db.add(comment)
+        db.flush()
+        db.add(
+            SecurityEvent(
+                actor_id=actor.id,
+                event_code="work_item.comment.added",
+                outcome="success",
+                resource_type="work_item",
+                resource_ref=str(item.id),
+            )
+        )
+        db.commit()
+        db.refresh(comment)
+    except IntegrityError as exc:
+        db.rollback()
+        logger.error("Work-item comment failed because of a database constraint.")
+        raise HTTPException(status_code=409, detail="Comment could not be saved.") from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Work-item comment failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=503,
+            detail="Comment could not be saved; no changes were made.",
+        ) from exc
+    return WorkItemCommentResponse.model_validate(comment)
+
+
+def require_project_work_item(db: Session, project_id: UUID, work_item_id: UUID) -> WorkItem:
+    """Hide a work item when it does not belong to the requested project."""
+
+    item = require_record(db, WorkItem, work_item_id, "Work item was not found.")
+    if item.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Work item was not found.")
+    return item
+
+
 @app.post(
     "/projects/{project_id}/work-items",
     response_model=WorkItemResponse,
@@ -1325,15 +2180,17 @@ async def create_project_work_item(
     actor: User = Depends(require_permission("work_item.manage")),
     db: Session = Depends(get_db),
 ) -> WorkItemResponse:
+    assignee = require_active_project_member(db, project_id, work_item.assignee_id)
     item = WorkItem(
         project_id=project_id,
+        assignee_id=assignee.id if assignee is not None else None,
         created_by_id=actor.id,
         title=work_item.title,
         description=work_item.description,
-        assignee=work_item.assignee,
         priority=work_item.priority,
         due_date=work_item.due_date,
     )
+    item.assignee_user = assignee
     saved = persist_work_item_change(db, item, actor.id, "work_item.created")
     return WorkItemResponse.model_validate(saved)
 
@@ -1360,12 +2217,18 @@ async def update_project_work_item(
         raise HTTPException(status_code=404, detail="Work item was not found.")
 
     updates = changes.model_dump(exclude_unset=True)
+    assignee_user: User | None = None
+    if "assignee_id" in updates:
+        assignee_user = require_active_project_member(db, project_id, updates["assignee_id"])
+        updates["assignee_id"] = assignee_user.id if assignee_user is not None else None
     next_status = updates.get("status")
     changed_fields = {
         field_name: value
         for field_name, value in updates.items()
         if getattr(item, field_name) != value
     }
+    if "assignee_id" in updates and item.assignee is not None:
+        changed_fields["assignee_id"] = updates["assignee_id"]
     if not changed_fields:
         return WorkItemResponse.model_validate(item)
 
@@ -1381,11 +2244,18 @@ async def update_project_work_item(
     for field_name, value in changed_fields.items():
         if field_name != "status":
             setattr(item, field_name, value)
+            if field_name == "assignee_id":
+                item.assignee = None
         else:
             item.status = value
-    event_code = (
-        "work_item.status_changed" if status_changed else "work_item.updated"
-    )
+    if "assignee_id" in changed_fields:
+        item.assignee_user = assignee_user
+    if status_changed:
+        event_code = "work_item.status_changed"
+    elif "assignee_id" in changed_fields:
+        event_code = "work_item.assigned" if item.assignee_id else "work_item.unassigned"
+    else:
+        event_code = "work_item.updated"
     saved = persist_work_item_change(db, item, actor.id, event_code)
     return WorkItemResponse.model_validate(saved)
 
