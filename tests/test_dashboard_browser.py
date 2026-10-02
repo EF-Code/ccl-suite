@@ -847,3 +847,49 @@ def test_workboard_views_and_task_filters(dashboard_page: Page) -> None:
     page.get_by_role("button", name="Clear", exact=True).click()
     expect(calendar).to_contain_text(unplanned_title)
     expect(calendar.get_by_role("heading", name="Unscheduled work")).to_be_visible()
+
+
+def test_project_template_can_be_saved_and_used(dashboard_page: Page) -> None:
+    """Verify the UI can save a project structure and create a clean copy."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    suffix = uuid4().hex[:8]
+    source_title = f"Template source {suffix}"
+    open_workspace(page, "Setup")
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(source_title)
+    project_form.locator("textarea[name='description']").fill("A reusable project brief")
+    project_form.get_by_role("button", name="Register project").click()
+    expect(page.locator("#active-project-title")).to_have_text(source_title)
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=source_title)
+    project_id = project_row.get_by_role("button", name="Use project").get_attribute("data-project-id")
+    assert project_id
+
+    task_title = f"Reusable task {suffix}"
+    task_response = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/work-items",
+        headers={**csrf_headers(page), "Content-Type": "application/json"},
+        data=json.dumps({"title": task_title, "priority": "high"}),
+    )
+    assert task_response.status == 201, task_response.text()
+
+    template_name = f"Campaign template {suffix}"
+    open_workspace(page, "Templates")
+    page.locator("#new-project-template-name").fill(template_name)
+    page.get_by_role("button", name="Save current project").click()
+    template_card = page.locator("[data-project-template-id]").filter(has_text=template_name)
+    expect(template_card).to_be_visible()
+    expect(template_card).to_contain_text(task_title)
+    template_card.get_by_role("button", name="Create project from template").click()
+    create_dialog = page.get_by_role("dialog")
+    destination_title = f"{template_name} project"
+    expect(create_dialog.get_by_label("New project title")).to_have_value(destination_title)
+    create_dialog.get_by_role("button", name="Create project").click()
+
+    expect(page.locator("#active-project-title")).to_have_text(destination_title)
+    expect(page.locator("#page-title")).to_have_text("Workboard")
+    open_workspace(page, "Workboard")
+    workboard = page.locator("section[aria-labelledby='workboard-title']")
+    expect(workboard.get_by_role("heading", name=task_title)).to_be_visible()
+    expect(workboard).to_contain_text("To do")
