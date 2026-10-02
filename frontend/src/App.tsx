@@ -1377,14 +1377,14 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         <Button
           type="button"
           variant="outline"
-          className="global-search-trigger h-9 w-9 shrink-0 p-0 md:w-10 xl:w-[21rem] xl:justify-between xl:px-3"
+          className="global-search-trigger h-9 w-9 shrink-0 p-0 md:w-10 2xl:w-[21rem] 2xl:justify-between 2xl:px-3"
           aria-label="Search workspace"
           aria-haspopup="dialog"
           aria-keyshortcuts="Control+K Meta+K"
           onClick={() => setCommandOpen(true)}
         >
-          <span className="inline-flex items-center gap-2"><Search className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden xl:inline">Search workspace</span></span>
-          <span className="hidden items-center gap-1.5 xl:inline-flex"><span className="text-xs font-normal text-muted-foreground">Projects, files, sources</span><kbd>⌘K</kbd></span>
+          <span className="inline-flex items-center gap-2"><Search className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden 2xl:inline">Search workspace</span></span>
+          <span className="hidden items-center gap-1.5 2xl:inline-flex"><span className="text-xs font-normal text-muted-foreground">Projects, files, sources</span><kbd>⌘K</kbd></span>
         </Button>
         <div className="flex items-center gap-3">
           <span className={`service-state ${health.ok ? "is-online" : "is-offline"}`}><span />{health.ok ? "Ready" : "Unavailable"}</span>
