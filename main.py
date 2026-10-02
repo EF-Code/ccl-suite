@@ -109,6 +109,9 @@ from api_schemas import (
     PermissionMatrixResponse,
     ProjectCreate,
     ProjectResponse,
+    ProjectTemplateCreate,
+    ProjectTemplateResponse,
+    ProjectTemplateWorkItem,
     WorkItemCreate,
     WorkItemCommentCreate,
     WorkItemCommentResponse,
@@ -1760,6 +1763,141 @@ async def list_projects(
     return [ProjectResponse.from_model(project) for project in projects]
 
 
+@app.get(
+    "/project-templates",
+    response_model=list[ProjectTemplateResponse],
+    tags=["project templates"],
+)
+async def list_project_templates(
+    response: Response,
+    actor: User = Depends(require_permission("project.create")),
+    db: Session = Depends(get_db),
+) -> list[ProjectTemplateResponse]:
+    """List only reusable templates owned by the signed-in account."""
+
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        templates = db.scalars(
+            select(ProjectTemplate)
+            .where(ProjectTemplate.owner_id == actor.id)
+            .order_by(ProjectTemplate.created_at.desc(), ProjectTemplate.id.desc())
+        ).all()
+    except SQLAlchemyError as exc:
+        logger.error("Project templates could not be loaded because the database was unavailable.")
+        raise HTTPException(status_code=503, detail="Project templates are temporarily unavailable.") from exc
+    return [ProjectTemplateResponse.from_model(template) for template in templates]
+
+
+@app.post(
+    "/projects/{project_id}/templates",
+    response_model=ProjectTemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["project templates"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def create_project_template_from_project(
+    project_id: UUID,
+    template_request: ProjectTemplateCreate,
+    request: Request,
+    project: Project = Depends(require_project_scope),
+    actor: User = Depends(require_permission("project.create")),
+    db: Session = Depends(get_db),
+) -> ProjectTemplateResponse:
+    """Capture safe project metadata and a bounded, unassigned task checklist."""
+
+    require_project_manager(db, project, actor, request)
+    try:
+        source_items = db.scalars(
+            select(WorkItem)
+            .where(
+                WorkItem.project_id == project_id,
+                WorkItem.status != "cancelled",
+            )
+            .order_by(WorkItem.created_at, WorkItem.id)
+            .limit(101)
+        ).all()
+        if len(source_items) > 100:
+            raise HTTPException(
+                status_code=422,
+                detail="A reusable project template can include at most 100 tasks.",
+            )
+        today = date.today()
+        task_templates = [
+            ProjectTemplateWorkItem(
+                title=item.title,
+                description=item.description,
+                priority=item.priority,
+                due_in_days=(item.due_date - today).days
+                if item.due_date is not None and item.due_date >= today
+                else None,
+            ).model_dump()
+            for item in source_items
+        ]
+        template = ProjectTemplate(
+            owner_id=actor.id,
+            name=template_request.name,
+            description=project.description,
+            category=project.category,
+            scope=project.scope,
+            outputs=list(project.outputs or []),
+            responsible_person=project.responsible_person,
+            work_items_json=task_templates,
+        )
+        db.add(template)
+        db.commit()
+        db.refresh(template)
+    except HTTPException:
+        raise
+    except IntegrityError as exc:
+        db.rollback()
+        logger.error("Project template could not be saved because of a database constraint.")
+        raise HTTPException(status_code=409, detail="Project template could not be saved.") from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Project template could not be saved because the database was unavailable.")
+        raise HTTPException(status_code=503, detail="Project template could not be saved.") from exc
+    return ProjectTemplateResponse.from_model(template)
+
+
+@app.delete(
+    "/project-templates/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["project templates"],
+)
+async def delete_project_template(
+    template_id: UUID,
+    actor: User = Depends(require_permission("project.create")),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Delete a template only when it belongs to the authenticated account."""
+
+    try:
+        template = db.scalar(
+            select(ProjectTemplate).where(
+                ProjectTemplate.id == template_id,
+                ProjectTemplate.owner_id == actor.id,
+            )
+        )
+        if template is None:
+            raise HTTPException(status_code=404, detail="Project template was not found.")
+        db.delete(template)
+        db.commit()
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Project template could not be deleted because the database was unavailable.")
+        raise HTTPException(status_code=503, detail="Project template could not be deleted.") from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/project-templates/{template_id}/projects",
+    response_model=ProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["project templates"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
 def project_member_response(membership: ProjectMembership) -> ProjectMemberResponse:
     """Format one project membership without exposing account credentials."""
 
