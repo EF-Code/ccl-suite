@@ -173,6 +173,26 @@ export type MyWorkItemsResponse = {
   offset: number;
 };
 
+export type UserNotification = {
+  id: string;
+  project_id: string;
+  project_title: string;
+  work_item_id: string | null;
+  event_type: "task.assigned" | "task.status_changed" | "task.comment_added";
+  title: string;
+  message: string;
+  created_at: string;
+  read_at: string | null;
+};
+
+export type NotificationInboxResponse = {
+  items: UserNotification[];
+  total: number;
+  unread_total: number;
+  limit: number;
+  offset: number;
+};
+
 export type Workflow = {
   id: string;
   project_id: string;
