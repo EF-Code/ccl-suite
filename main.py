@@ -2688,6 +2688,19 @@ async def update_project_work_item(
                 f'You were assigned "{item.title}".',
             )
         )
+    if status_changed:
+        next_status_label = item.status.replace("_", " ")
+        for recipient_id in {item.assignee_id, item.created_by_id} - {None, actor.id}:
+            recipient = db.get(User, recipient_id)
+            if recipient is not None and recipient.is_active:
+                notifications.append(
+                    (
+                        recipient_id,
+                        "task.status_changed",
+                        "Task status changed",
+                        f'"{item.title}" is now {next_status_label}.',
+                    )
+                )
     saved = persist_work_item_change(db, item, actor.id, event_code, notifications)
     return WorkItemResponse.model_validate(saved)
 
