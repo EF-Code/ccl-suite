@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_orchestration import MAX_AGENT_INPUT_CHARACTERS
 from knowledge_contract import (
@@ -61,6 +61,39 @@ class AuthUserResponse(BaseModel):
     id: UUID
     email: str
     role: str
+
+
+class ManagedAccountResponse(BaseModel):
+    """Safe account fields shown to administrators during access reviews."""
+
+    id: UUID
+    email: str
+    role: str
+    is_active: bool
+
+
+class AccountOffboardingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    replacement_user_id: UUID | None = None
+
+
+class AccountOffboardingProjectImpactResponse(BaseModel):
+    project_id: UUID
+    project_title: str
+    ownership_transfers: bool
+    open_work_items_to_reassign: int
+    legacy_email_assignments: int
+
+
+class AccountOffboardingImpactResponse(BaseModel):
+    user_id: UUID
+    email: str
+    is_active: bool
+    projects: list[AccountOffboardingProjectImpactResponse]
+    open_work_items_total: int
+    memberships_to_remove: int
+    eligible_replacements: list[ManagedAccountResponse]
 
 
 class LoginRequest(BaseModel):
@@ -165,19 +198,39 @@ class ProjectResponse(BaseModel):
         )
 
 
+class ProjectMemberCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: UUID
+    role: Literal["manager", "member"] = "member"
+
+
+class ProjectMemberResponse(BaseModel):
+    project_id: UUID
+    user_id: UUID
+    email: str | None
+    account_role: str
+    role: Literal["manager", "member"]
+    is_active: bool
+    created_at: datetime
+
+
+class ProjectMemberCandidateResponse(BaseModel):
+    user_id: UUID
+    email: str
+    account_role: str
+    is_member: bool
+    can_be_assigned: bool
+
+
 class WorkItemCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(default="", max_length=2000)
-    assignee: str | None = Field(default=None, max_length=120)
+    assignee_id: UUID | None = None
     priority: WorkItemPriority = "normal"
     due_date: date | None = None
-
-    @field_validator("assignee")
-    @classmethod
-    def normalize_assignee(cls, value: str | None) -> str | None:
-        return value or None
 
 
 class WorkItemUpdate(BaseModel):
@@ -185,15 +238,10 @@ class WorkItemUpdate(BaseModel):
 
     title: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=2000)
-    assignee: str | None = Field(default=None, max_length=120)
+    assignee_id: UUID | None = None
     priority: WorkItemPriority | None = None
     status: WorkItemStatus | None = None
     due_date: date | None = None
-
-    @field_validator("assignee")
-    @classmethod
-    def normalize_assignee(cls, value: str | None) -> str | None:
-        return value or None
 
     @model_validator(mode="after")
     def validate_patch(self) -> WorkItemUpdate:
@@ -212,7 +260,8 @@ class WorkItemResponse(BaseModel):
     project_id: UUID
     title: str
     description: str
-    assignee: str | None
+    assignee_id: UUID | None
+    assignee: str | None = Field(validation_alias="assignee_display")
     priority: WorkItemPriority
     status: WorkItemStatus
     due_date: date | None
@@ -220,6 +269,41 @@ class WorkItemResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class WorkItemCommentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class WorkItemCommentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_item_id: UUID
+    author_id: UUID | None
+    author_label: str
+    body: str
+    created_at: datetime
+
+
+class WorkItemCommentsResponse(BaseModel):
+    comments: list[WorkItemCommentResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class MyWorkItemResponse(WorkItemResponse):
+    project_title: str
+
+
+class MyWorkItemsResponse(BaseModel):
+    items: list[MyWorkItemResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 class FileCreate(BaseModel):
@@ -1435,6 +1519,9 @@ class WeeklyOperationsReportResponse(BaseModel):
 
 
 __all__ = [
+    "AccountOffboardingImpactResponse",
+    "AccountOffboardingProjectImpactResponse",
+    "AccountOffboardingRequest",
     "AgentDefinitionResponse",
     "AgentHandoffCreate",
     "AgentHandoffResponse",
@@ -1446,7 +1533,15 @@ __all__ = [
     "WorkflowStateTransitionRequest",
     "WorkflowToolRequest",
     "WorkflowToolRunResponse",
+    "MyWorkItemResponse",
+    "MyWorkItemsResponse",
+    "ProjectMemberCandidateResponse",
+    "ProjectMemberCreate",
+    "ProjectMemberResponse",
     "WorkItemCreate",
+    "WorkItemCommentCreate",
+    "WorkItemCommentResponse",
+    "WorkItemCommentsResponse",
     "WorkItemResponse",
     "WorkItemUpdate",
     "BackupCreate",
