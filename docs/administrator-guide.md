@@ -29,9 +29,27 @@ The `member` role is a legacy alias for `staff`; `reviewer` is an alias for
 `supervisor`. Use the current role names for new invitations. See the
 [permission matrix](permissions.md) for operation-level detail.
 
-Disable an account from Setup when access should end. Disabling revokes its
-active sessions. Review the account list and invitation state during access
-reviews; do not reuse a recipient's invitation link for another person.
+Use **Setup → Team accounts** for access reviews and staff offboarding. The list
+shows each invited account's role and whether it can sign in. Offboarding first
+shows the account's project memberships, owned projects, and open task
+assignments. If the account owns projects or has open tasks, select an active,
+assignable teammate to receive ownership and those assignments. Ownership
+transfers make the replacement a project manager; open tasks are assigned to
+them and they are added to those project teams if needed. Older free-text task
+labels that exactly match the account's email are included; other labels are
+not guessed at and should be reviewed with the project team. The operation removes
+the departing account's project memberships, disables sign-in, revokes active
+sessions, and records audit events in one database transaction. If a required
+replacement is missing or the transaction fails, none of those changes are
+saved. Completed tasks and the account's historical records are retained.
+Use **Review handoff** for accounts deactivated before this workflow was added;
+they may still own projects or have open tasks that need transfer.
+
+Reactivating an account restores sign-in access, but does not restore removed
+project memberships or previously revoked sessions; the person must sign in
+again and be explicitly added to projects as appropriate. Account status and
+handoff changes are recorded in the security event log. Do not reuse a
+recipient's invitation link for another person.
 
 ## Routine administration
 
