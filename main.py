@@ -2602,7 +2602,17 @@ async def create_project_work_item(
         due_date=work_item.due_date,
     )
     item.assignee_user = assignee
-    saved = persist_work_item_change(db, item, actor.id, "work_item.created")
+    notifications = []
+    if assignee is not None:
+        notifications.append(
+            (
+                assignee.id,
+                "task.assigned",
+                "Task assigned to you",
+                f'You were assigned "{item.title}".',
+            )
+        )
+    saved = persist_work_item_change(db, item, actor.id, "work_item.created", notifications)
     return WorkItemResponse.model_validate(saved)
 
 
