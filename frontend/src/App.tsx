@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
-import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type ManagedAccount, type AccountOffboardingImpact, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type ProjectMember, type ProjectMemberCandidate, type MyWorkItem, type MyWorkItemsResponse, type WorkItem, type WorkItemCreate, type WorkItemUpdate, type WorkItemComment, type WorkItemCommentsResponse, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult, type UploadPolicy, type UploadResponse } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type ManagedAccount, type AccountOffboardingImpact, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type ProjectMember, type ProjectMemberCandidate, type MyWorkItem, type MyWorkItemsResponse, type NotificationInboxResponse, type UserNotification, type WorkItem, type WorkItemCreate, type WorkItemUpdate, type WorkItemComment, type WorkItemCommentsResponse, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult, type UploadPolicy, type UploadResponse } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
@@ -25,6 +25,7 @@ const SecurityDashboard = lazy(() => import("@/components/security-dashboard").t
 const WorkflowOrchestrator = lazy(() => import("@/components/workflow-orchestrator").then((module) => ({ default: module.WorkflowOrchestrator })))
 const ProjectWorkboard = lazy(() => import("@/components/project-workboard").then((module) => ({ default: module.ProjectWorkboard })))
 const MyWork = lazy(() => import("@/components/my-work").then((module) => ({ default: module.MyWork })))
+const NotificationsInbox = lazy(() => import("@/components/notifications-inbox").then((module) => ({ default: module.NotificationsInbox })))
 
 // Helpers
 function escapeForTest(v: string) { return v }
@@ -157,6 +158,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const [myWorkTotal, setMyWorkTotal] = useState(0)
   const [myWorkLoading, setMyWorkLoading] = useState(false)
   const [myWorkError, setMyWorkError] = useState("")
+  const [taskNotifications, setTaskNotifications] = useState<UserNotification[]>([])
+  const [notificationTotal, setNotificationTotal] = useState(0)
+  const [unreadNotificationTotal, setUnreadNotificationTotal] = useState(0)
+  const [notificationLoading, setNotificationLoading] = useState(false)
+  const [notificationError, setNotificationError] = useState("")
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [projectMemberCandidates, setProjectMemberCandidates] = useState<ProjectMemberCandidate[]>([])
   const [projectTeamLoading, setProjectTeamLoading] = useState(false)
@@ -176,6 +182,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const workItemsRequestSequence = useRef(0)
   const myWorkRequestSequence = useRef(0)
+  const notificationsRequestSequence = useRef(0)
   const projectTeamRequestSequence = useRef(0)
 
   // Dialog
@@ -302,6 +309,48 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       if (requestSequence === myWorkRequestSequence.current) setMyWorkLoading(false)
     }
   }, [myWorkItems.length, myWorkLoading, myWorkTotal])
+  const refreshNotifications = useCallback(async () => {
+    const requestSequence = ++notificationsRequestSequence.current
+    setNotificationLoading(true)
+    try {
+      const data = await apiRequest<NotificationInboxResponse>("/my/notifications?limit=50")
+      if (requestSequence !== notificationsRequestSequence.current) return
+      setTaskNotifications(data.items)
+      setNotificationTotal(data.total)
+      setUnreadNotificationTotal(data.unread_total)
+      setNotificationError("")
+    } catch (error) {
+      if (requestSequence !== notificationsRequestSequence.current) return
+      setTaskNotifications([])
+      setNotificationTotal(0)
+      setUnreadNotificationTotal(0)
+      setNotificationError(error instanceof Error ? error.message : "Task notifications could not be loaded.")
+    } finally {
+      if (requestSequence === notificationsRequestSequence.current) setNotificationLoading(false)
+    }
+  }, [])
+  const loadMoreNotifications = useCallback(async () => {
+    const offset = taskNotifications.length
+    if (offset >= notificationTotal || notificationLoading) return
+    const requestSequence = ++notificationsRequestSequence.current
+    setNotificationLoading(true)
+    try {
+      const data = await apiRequest<NotificationInboxResponse>(`/my/notifications?limit=50&offset=${offset}`)
+      if (requestSequence !== notificationsRequestSequence.current) return
+      setTaskNotifications((current) => {
+        const seen = new Set(current.map((notification) => notification.id))
+        return [...current, ...data.items.filter((notification) => !seen.has(notification.id))]
+      })
+      setNotificationTotal(data.total)
+      setUnreadNotificationTotal(data.unread_total)
+      setNotificationError("")
+    } catch (error) {
+      if (requestSequence !== notificationsRequestSequence.current) return
+      setNotificationError(error instanceof Error ? error.message : "More task notifications could not be loaded.")
+    } finally {
+      if (requestSequence === notificationsRequestSequence.current) setNotificationLoading(false)
+    }
+  }, [notificationLoading, notificationTotal, taskNotifications.length])
   const refreshProjectTeam = useCallback(async (projectId: string, ownerId: string) => {
     const requestSequence = ++projectTeamRequestSequence.current
     if (!projectId) {
@@ -443,6 +492,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         const [data] = await Promise.all([
           apiRequest<Project[]>("/projects"),
           refreshMyWorkItems(),
+          refreshNotifications(),
         ])
         if (active) setProjects(data)
       } catch {
@@ -451,8 +501,15 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     }
 
     void loadProjectsForSession()
-    return () => { active = false; myWorkRequestSequence.current += 1 }
-  }, [account.id, refreshMyWorkItems])
+    return () => { active = false; myWorkRequestSequence.current += 1; notificationsRequestSequence.current += 1 }
+  }, [account.id, refreshMyWorkItems, refreshNotifications])
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshNotifications()
+    }, 60_000)
+    return () => window.clearInterval(interval)
+  }, [refreshNotifications])
 
   const loadSelectedProjectData = useCallback((projectId: string, ownerId = "") => {
     setOrganizerPlan(null)
@@ -1586,6 +1643,35 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
+  async function openTaskNotification(notification: UserNotification) {
+    const project = projects.find((entry) => entry.id === notification.project_id)
+    if (!project) {
+      showMessage("This project is no longer available in your workspace.", "error")
+      void refreshNotifications()
+      return
+    }
+    if (notification.read_at === null) {
+      try {
+        await apiRequest<UserNotification>(`/my/notifications/${notification.id}/read`, { method: "PATCH" })
+        void refreshNotifications()
+      } catch (error) {
+        showMessage(error instanceof Error ? error.message : "The notification could not be marked read.", "error")
+      }
+    }
+    setAttentionOpen(false)
+    activateProject(project)
+    openView("workboard")
+  }
+
+  async function markAllTaskNotificationsRead() {
+    try {
+      await apiRequest<{ updated: number }>("/my/notifications/read-all", { method: "POST" })
+      await refreshNotifications()
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "Notifications could not be marked read.", "error")
+    }
+  }
+
   return (
     <div className="min-h-screen">
       <a className="skip-link" href="#main-content">Skip to main content</a>
@@ -1676,12 +1762,12 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             variant="ghost"
             size="icon"
             className="relative"
-            aria-label={`Open project inbox${attentionCount ? `, ${attentionCount} items need attention` : ""}`}
+            aria-label={`Open project inbox${unreadNotificationTotal ? `, ${unreadNotificationTotal} unread task notifications` : ""}${attentionCount ? `, ${attentionCount} project items need attention` : ""}`}
             title="Project inbox"
-            onClick={() => setAttentionOpen(true)}
+            onClick={() => { setAttentionOpen(true); void refreshNotifications() }}
           >
             <Bell className="h-4 w-4" />
-            {attentionCount > 0 && <span aria-hidden="true" className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-[#bf5d42] px-1 text-[0.58rem] font-semibold leading-none text-white">{attentionCount > 9 ? "9+" : attentionCount}</span>}
+            {(unreadNotificationTotal > 0 || attentionCount > 0) && <span aria-hidden="true" className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-[#bf5d42] px-1 text-[0.58rem] font-semibold leading-none text-white">{(unreadNotificationTotal || attentionCount) > 9 ? "9+" : unreadNotificationTotal || attentionCount}</span>}
           </Button>
           <div className="operator-menu"><span className="operator-copy"><small>{account.role}</small><strong title={account.email}>{account.email}</strong></span><span className="operator-avatar">{account.email.slice(0, 2).toUpperCase()}</span></div>
           <Button variant="outline" size="sm" onClick={() => void onLogout()}>Log out</Button>
@@ -1692,9 +1778,28 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
           <SheetHeader className="text-left">
             <SheetTitle>Project inbox</SheetTitle>
-            <SheetDescription>Pending reviews and overdue work for {selectedProjectName.toLowerCase()}.</SheetDescription>
+            <SheetDescription>Task updates across your projects, plus items that need attention in the active project.</SheetDescription>
           </SheetHeader>
           <div className="mt-6 space-y-5">
+            <Suspense fallback={<p role="status" className="text-sm text-muted-foreground">Loading task updates…</p>}>
+              <NotificationsInbox
+                items={taskNotifications}
+                total={notificationTotal}
+                unreadTotal={unreadNotificationTotal}
+                loading={notificationLoading}
+                error={notificationError}
+                onRefresh={() => { void refreshNotifications() }}
+                onLoadMore={() => { void loadMoreNotifications() }}
+                onMarkAllRead={() => { void markAllTaskNotificationsRead() }}
+                onOpen={(notification) => { void openTaskNotification(notification) }}
+              />
+            </Suspense>
+            <Separator />
+            <section aria-labelledby="project-attention-title" className="space-y-4">
+            <div>
+              <h3 id="project-attention-title" className="text-sm font-semibold text-foreground">Needs attention</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Pending reviews and overdue work for {selectedProjectName.toLowerCase()}.</p>
+            </div>
             {!selectedId ? (
               <div className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">Select a project to see its pending review items.</div>
             ) : attentionCount === 0 ? (
@@ -1734,6 +1839,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
                 </section>}
               </>
             )}
+            </section>
           </div>
         </SheetContent>
       </Sheet>
