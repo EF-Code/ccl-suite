@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+
 from api_schemas import (
     ResearchApplicabilityCheckResponse,
     ResearchApplicabilityFieldResponse,
@@ -13,11 +14,10 @@ from api_schemas import (
     ResearchClaimResponse,
     ResearchScope,
 )
-
 from knowledge_security import UnsafeKnowledgeContentError
 from research_evidence import (
-    ResearchEvidenceError,
     RESEARCH_SCOPE_FIELDS,
+    ResearchEvidenceError,
     build_evidence_register,
     check_claim_applicability,
     classify_claim,
@@ -70,6 +70,20 @@ def test_classify_claim_separates_source_shapes() -> None:
     assert classify_claim("The approach is likely effective.") == "opinion"
     assert classify_claim("The operator must verify the source.") == "instruction"
     assert classify_claim("Script: Use a close-up shot of the dashboard.") == "creative"
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "This process is excellent.",
+        "The workflow was frustrating.",
+        "The result looks promising.",
+        "This is the best approach.",
+        "The interface is not useful.",
+    ],
+)
+def test_classify_claim_recognizes_evaluative_predicates(sentence: str) -> None:
+    assert classify_claim(sentence) == "opinion"
 
 
 def test_extract_claims_preserves_passages_and_provenance() -> None:

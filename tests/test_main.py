@@ -4676,7 +4676,8 @@ def test_research_claim_extraction_returns_validated_provenance_json() -> None:
                 "- The vehicle uses a hybrid engine in the 2024 model year.\n"
                 "Verify the source date before citing it.\n"
                 "I think this approach is effective.\n"
-                "Script: Use a close-up shot of the dashboard."
+                "Script: Use a close-up shot of the dashboard.\n"
+                "This process is excellent."
             ),
             "scope": {
                 "model_year": 2024,
@@ -4691,13 +4692,14 @@ def test_research_claim_extraction_returns_validated_provenance_json() -> None:
     payload = response.json()
     assert payload["schema_version"] == "research-evidence-v1"
     assert payload["project_id"] == project["id"]
-    assert payload["claim_count"] == 5
+    assert payload["claim_count"] == 6
     assert [claim["classification"] for claim in payload["claims"]] == [
         "heading",
         "factual",
         "instruction",
         "opinion",
         "creative",
+        "opinion",
     ]
     assert payload["claims"][1]["passage"].startswith("- The vehicle uses")
     assert payload["claims"][1]["source_date"] == "2026-09-14"

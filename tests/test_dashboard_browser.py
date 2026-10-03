@@ -424,12 +424,14 @@ def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) 
     page.locator("#research-source-text").fill(
         "# Vehicle facts\nThe vehicle uses a hybrid engine in the 2024 model year.\n"
         "The vehicle is safe.\nThe vehicle is not safe.\n"
-        "Verify the source date before citing it."
+        "Verify the source date before citing it.\nThis process is excellent."
     )
     page.locator("#research-extract-submit").click()
     claims_result = page.locator("#research-claims-result")
     claims_result.wait_for(state="visible")
     expect(claims_result).to_contain_text("factual")
+    expect(page.locator("#research-claims-summary")).to_contain_text("1 opinion")
+    expect(claims_result).to_contain_text("This process is excellent.")
     expect(claims_result).to_contain_text("needs review")
     expect(claims_result).to_contain_text("The vehicle uses a hybrid engine")
 
@@ -466,7 +468,7 @@ def test_dashboard_runs_research_claim_and_scope_workflow(dashboard_page: Page) 
             if verify_buttons.count() == 0:
                 break
             raise
-    expect(review_panel).to_contain_text("5/5 claims verified")
+    expect(review_panel).to_contain_text("6/6 claims verified")
     page.locator("#research-approve-review").click()
     page.locator("#confirm-accept").click()
     expect(review_panel).to_contain_text("approved")

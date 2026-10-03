@@ -9,15 +9,14 @@ deliberately conservative: an absent or unclear scope value becomes
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
-import re
 from typing import Final, Literal
 from uuid import UUID, uuid4
 
 from knowledge_security import ensure_safe_untrusted_text
-
 
 RESEARCH_EVIDENCE_SCHEMA_VERSION: Final = "research-evidence-v1"
 MAX_RESEARCH_SOURCE_CHARACTERS: Final = 20_000
@@ -172,6 +171,17 @@ _OPINION_PATTERN: Final = re.compile(
     r"\b(?:probably|likely|arguably|may|might)\b",
     re.IGNORECASE,
 )
+_EVALUATIVE_PREDICATE_PATTERN: Final = re.compile(
+    r"\b(?:am|is|are|was|were|seems?|appears?|feels?|looks?)\s+"
+    r"(?:(?:not|very|quite|really|rather|so|somewhat|extremely|remarkably)\s+)*"
+    r"(?:(?:a|an|the)\s+)?"
+    r"(?:excellent|outstanding|superb|great|good|bad|poor|terrible|awful|"
+    r"wonderful|fantastic|amazing|horrible|frustrating|confusing|disappointing|"
+    r"impressive|promising|useful|useless|helpful|unhelpful|valuable|worthwhile|"
+    r"unacceptable|ideal|perfect|best|worst|beautiful|ugly|boring|convenient|"
+    r"inconvenient)\b",
+    re.IGNORECASE,
+)
 _CREATIVE_PATTERN: Final = re.compile(
     r"^(?:script|scene|caption|hook|voiceover|voice-over|title|dialogue|"
     r"shot|b-roll|on-screen text|prompt|storyboard|thumbnail|visual direction)"
@@ -265,7 +275,7 @@ def classify_claim(text: str, *, is_heading: bool = False) -> ClaimClassificatio
         return "heading"
     if _CREATIVE_PATTERN.match(candidate):
         return "creative"
-    if _OPINION_PATTERN.search(candidate):
+    if _OPINION_PATTERN.search(candidate) or _EVALUATIVE_PREDICATE_PATTERN.search(candidate):
         return "opinion"
     if _INSTRUCTION_PATTERN.search(candidate):
         return "instruction"
@@ -710,6 +720,17 @@ def build_evidence_register(
 
 __all__ = [
     "EVIDENCE_WARNING_CODES",
+    "MAX_RESEARCH_CLAIMS",
+    "MAX_RESEARCH_CLAIM_CHARACTERS",
+    "MAX_RESEARCH_SOURCE_CHARACTERS",
+    "MAX_RESEARCH_WARNING_COUNT",
+    "RESEARCH_EVIDENCE_SCHEMA_VERSION",
+    "RESEARCH_SCOPE_FIELDS",
+    "ApplicabilityFieldName",
+    "ApplicabilityFieldResult",
+    "ApplicabilityResult",
+    "ApplicabilityStatus",
+    "ClaimClassification",
     "EvidenceAssessment",
     "EvidenceAssessmentStatus",
     "EvidenceRegisterResult",
@@ -717,21 +738,10 @@ __all__ = [
     "EvidenceWarning",
     "EvidenceWarningCode",
     "EvidenceWarningSeverity",
-    "ApplicabilityFieldName",
-    "ApplicabilityFieldResult",
-    "ApplicabilityResult",
-    "ApplicabilityStatus",
-    "ClaimClassification",
     "ExtractedClaim",
-    "MAX_RESEARCH_CLAIMS",
-    "MAX_RESEARCH_CLAIM_CHARACTERS",
-    "MAX_RESEARCH_SOURCE_CHARACTERS",
-    "MAX_RESEARCH_WARNING_COUNT",
-    "RESEARCH_EVIDENCE_SCHEMA_VERSION",
-    "RESEARCH_SCOPE_FIELDS",
     "ResearchEvidenceError",
-    "check_claim_applicability",
     "build_evidence_register",
+    "check_claim_applicability",
     "classify_claim",
     "extract_claims",
     "research_scope_fields",

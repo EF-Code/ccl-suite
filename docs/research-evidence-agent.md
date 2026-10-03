@@ -31,6 +31,12 @@ Every extracted claim contains the following fields:
 The response envelope is versioned as `research-evidence-v1` and includes the
 project ID, source metadata, scope, claim count, and validated claim list.
 
+The deterministic classifier recognizes explicit opinion cues, including
+hedging language and common evaluative predicates such as “This process is
+excellent.” This is a bounded language heuristic, not semantic understanding;
+unrecognized or context-dependent wording can still be misclassified. Every
+claim therefore remains `needs_review` until a human reviewer verifies it.
+
 ## Example validated claim
 
 ```json
