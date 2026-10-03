@@ -1595,6 +1595,9 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setup: { title: "Workspace setup", description: "Provision an owner, register a project, and prepare local storage." },
     security: { title: "Security overview", description: "Review audit activity, agent outcomes, and project controls within your access scope." },
   }
+  const pageOwnsVisibleHeading = ["overview", "my-work", "workboard", "templates"].includes(activeView)
+  const sectionUsesScreenReaderHeading = ["operations", "security"].includes(activeView)
+  const pageOwnsProjectContext = ["overview", "my-work", "workboard", "templates", "research", "security"].includes(activeView)
   const pendingApprovalItems = workflows.flatMap((workflow) =>
     (workflowApprovals[workflow.id] || [])
       .filter((approval) => approval.status === "pending")
@@ -1862,7 +1865,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       </Sheet>
 
       <main id="main-content" className="app-main" data-view={activeView}>
-        <header className={activeView === "operations" || activeView === "overview" || activeView === "security" ? "sr-only" : "workspace-heading"}>
+        <header className={pageOwnsVisibleHeading ? "hidden" : sectionUsesScreenReaderHeading ? "sr-only" : "workspace-heading"}>
           <div><h1 id="page-title">{viewCopy[activeView].title}</h1><p>{viewCopy[activeView].description}</p></div>
           {activeView === "setup" && <Button id="workspace-projects-refresh" variant="outline" size="sm" onClick={() => refreshProjects()}><RefreshCw className="h-3.5 w-3.5" />Refresh projects</Button>}
         </header>
@@ -1964,7 +1967,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         </Card>
 
         {/* Active project context - preserve ids */}
-        <div id="workspace-context" className="workspace-signal">
+        <div
+          id="workspace-context"
+          className={`workspace-signal ${pageOwnsProjectContext ? "workspace-signal--embedded-context" : ""}`}
+          aria-hidden={pageOwnsProjectContext}
+        >
           <div className="project-ledger-title">
             <div className="min-w-0"><span>Project</span><h2 id="active-project-title">{selectedProjectName}</h2></div>
           </div>
@@ -2602,9 +2609,9 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         <Card id="research-evidence" className={`${activeView === "research" ? "block" : "hidden"} workspace-card major-panel`}>
           <CardHeader className="flex flex-row items-start justify-between gap-4">
             <div>
-              <p className="panel-label">Evidence workspace</p>
-              <CardTitle className="flex items-center gap-1.5"><FileSearch className="w-4 h-4 text-primary" />Research evidence</CardTitle>
-              <CardDescription className="text-xs">Turn source text into reviewable claims, retain the exact passage, and compare its stated scope with a target context.</CardDescription>
+              <p className="panel-label">Source review</p>
+              <CardTitle className="flex items-center gap-1.5"><FileSearch className="w-4 h-4 text-primary" />Claims and applicability</CardTitle>
+              <CardDescription className="text-xs">Keep source passages, scope checks, and review status together before publication.</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {researchClaims.length > 0 && <Button id="research-clear-preview" type="button" variant="outline" size="sm" onClick={clearResearchPreview}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Clear preview</Button>}

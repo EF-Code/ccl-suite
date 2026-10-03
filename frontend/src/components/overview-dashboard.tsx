@@ -121,7 +121,7 @@ export function OverviewDashboard({
 
       <div className="overview-top-grid">
         <Card className="overview-card overview-project-card">
-          <CardHeader className="overview-card-header">
+          <CardHeader className="overview-card-header flex-row">
             <div>
               <p className="overview-label">Active project</p>
               <CardTitle>{project?.title || "No project selected"}</CardTitle>
@@ -141,7 +141,7 @@ export function OverviewDashboard({
         </Card>
 
         <Card className="overview-card overview-health-card">
-          <CardHeader className="overview-card-header">
+          <CardHeader className="overview-card-header flex-row">
             <div><p className="overview-label">System health</p><CardTitle>{health.ok ? "Service ready" : "Service unavailable"}</CardTitle></div>
             <ShieldCheck className={`h-5 w-5 ${health.ok ? "text-teal-600" : "text-amber-600"}`} />
           </CardHeader>
@@ -169,7 +169,7 @@ export function OverviewDashboard({
         </Card>
 
         <Card className="overview-card overview-actions-card">
-          <CardHeader className="overview-card-header"><div><p className="overview-label">Next actions</p><CardTitle>Move the work forward</CardTitle></div><ArrowUpRight className="h-5 w-5 text-muted-foreground" /></CardHeader>
+          <CardHeader className="overview-card-header flex-row"><div><p className="overview-label">Next actions</p><CardTitle>Move the work forward</CardTitle></div><ArrowUpRight className="h-5 w-5 text-muted-foreground" /></CardHeader>
           <CardContent className="overview-actions-list">
             {nextActions.map((action) => (
               <button key={action.title} type="button" className="overview-action" onClick={() => onNavigate(action.target)}>
@@ -184,7 +184,7 @@ export function OverviewDashboard({
 
       <div className="overview-focus-grid">
         <Card className="overview-card overview-workflow-card">
-          <CardHeader className="overview-card-header">
+          <CardHeader className="overview-card-header flex-row">
             <div><p className="overview-label">Workflow control</p><CardTitle>Project delivery path</CardTitle><CardDescription>{currentWorkflow?.name || "Create a workflow to give this project a visible path from definition to decision."}</CardDescription></div>
             <Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("workflows")} disabled={!project}>View workflow <ArrowUpRight className="ml-1 h-4 w-4" /></Button>
           </CardHeader>
@@ -205,7 +205,7 @@ export function OverviewDashboard({
         </Card>
 
         <Card className="overview-card overview-approval-card">
-          <CardHeader className="overview-card-header"><div><p className="overview-label">Approval queue</p><CardTitle>{pendingApprovals.length} waiting for review</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("workflows")} disabled={!project}>View all <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
+          <CardHeader className="overview-card-header flex-row"><div><p className="overview-label">Approval queue</p><CardTitle>{pendingApprovals.length} waiting for review</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("workflows")} disabled={!project}>View all <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
           <CardContent className="overview-list">
             {pendingApprovals.length === 0 ? <div className="overview-empty"><ShieldCheck className="h-5 w-5" /><span>No approval decisions are waiting.</span></div> : pendingApprovals.slice(0, 3).map((approval) => {
               const workflow = workflows.find((item) => item.id === approval.workflow_id)
@@ -217,21 +217,21 @@ export function OverviewDashboard({
 
       <div className="overview-bottom-grid">
         <Card className="overview-card overview-activity-card">
-          <CardHeader className="overview-card-header"><div><p className="overview-label">Recent activity</p><CardTitle>What changed lately</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("setup")}>View register <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
+          <CardHeader className="overview-card-header flex-row"><div><p className="overview-label">Recent activity</p><CardTitle>What changed lately</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("setup")}>View register <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
           <CardContent className="overview-list">
             {activity.length === 0 ? <div className="overview-empty"><CircleAlert className="h-5 w-5" /><span>Select a project to populate activity.</span></div> : activity.slice(0, 4).map((item) => <div key={item.title} className="overview-list-row overview-list-row--static"><span className="overview-row-icon">{item.icon}</span><span><strong>{item.title}</strong><small>{item.detail}</small></span><time>{item.date}</time></div>)}
           </CardContent>
         </Card>
 
         <Card className="overview-card">
-          <CardHeader className="overview-card-header"><div><p className="overview-label">Files</p><CardTitle>Project inventory</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("files")}>View all <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
+          <CardHeader className="overview-card-header flex-row"><div><p className="overview-label">Files</p><CardTitle>Project inventory</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("files")}>View all <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
           <CardContent className="overview-list">
             {files.length === 0 ? <div className="overview-empty"><FileText className="h-5 w-5" /><span>No active files indexed yet.</span></div> : files.slice(0, 4).map((file) => <button key={file.id} type="button" className="overview-list-row" onClick={() => onNavigate("files")}><span className="overview-row-icon">{fileIcon(file.extension)}</span><span><strong>{file.name}</strong><small>{formatBytes(file.size_bytes)} · {statusLabel(file.status)}</small></span><ArrowUpRight className="h-4 w-4" /></button>)}
           </CardContent>
         </Card>
 
         <Card className="overview-card">
-          <CardHeader className="overview-card-header"><div><p className="overview-label">Research</p><CardTitle>Evidence readiness</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("research")}>View all <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
+          <CardHeader className="overview-card-header flex-row"><div><p className="overview-label">Research</p><CardTitle>Evidence readiness</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("research")}>View all <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
           <CardContent className="overview-list">
             <div className="overview-research-summary"><span className={statusTone(evidenceStatus)}>{evidenceLabel}</span><strong>{researchReview ? `${researchReview.verified_count}/${researchReview.claim_count}` : researchClaims.length} <small>claims ready</small></strong></div>
             {researchReview?.warnings.slice(0, 2).map((warning) => <div key={warning.code} className="overview-warning"><CircleAlert className="h-4 w-4" /><span>{warning.message}</span></div>)}
@@ -240,7 +240,7 @@ export function OverviewDashboard({
         </Card>
 
         <Card className="overview-card">
-          <CardHeader className="overview-card-header"><div><p className="overview-label">Knowledge</p><CardTitle>Approved sources</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("knowledge")}>View all <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
+          <CardHeader className="overview-card-header flex-row"><div><p className="overview-label">Knowledge</p><CardTitle>Approved sources</CardTitle></div><Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("knowledge")}>View all <ArrowUpRight className="ml-1 h-4 w-4" /></Button></CardHeader>
           <CardContent className="overview-list">
             {knowledgeSources.length === 0 ? <div className="overview-empty"><BookOpen className="h-5 w-5" /><span>No sources registered for this project.</span></div> : knowledgeSources.slice(0, 4).map((source) => <button key={source.id} type="button" className="overview-list-row" onClick={() => onNavigate("knowledge")}><span className="overview-row-icon"><BookOpen className="h-4 w-4 text-indigo-600" /></span><span><strong>{source.title}</strong><small>{statusLabel(source.approval_status)} · {source.file_name}</small></span><span className={statusTone(source.approval_status)}>{statusLabel(source.approval_status)}</span></button>)}
           </CardContent>

@@ -350,11 +350,11 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
   }
 
   return (
-    <section className="space-y-5" aria-labelledby="workboard-title">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <section className="workboard-page space-y-5" aria-labelledby="workboard-title">
+      <div className="workboard-page-header flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-teal-800">Project delivery</p>
-          <h2 id="workboard-title" className="text-2xl font-semibold tracking-tight text-[#1b2c3b]">Workboard</h2>
+          <h1 id="workboard-title" className="text-2xl font-semibold tracking-tight text-[#1b2c3b]">Workboard</h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Plan and track the work that moves this project from brief to delivery.</p>
         </div>
         <div className="flex items-center gap-2">
@@ -365,7 +365,7 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
       </div>
 
       {!project ? <Card className="border-dashed"><CardContent className="grid justify-items-center gap-2 py-12 text-center"><ClipboardList className="h-8 w-8 text-muted-foreground" /><p className="font-medium text-foreground">Choose a project to see its workboard</p><p className="max-w-md text-sm text-muted-foreground">Work items stay inside the active project and follow its access permissions.</p></CardContent></Card> : <>
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#e1e8eb] bg-[#f7faf9] px-4 py-3 text-sm">
+        <div className="workboard-project-context flex flex-wrap items-center gap-3 rounded-xl border border-[#e1e8eb] bg-[#f7faf9] px-4 py-3 text-sm">
           <strong className="mr-1 max-w-full truncate text-[#244050]">{project.title}</strong>
           <span className="text-muted-foreground">{activeCount} active item{activeCount === 1 ? "" : "s"}</span>
           {overdueCount > 0 && <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-800">{overdueCount} overdue</Badge>}

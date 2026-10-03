@@ -84,7 +84,7 @@ export function MyWork({ items, total, loading, error, canManage, onRefresh, onL
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-teal-800">Your workload</p>
-          <h2 id="my-work-title" className="text-2xl font-semibold tracking-tight text-[#1b2c3b]">My Work</h2>
+          <h1 id="my-work-title" className="text-2xl font-semibold tracking-tight text-[#1b2c3b]">My Work</h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">One clear list of work assigned to you across your projects.</p>
         </div>
         <Button type="button" variant="outline" onClick={onRefresh} disabled={loading}>

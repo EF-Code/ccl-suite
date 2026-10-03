@@ -119,7 +119,7 @@ export function ProjectTemplates({ project, canSaveFromProject, onProjectCreated
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-teal-800">Repeatable delivery</p>
-          <h2 id="project-templates-title" className="text-2xl font-semibold tracking-tight text-[#1b2c3b]">Project templates</h2>
+          <h1 id="project-templates-title" className="text-2xl font-semibold tracking-tight text-[#1b2c3b]">Project templates</h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Reuse a proven project brief and task checklist. New projects start with clean, unassigned work.</p>
         </div>
         <Button type="button" variant="outline" onClick={() => void refreshTemplates(true)} disabled={loading}>
