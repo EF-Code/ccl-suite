@@ -720,10 +720,22 @@ def test_dashboard_mobile_header_controls_do_not_overlap(dashboard_page: Page) -
 
 
 def test_administrator_can_offboard_and_reactivate_team_accounts(dashboard_page: Page) -> None:
-    """Exercise the current impact-first offboarding and reactivation workflow."""
+    """Offboarding removes a teammate from the live team and transfers open work."""
 
     page = dashboard_page
     page.goto(BASE_URL, wait_until="networkidle")
+    suffix = uuid4().hex[:8]
+    project_title = f"Offboarding team {suffix}"
+    open_workspace(page, "Setup")
+    project_form = page.locator("#project-form")
+    project_form.locator("input[name='title']").fill(project_title)
+    project_form.locator("textarea[name='description']").fill("Offboarding team refresh regression")
+    project_form.get_by_role("button", name="Register project").click()
+    project_row = page.locator(".projects-table tbody tr").filter(has_text=project_title)
+    project_row.wait_for(state="visible")
+    project_id = project_row.get_by_role("button", name="Use project").get_attribute("data-project-id")
+    assert project_id
+
     email = f"offboard-{uuid4().hex}@example.test"
     invitation = page.request.post(
         f"{BASE_URL}/auth/invitations",
@@ -739,6 +751,26 @@ def test_administrator_can_offboard_and_reactivate_team_accounts(dashboard_page:
         timeout=10,
     )
     assert accepted.status_code == 201, accepted.text
+    member_id = accepted.json()["id"]
+    membership = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/members",
+        headers={**csrf_headers(page), "Content-Type": "application/json"},
+        data=json.dumps({"user_id": member_id, "role": "member"}),
+    )
+    assert membership.status == 201, membership.text()
+    task_title = f"Offboarding task {suffix}"
+    task = page.request.post(
+        f"{BASE_URL}/projects/{project_id}/work-items",
+        headers={**csrf_headers(page), "Content-Type": "application/json"},
+        data=json.dumps({"title": task_title, "assignee_id": member_id}),
+    )
+    assert task.status == 201, task.text()
+
+    project_row.get_by_role("button", name="Use project").click()
+    open_workspace(page, "Workboard")
+    workboard = page.locator("section[aria-labelledby='workboard-title']")
+    team_button = workboard.get_by_role("button", name="Team 2", exact=True)
+    expect(team_button).to_be_visible()
 
     open_workspace(page, "Setup")
     team = page.locator("#team-account-management")
@@ -750,14 +782,29 @@ def test_administrator_can_offboard_and_reactivate_team_accounts(dashboard_page:
     account_row.get_by_role("button", name=f"Offboard {email}").click()
     offboarding_dialog = page.get_by_role("dialog")
     expect(offboarding_dialog.get_by_role("heading", name="Review account offboarding")).to_be_visible()
-    expect(offboarding_dialog).to_contain_text(
-        "No owned projects or open task assignments need transfer"
+    expect(offboarding_dialog).to_contain_text("1 open task")
+    membership_count = offboarding_dialog.locator("div.rounded-lg.border").filter(
+        has_text="Project memberships to remove"
     )
-    disable_button = offboarding_dialog.get_by_role("button", name="Disable access")
+    expect(membership_count).to_contain_text("1")
+    offboarding_dialog.locator("#offboarding-replacement").click()
+    page.get_by_role("option", name=re.compile(re.escape(TEST_EMAIL))).click()
+    disable_button = offboarding_dialog.get_by_role("button", name="Transfer work & disable access")
     expect(disable_button).to_be_enabled()
     disable_button.click()
     expect(account_row.get_by_text("Deactivated", exact=True)).to_be_visible()
 
+    open_workspace(page, "Workboard")
+    expect(workboard.get_by_role("button", name="Team 1", exact=True)).to_be_visible()
+    expect(workboard.get_by_role("heading", name=task_title)).to_be_visible()
+    expect(workboard).to_contain_text(f"Assigned: {TEST_EMAIL}")
+    workboard.get_by_role("button", name="Team 1", exact=True).click()
+    team_dialog = page.get_by_role("dialog", name="Project team")
+    expect(team_dialog).to_contain_text(TEST_EMAIL)
+    expect(team_dialog).not_to_contain_text(email)
+    team_dialog.get_by_role("button", name="Close").first.click()
+
+    open_workspace(page, "Setup")
     account_row.get_by_role("button", name=f"Reactivate {email}").click()
     confirm_protected_action(page)
     expect(account_row.get_by_text("Active", exact=True)).to_be_visible()

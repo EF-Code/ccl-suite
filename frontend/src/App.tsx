@@ -643,6 +643,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         refreshProjects(),
         refreshWorkItems(selectedId),
         refreshMyWorkItems(),
+        refreshProjectTeam(selectedId, selectedProject?.owner_id || ""),
       ])
     } catch (error) {
       setOffboardingError(error instanceof Error ? error.message : "The account could not be offboarded.")
