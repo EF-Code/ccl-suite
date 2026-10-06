@@ -2975,10 +2975,16 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
 export default function App() {
   const [account, setAccount] = useState<AuthUser | null | undefined>(undefined)
   const [error, setError] = useState("")
+  const [authNotice, setAuthNotice] = useState("")
   const [busy, setBusy] = useState(false)
   const [inviteToken, setInviteToken] = useState(
     () => new URLSearchParams(window.location.hash.slice(1)).get("invite") || "",
   )
+  const [resetToken, setResetToken] = useState(
+    () => new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
+  )
+  const [resetRequestMode, setResetRequestMode] = useState(false)
+  const [loginEmail, setLoginEmail] = useState("")
 
   const refreshSession = useCallback(() => {
     apiRequest<AuthUser>("/auth/me")
@@ -3000,6 +3006,49 @@ export default function App() {
       })
       setOwnerId(user.id)
       setAccount(user)
+      form.reset()
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRequestPasswordReset(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const fields = new FormData(event.currentTarget)
+    setBusy(true); setError(""); setAuthNotice("")
+    try {
+      const result = await apiRequest<{ message: string }>("/auth/password-reset-requests", {
+        method: "POST",
+        body: JSON.stringify({ email: fields.get("email") }),
+      })
+      setAuthNotice(result.message)
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleCompletePasswordReset(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const fields = new FormData(form)
+    if (fields.get("password") !== fields.get("confirm_password")) {
+      setError("Passwords do not match.")
+      return
+    }
+    setBusy(true); setError(""); setAuthNotice("")
+    try {
+      await apiRequest<void>("/auth/password-resets/complete", {
+        method: "POST",
+        body: JSON.stringify({ token: resetToken, password: fields.get("password") }),
+      })
+      window.history.replaceState(null, "", window.location.pathname)
+      setResetToken("")
+      setLoginEmail("")
+      setAuthNotice("Your password has been updated. Sign in with your new password.")
       form.reset()
     } catch (cause) {
       setError((cause as Error).message)
@@ -3034,6 +3083,15 @@ export default function App() {
     }
   }
 
+  function returnToSignIn() {
+    window.history.replaceState(null, "", window.location.pathname)
+    setInviteToken("")
+    setResetToken("")
+    setResetRequestMode(false)
+    setAuthNotice("")
+    setError("")
+  }
+
   async function handleLogout() {
     try {
       await apiRequest("/auth/logout", { method: "POST" })
@@ -3056,22 +3114,50 @@ export default function App() {
       <Card className="relative w-full max-w-[29rem] border-white/70 shadow-[0_24px_70px_rgba(14,42,54,0.19)]">
         <CardHeader className="space-y-5 pb-3">
           <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[#0e5664] text-lg font-black text-white">C</span><div><p className="text-sm font-semibold tracking-tight">CCL AI Suite</p><p className="text-xs text-muted-foreground">Private team workspace</p></div></div>
-          <div><CardTitle className="text-2xl tracking-tight">{inviteToken ? "Accept your invitation" : "Welcome back"}</CardTitle><CardDescription className="mt-2 text-sm">{inviteToken ? "Set a password to activate your team account." : "Sign in to continue to your projects and operations."}</CardDescription></div>
+          <div>
+            <CardTitle className="text-2xl tracking-tight">
+              {inviteToken ? "Accept your invitation" : resetToken ? "Set a new password" : resetRequestMode ? "Reset your password" : "Welcome back"}
+            </CardTitle>
+            <CardDescription className="mt-2 text-sm">
+              {inviteToken
+                ? "Set a password to activate your team account."
+                : resetToken
+                  ? "Choose a new password for your account. This link can be used once."
+                  : resetRequestMode
+                    ? "Enter your account email and we’ll send a secure reset link if it matches an active account."
+                    : "Sign in to continue to your projects and operations."}
+            </CardDescription>
+          </div>
         </CardHeader>
         <CardContent className="space-y-5">
           {error && <Alert variant="destructive" role="alert"><AlertDescription>{error}</AlertDescription></Alert>}
+          {authNotice && <p role="status" className="rounded-lg border border-[#b7e5de] bg-[#effaf7] px-3 py-2.5 text-sm text-[#14635f]">{authNotice}</p>}
           {inviteToken ? (
             <form id="invitation-form" onSubmit={handleAcceptInvitation} className="grid gap-4">
               <div className="grid gap-1.5"><Label htmlFor="new-password">Password</Label><Input id="new-password" name="password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /><p className="text-xs text-muted-foreground">Use at least 12 characters.</p></div>
               <div className="grid gap-1.5"><Label htmlFor="confirm-password">Confirm password</Label><Input id="confirm-password" name="confirm_password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /></div>
               <Button type="submit" disabled={busy}>{busy ? "Activating…" : "Activate account"}</Button>
-              <Button type="button" variant="ghost" onClick={() => { window.history.replaceState(null, "", window.location.pathname); setInviteToken(""); setError("") }}>Back to sign in</Button>
+              <Button type="button" variant="ghost" onClick={returnToSignIn}>Back to sign in</Button>
+            </form>
+          ) : resetToken ? (
+            <form id="password-reset-complete-form" onSubmit={handleCompletePasswordReset} className="grid gap-4">
+              <div className="grid gap-1.5"><Label htmlFor="reset-new-password">New password</Label><Input id="reset-new-password" name="password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /><p className="text-xs text-muted-foreground">Use at least 12 characters.</p></div>
+              <div className="grid gap-1.5"><Label htmlFor="reset-confirm-password">Confirm new password</Label><Input id="reset-confirm-password" name="confirm_password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /></div>
+              <Button type="submit" disabled={busy}>{busy ? "Updating password…" : "Update password"}</Button>
+              <Button type="button" variant="ghost" onClick={returnToSignIn}>Back to sign in</Button>
+            </form>
+          ) : resetRequestMode ? (
+            <form id="password-reset-request-form" onSubmit={handleRequestPasswordReset} className="grid gap-4">
+              <div className="grid gap-1.5"><Label htmlFor="reset-email">Email address</Label><Input id="reset-email" name="email" type="email" autoComplete="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required autoFocus /></div>
+              <Button type="submit" disabled={busy}>{busy ? "Sending request…" : "Send reset link"}</Button>
+              <Button type="button" variant="ghost" onClick={returnToSignIn}>Back to sign in</Button>
             </form>
           ) : (
             <form id="login-form" onSubmit={handleLogin} className="grid gap-4">
-              <div className="grid gap-1.5"><Label htmlFor="login-email">Email address</Label><Input id="login-email" name="email" type="email" autoComplete="username" required autoFocus /></div>
+              <div className="grid gap-1.5"><Label htmlFor="login-email">Email address</Label><Input id="login-email" name="email" type="email" autoComplete="username" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required autoFocus /></div>
               <div className="grid gap-1.5"><Label htmlFor="login-password">Password</Label><Input id="login-password" name="password" type="password" autoComplete="current-password" required /></div>
               <Button type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
+              <Button type="button" variant="link" className="h-auto justify-self-center p-0 text-sm" onClick={() => { setResetRequestMode(true); setAuthNotice(""); setError("") }}>Forgot password?</Button>
             </form>
           )}
           <p className="border-t pt-4 text-center text-xs text-muted-foreground">Accounts are created by invitation from a team administrator.</p>
