@@ -1,4 +1,4 @@
-"""SMTP delivery for account invitations."""
+"""SMTP delivery for account invitations and password recovery."""
 
 from __future__ import annotations
 
@@ -15,13 +15,8 @@ class EmailDeliveryError(RuntimeError):
     """Raised when configured SMTP delivery cannot complete safely."""
 
 
-def send_invitation_email(
-    recipient: str,
-    role: str,
-    invite_url: str,
-    expires_at: datetime,
-) -> bool:
-    """Send an invitation when SMTP is configured; return false if disabled."""
+def _send_message(message: EmailMessage) -> bool:
+    """Deliver a prepared message using the configured SMTP service."""
 
     host = os.getenv("CCL_SMTP_HOST", "").strip()
     if not host:
@@ -50,6 +45,29 @@ def send_invitation_email(
     if not from_address or "\r" in from_address or "\n" in from_address or "@" not in from_address:
         raise EmailDeliveryError("Email sender address configuration is invalid.")
 
+    try:
+        message["From"] = Address(display_name="CCL Suite", addr_spec=from_address)
+        with smtplib.SMTP(host, port, timeout=10) as smtp:
+            smtp.ehlo()
+            if use_starttls:
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
+            if username:
+                smtp.login(username, password)
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException, TypeError, ValueError) as exc:
+        raise EmailDeliveryError("Email could not be delivered.") from exc
+    return True
+
+
+def send_invitation_email(
+    recipient: str,
+    role: str,
+    invite_url: str,
+    expires_at: datetime,
+) -> bool:
+    """Send an invitation when SMTP is configured; return false if disabled."""
+
     expiry = expires_at
     if expiry.tzinfo is None:
         expiry = expiry.replace(tzinfo=timezone.utc)
@@ -57,7 +75,6 @@ def send_invitation_email(
 
     try:
         message = EmailMessage()
-        message["From"] = Address(display_name="CCL Suite", addr_spec=from_address)
         message["To"] = recipient
         message["Subject"] = "You are invited to CCL Suite"
         message.set_content(
@@ -78,18 +95,44 @@ def send_invitation_email(
     except (TypeError, ValueError) as exc:
         raise EmailDeliveryError("Email message configuration is invalid.") from exc
 
+    return _send_message(message)
+
+
+def send_password_reset_email(
+    recipient: str,
+    reset_url: str,
+    expires_at: datetime,
+) -> bool:
+    """Send a short-lived password-reset link when SMTP is configured."""
+
+    expiry = expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    expiry_text = expiry.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
     try:
-        with smtplib.SMTP(host, port, timeout=10) as smtp:
-            smtp.ehlo()
-            if use_starttls:
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.ehlo()
-            if username:
-                smtp.login(username, password)
-            smtp.send_message(message)
-    except (OSError, smtplib.SMTPException, ValueError) as exc:
-        raise EmailDeliveryError("Invitation email could not be delivered.") from exc
-    return True
+        message = EmailMessage()
+        message["To"] = recipient
+        message["Subject"] = "Reset your CCL Suite password"
+        message.set_content(
+            "A password reset was requested for your CCL Suite account.\n\n"
+            f"Reset your password before {expiry_text}:\n{reset_url}\n\n"
+            "If you did not request this change, ignore this message. "
+            "Your existing password will remain active."
+        )
+        safe_url = html.escape(reset_url, quote=True)
+        message.add_alternative(
+            "<p>A password reset was requested for your CCL Suite account.</p>"
+            f"<p>This link expires at {html.escape(expiry_text)}.</p>"
+            f'<p><a href="{safe_url}">Reset password</a></p>'
+            "<p>If you did not request this change, ignore this message. "
+            "Your existing password will remain active.</p>",
+            subtype="html",
+        )
+    except (TypeError, ValueError) as exc:
+        raise EmailDeliveryError("Email message configuration is invalid.") from exc
+
+    return _send_message(message)
 
 
-__all__ = ["EmailDeliveryError", "send_invitation_email"]
+__all__ = ["EmailDeliveryError", "send_invitation_email", "send_password_reset_email"]

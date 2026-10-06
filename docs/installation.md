@@ -52,8 +52,9 @@ loopback-only demonstration environment, not a production deployment.
    ```
 
 5. Open `http://127.0.0.1:8000/`, sign in, and invite a supervisor or staff
-   account from Setup. In this local profile, invitation emails are captured in
-   Mailpit at `http://127.0.0.1:8025`; they are not delivered externally.
+   account from Setup. In this local profile, invitation and password-recovery
+   emails are captured in Mailpit at `http://127.0.0.1:8025`; they are not
+   delivered externally.
 
 ## Operate and update
 
