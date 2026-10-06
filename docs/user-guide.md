@@ -7,10 +7,14 @@ handling rules.
 
 ## Sign in and choose a project
 
-Sign in with the invitation-created account. Select the project you are
-authorized to work on from the active-project control. If the list is empty,
-ask an administrator or supervisor to register a project or invite you to the
-appropriate workflow. Sign out when finished, especially on a shared device.
+Sign in with the invitation-created account. If you forget your password,
+choose **Forgot password?** and use the one-time link sent to the configured
+mail service; local Compose captures it in Mailpit. Reset links expire after
+30 minutes, can be used once, and revoke existing sessions when completed.
+Select the project you are authorized to work on from the active-project
+control. If the list is empty, ask an administrator or supervisor to register
+a project or invite you to the appropriate workflow. Sign out when finished,
+especially on a shared device.
 
 ## Your work and project team
 

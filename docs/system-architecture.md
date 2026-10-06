@@ -34,7 +34,9 @@ relational records.
    revocable server-side session. The session cookie is `HttpOnly`; state
    changes also require the CSRF cookie value in the request header. The API
    loads the stored role and checks project ownership or the elevated
-   supervisor/administrator boundary.
+   supervisor/administrator boundary. Password recovery uses short-lived,
+   single-use token digests, generic request responses, rate limits, and
+   session revocation after a successful reset.
 2. **Files and recovery:** upload and file operations are confined to the
    active project's storage root. Inventory persists metadata and checksums;
    generated plans and manifests are kept in reserved internal paths. Backup
@@ -76,8 +78,8 @@ loopback. It is intended for local development and controlled demonstrations.
 Remote operation requires HTTPS, production cookie settings, a browser-facing
 public URL, a real mail provider, an explicit database backup policy, and an
 approved owner for secrets and maintenance. Project-file backups do not back
-up PostgreSQL. The application has no self-service password-reset flow, and
-alert evaluation has no scheduler.
+up PostgreSQL. Alert evaluation has no scheduler in the local demonstration
+profile.
 
 For the normalized table relationships, see the
 [database schema](database-schema.md). Security controls for specialist

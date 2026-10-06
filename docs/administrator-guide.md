@@ -68,11 +68,16 @@ recipient's invitation link for another person.
 
 ## Account recovery and support
 
-The application does not provide self-service password reset. A trusted local
-Linux operator with access to the rootless Docker service can reset the
-password for an existing active, password-enabled account. Login and reset
-transactions serialize on the account row, so the API does not need to be
-stopped for recovery:
+Users can request a password-reset link from the sign-in screen. The response
+does not reveal whether an email belongs to an active account. Links expire
+after 30 minutes, are single-use, and revoke the account's existing sessions
+when used. In local Compose, the reset message is captured in Mailpit; real
+delivery requires the SMTP settings to point at an approved mail provider.
+
+For break-glass recovery when mail is unavailable, a trusted local Linux
+operator with access to the rootless Docker service can reset the password for
+an existing active, password-enabled account. Login and reset transactions
+serialize on the account row, so the API does not need to be stopped:
 
 ```bash
 docker compose run --rm --no-deps --entrypoint python api \
@@ -81,13 +86,14 @@ docker compose run --rm --no-deps --entrypoint python api \
 
 The command asks the operator to confirm the account and enter the new
 passphrase twice without putting it in shell history or logs. It keeps the
-account's role unchanged, revokes that account's sessions, and writes an
-`auth.password.reset` security event with an opaque audit reference. Because
-the reset is performed outside an authenticated application session, the event
-has no application-user actor; the operator must record their identity, time,
-and audit reference in the restricted local operations record. The command
-refuses disabled accounts and accounts that have not accepted an invitation.
-Test sign-in and review the security event. A login already in progress either
-finishes first and has its new session revoked by recovery, or waits for the
-reset and must use the new password. Do not put passwords, invitation tokens, session cookies,
-or recovery codes in project issues, reports, or demonstration notes.
+account's role unchanged, revokes that account's sessions and outstanding
+reset links, and writes an `auth.password.reset` security event with an opaque
+audit reference. Because the reset is performed outside an authenticated
+application session, the event has no application-user actor; the operator must
+record their identity, time, and audit reference in the restricted local
+operations record. The command refuses disabled accounts and accounts that
+have not accepted an invitation. Test sign-in and review the security event. A
+login already in progress either finishes first and has its new session
+revoked by recovery, or waits for the reset and must use the new password. Do
+not put passwords, invitation tokens, session cookies, or recovery codes in
+project issues, reports, or demonstration notes.
