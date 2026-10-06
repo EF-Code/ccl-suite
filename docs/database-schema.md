@@ -7,6 +7,7 @@ audit queries.
 ```mermaid
 erDiagram
     USER ||--o{ PROJECT : owns
+    USER ||--o{ PASSWORD_RESET_TOKEN : resets
     USER ||--o{ PROJECT_MEMBERSHIP : joins
     PROJECT ||--o{ PROJECT_MEMBERSHIP : has_team
     USER ||--o{ WORK_ITEM : assigned_to
@@ -44,6 +45,14 @@ erDiagram
         string role
         datetime created_at
         datetime updated_at
+    }
+    PASSWORD_RESET_TOKEN {
+        UUID id PK
+        UUID user_id FK
+        string token_hash UK
+        datetime expires_at
+        datetime used_at
+        datetime created_at
     }
     PROJECT {
         UUID id PK
@@ -245,6 +254,9 @@ erDiagram
 - `users.external_ref` is an opaque identity reference. User email addresses
   support invitation-based accounts; passwords are stored only as hashes, and
   session tokens are stored only as digests.
+- `password_reset_tokens` stores only token digests, account references, and
+  expiry/use timestamps. Raw reset links are delivered by the configured mail
+  service and are never persisted in the database.
 - `project_memberships` separates project access from task assignment. Existing
   project owners are backfilled as managers; legacy work-item assignee labels
   remain unchanged and are not guessed into account identities.

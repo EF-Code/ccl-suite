@@ -145,6 +145,26 @@ class Invitation(Base):
     )
 
 
+class PasswordResetToken(Base):
+    """Single-use password-reset token stored only as a cryptographic digest."""
+
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        Index("ix_password_reset_tokens_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class AuthSession(Base):
     """Revocable server-side browser session; raw tokens are never stored."""
 
@@ -163,7 +183,7 @@ class AuthSession(Base):
 
 
 class AuthThrottle(Base):
-    """Bound login attempts without storing raw email addresses or IPs."""
+    """Bound anonymous authentication attempts without raw email or IP values."""
 
     __tablename__ = "auth_throttles"
 

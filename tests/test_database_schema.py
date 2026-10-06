@@ -23,6 +23,7 @@ from models import (
     KnowledgeFeedback,
     KnowledgeSource,
     OperationalAlert,
+    PasswordResetToken,
     Project,
     ProjectMembership,
     ResearchReview,
@@ -59,6 +60,7 @@ REQUIRED_TABLES = {
     "work_item_comments",
     "user_notifications",
     "project_templates",
+    "password_reset_tokens",
     "knowledge_sources",
     "ingestion_runs",
     "document_chunks",
@@ -159,6 +161,9 @@ def test_database_password_file_must_not_be_empty(monkeypatch, tmp_path: Path) -
 
 def test_required_indexes_and_foreign_keys_are_declared() -> None:
     assert Project.__table__.c.storage_slug.unique is True
+    assert "ix_password_reset_tokens_user_created" in {
+        index.name for index in PasswordResetToken.__table__.indexes
+    }
     assert "ix_knowledge_sources_project_status" in {
         index.name for index in KnowledgeSource.__table__.indexes
     }
