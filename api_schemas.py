@@ -135,6 +135,23 @@ class InvitationAccept(BaseModel):
     password: str = Field(min_length=12, max_length=1024)
 
 
+class PasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    email: str = Field(min_length=3, max_length=254)
+
+
+class PasswordResetRequestResponse(BaseModel):
+    message: str
+
+
+class PasswordResetComplete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=32, max_length=256)
+    password: str = Field(min_length=12, max_length=1024)
+
+
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 

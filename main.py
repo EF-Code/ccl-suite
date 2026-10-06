@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal, TypeVar
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, Response
@@ -39,9 +39,13 @@ from auth import (
     hash_password,
     invitation_is_valid,
     issue_invitation,
+    issue_password_reset,
     issue_session,
     login_is_throttled,
     normalize_email,
+    password_reset_is_throttled,
+    password_reset_is_valid,
+    record_password_reset_request,
     record_failed_login,
     session_is_valid,
     token_digest,
@@ -94,6 +98,9 @@ from api_schemas import (
     KnowledgeSourceResponse,
     LoginRequest,
     ManagedAccountResponse,
+    PasswordResetComplete,
+    PasswordResetRequest,
+    PasswordResetRequestResponse,
     NotificationInboxResponse,
     NotificationReadAllResponse,
     MyWorkItemResponse,
@@ -229,7 +236,11 @@ from file_organizer import (
 from folder_generator import create_project_folder, normalize_project_name
 from knowledge_access import evaluate_project_knowledge_access
 from knowledge_sources import build_approved_knowledge_sources_statement
-from mail_delivery import EmailDeliveryError, send_invitation_email
+from mail_delivery import (
+    EmailDeliveryError,
+    send_invitation_email,
+    send_password_reset_email,
+)
 from knowledge_answer import (
     ANSWER_ENGINE,
     GroundedAnswer,
@@ -273,6 +284,7 @@ from models import (
     FileVersion,
     IngestionRun,
     Invitation,
+    PasswordResetToken,
     KnowledgeErrorReport,
     KnowledgeFeedback,
     KnowledgeSource,
@@ -634,6 +646,15 @@ def set_auth_cookies(response: Response, session_token: str, csrf_token: str) ->
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"
+
+
+def deliver_password_reset_email(recipient: str, reset_url: str, expires_at: datetime) -> None:
+    """Send reset mail out of band without logging addresses or bearer tokens."""
+
+    try:
+        send_password_reset_email(recipient, reset_url, expires_at)
+    except EmailDeliveryError:
+        logger.error("Password reset email delivery failed.")
 
 
 async def require_project_scope(
@@ -1153,6 +1174,177 @@ async def login(
     return auth_user_response(actor)
 
 
+@app.post(
+    "/auth/password-reset-requests",
+    response_model=PasswordResetRequestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["authentication"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def request_password_reset(
+    reset_request: PasswordResetRequest,
+    background_tasks: BackgroundTasks,
+    response: Response,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> PasswordResetRequestResponse:
+    """Queue a reset message without disclosing whether the account exists."""
+
+    try:
+        email = normalize_email(reset_request.email)
+    except ValueError:
+        email = ""
+    client_ip = request.client.host if request.client else "unknown"
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    acknowledgement = PasswordResetRequestResponse(
+        message="If an active account matches that address, reset instructions will be sent.",
+    )
+
+    try:
+        if password_reset_is_throttled(db, email, client_ip):
+            return acknowledgement
+        record_password_reset_request(db, email, client_ip)
+        if not email:
+            return acknowledgement
+
+        account = db.scalar(
+            select(User).where(User.email == email).with_for_update()
+        )
+        if account is None or not account.is_active or not account.password_hash:
+            return acknowledgement
+
+        now = utc_now()
+        db.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == account.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+            .values(used_at=now)
+        )
+        reset_token, raw_token = issue_password_reset(account)
+        db.add(reset_token)
+        db.commit()
+        db.refresh(reset_token)
+
+        base_url = os.getenv("CCL_PUBLIC_URL", "http://127.0.0.1:8000").rstrip("/")
+        reset_url = f"{base_url}/#reset={raw_token}"
+        background_tasks.add_task(
+            deliver_password_reset_email,
+            email,
+            reset_url,
+            reset_token.expires_at,
+        )
+    except SQLAlchemyError as exc:
+        try:
+            db.rollback()
+        except SQLAlchemyError:
+            logger.error("Password reset request rollback failed after a database error.")
+        logger.error("Password reset request could not be processed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset is temporarily unavailable.",
+        ) from exc
+    return acknowledgement
+
+
+@app.post(
+    "/auth/password-resets/complete",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["authentication"],
+    dependencies=[Depends(reject_oversized_requests)],
+)
+async def complete_password_reset(
+    reset_request: PasswordResetComplete,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> None:
+    """Consume one reset token, update credentials, revoke sessions, and audit."""
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    try:
+        token_digest_value = token_digest(reset_request.token)
+        token_probe = db.scalar(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == token_digest_value
+            )
+        )
+        if token_probe is None:
+            raise HTTPException(status_code=400, detail="Password reset link is invalid or expired.")
+
+        account = db.scalar(
+            select(User).where(User.id == token_probe.user_id).with_for_update()
+        )
+        reset_token = db.scalar(
+            select(PasswordResetToken)
+            .where(PasswordResetToken.id == token_probe.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            account is None
+            or not account.is_active
+            or not account.password_hash
+            or reset_token is None
+            or not password_reset_is_valid(reset_token)
+        ):
+            db.rollback()
+            raise HTTPException(status_code=400, detail="Password reset link is invalid or expired.")
+
+        try:
+            account.password_hash = hash_password(reset_request.password)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        reset_time = utc_now()
+        db.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == account.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+            .values(used_at=reset_time)
+        )
+        db.execute(
+            update(AuthSession)
+            .where(
+                AuthSession.user_id == account.id,
+                AuthSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=reset_time)
+        )
+        db.add(
+            SecurityEvent(
+                actor_id=None,
+                event_code="auth.password.reset",
+                outcome="success",
+                resource_type="user",
+                resource_ref=str(account.id),
+                request_ref=str(uuid4()),
+                occurred_at=reset_time,
+            )
+        )
+        db.commit()
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        try:
+            db.rollback()
+        except SQLAlchemyError:
+            logger.error("Password reset completion rollback failed after a database error.")
+        logger.error("Password reset completion failed because the database was unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset is temporarily unavailable.",
+        ) from exc
+
+    response.delete_cookie("ccl_session", path="/")
+    response.delete_cookie("ccl_csrf", path="/")
+
+
 @app.post("/auth/logout", status_code=204, tags=["authentication"])
 async def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> None:
     _actor, session = require_current_session(request, db)
@@ -1587,12 +1779,21 @@ async def disable_account(
                 )
             )
 
+        reset_time = utc_now()
         account.is_active = False
+        db.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == account.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+            .values(used_at=reset_time)
+        )
         for session in db.scalars(
             select(AuthSession).where(AuthSession.user_id == user_id).with_for_update()
         ):
             if session.revoked_at is None:
-                session.revoked_at = utc_now()
+                session.revoked_at = reset_time
         if was_active:
             db.add(
                 SecurityEvent(

@@ -19,6 +19,7 @@ from main import app
 from models import (
     AuthSession,
     Invitation,
+    PasswordResetToken,
     Project,
     ProjectMembership,
     SecurityEvent,
@@ -314,6 +315,11 @@ def test_account_offboarding_transfers_projects_and_open_work_atomically(auth_da
                     user_id=target.id,
                     expires_at=utc_now() + timedelta(hours=1),
                 ),
+                PasswordResetToken(
+                    user_id=target.id,
+                    token_hash="d" * 64,
+                    expires_at=utc_now() + timedelta(minutes=15),
+                ),
             ]
         )
         db.commit()
@@ -392,6 +398,10 @@ def test_account_offboarding_transfers_projects_and_open_work_atomically(auth_da
         assert db.get(ProjectMembership, (task_project_id, target_id)) is None
         revoked_session = db.scalar(select(AuthSession).where(AuthSession.user_id == target_id))
         assert revoked_session is not None and revoked_session.revoked_at is not None
+        pending_reset = db.scalar(
+            select(PasswordResetToken).where(PasswordResetToken.user_id == target_id)
+        )
+        assert pending_reset is not None and pending_reset.used_at is not None
         events = db.scalars(
             select(SecurityEvent).where(
                 SecurityEvent.event_code.in_(
@@ -660,6 +670,13 @@ def test_local_password_recovery_revokes_sessions_and_records_an_audit_event(
                 expires_at=utc_now() + timedelta(hours=1),
             )
         )
+        db.add(
+            PasswordResetToken(
+                user_id=admin_id,
+                token_hash="c" * 64,
+                expires_at=utc_now() + timedelta(minutes=15),
+            )
+        )
         db.commit()
 
         user_id, revoked_sessions, audit_reference = reset_account_password(
@@ -674,6 +691,10 @@ def test_local_password_recovery_revokes_sessions_and_records_an_audit_event(
         assert not verify_password("correct horse battery staple", user.password_hash)
         session = db.scalar(select(AuthSession).where(AuthSession.user_id == admin_id))
         assert session is not None and session.revoked_at is not None
+        reset_token = db.scalar(
+            select(PasswordResetToken).where(PasswordResetToken.user_id == admin_id)
+        )
+        assert reset_token is not None and reset_token.used_at is not None
         event = db.scalar(
             select(SecurityEvent).where(SecurityEvent.request_ref == audit_reference)
         )
@@ -695,3 +716,117 @@ def test_local_password_recovery_refuses_disabled_accounts(auth_database) -> Non
             reset_account_password(db, "admin@example.test", "replacement administrator password")
 
         assert db.scalar(select(SecurityEvent)) is None
+
+
+def test_password_reset_request_is_generic_and_throttled(auth_database, monkeypatch) -> None:
+    sessions, _admin_id = auth_database
+    monkeypatch.setenv("CCL_PUBLIC_URL", "http://test")
+    deliveries: list[tuple[str, str, object]] = []
+
+    def capture_delivery(recipient: str, reset_url: str, expires_at) -> bool:
+        deliveries.append((recipient, reset_url, expires_at))
+        return True
+
+    monkeypatch.setattr("main.send_password_reset_email", capture_delivery)
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            responses = [
+                await client.post(
+                    "/auth/password-reset-requests",
+                    json={"email": "missing@example.test"},
+                ),
+                *[
+                    await client.post(
+                        "/auth/password-reset-requests",
+                        json={"email": "admin@example.test"},
+                    )
+                    for _ in range(4)
+                ],
+            ]
+
+        assert all(response.status_code == 202 for response in responses)
+        assert len({response.json()["message"] for response in responses}) == 1
+        assert len(deliveries) == 3
+        assert all(delivery[0] == "admin@example.test" for delivery in deliveries)
+        assert all("#reset=" in delivery[1] for delivery in deliveries)
+
+    asyncio.run(scenario())
+    with sessions() as db:
+        records = db.scalars(select(PasswordResetToken)).all()
+        assert len(records) == 3
+        assert all(len(record.token_hash) == 64 for record in records)
+        assert all("admin@example.test" not in record.token_hash for record in records)
+        # New requests invalidate earlier links, leaving only the newest usable.
+        assert sum(record.used_at is None for record in records) == 1
+
+
+def test_password_reset_completion_revokes_sessions_and_is_single_use(
+    auth_database, monkeypatch
+) -> None:
+    sessions, admin_id = auth_database
+    monkeypatch.setenv("CCL_PUBLIC_URL", "http://test")
+    deliveries: list[tuple[str, str, object]] = []
+
+    def capture_delivery(recipient: str, reset_url: str, expires_at) -> bool:
+        deliveries.append((recipient, reset_url, expires_at))
+        return True
+
+    monkeypatch.setattr("main.send_password_reset_email", capture_delivery)
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            login = await client.post(
+                "/auth/login",
+                json={"email": "admin@example.test", "password": "correct horse battery staple"},
+            )
+            assert login.status_code == 200
+            request = await client.post(
+                "/auth/password-reset-requests",
+                json={"email": "admin@example.test"},
+            )
+            assert request.status_code == 202
+            token = deliveries[0][1].partition("#reset=")[2]
+            assert token
+
+            completed = await client.post(
+                "/auth/password-resets/complete",
+                json={"token": token, "password": "replacement account password"},
+            )
+            assert completed.status_code == 204
+            assert completed.headers["cache-control"] == "no-store"
+            assert (await client.get("/auth/me")).status_code == 401
+            reused = await client.post(
+                "/auth/password-resets/complete",
+                json={"token": token, "password": "another replacement password"},
+            )
+            assert reused.status_code == 400
+            old_login = await client.post(
+                "/auth/login",
+                json={"email": "admin@example.test", "password": "correct horse battery staple"},
+            )
+            assert old_login.status_code == 401
+            new_login = await client.post(
+                "/auth/login",
+                json={"email": "admin@example.test", "password": "replacement account password"},
+            )
+            assert new_login.status_code == 200
+
+    asyncio.run(scenario())
+    with sessions() as db:
+        record = db.scalar(select(PasswordResetToken))
+        assert record is not None and record.used_at is not None
+        user = db.get(User, admin_id)
+        assert user is not None and verify_password("replacement account password", user.password_hash)
+        events = db.scalars(
+            select(SecurityEvent).where(SecurityEvent.event_code == "auth.password.reset")
+        ).all()
+        assert len(events) == 1
+        assert events[0].actor_id is None
+        assert events[0].resource_ref == str(admin_id)
+        assert events[0].request_ref
+        assert "admin@example.test" not in (events[0].resource_ref or "")

@@ -8,14 +8,14 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from auth import hash_password, normalize_email  # noqa: E402
 from database import SessionLocal  # noqa: E402
-from models import AuthSession, SecurityEvent, User, utc_now  # noqa: E402
+from models import AuthSession, PasswordResetToken, SecurityEvent, User, utc_now  # noqa: E402
 
 
 def reset_account_password(db: Session, email: str, new_password: str) -> tuple[str, int, str]:
@@ -40,6 +40,14 @@ def reset_account_password(db: Session, email: str, new_password: str) -> tuple[
     user.password_hash = new_password_hash
     for session in active_sessions:
         session.revoked_at = reset_time
+    db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+        )
+        .values(used_at=reset_time)
+    )
 
     audit_reference = str(uuid4())
     db.add(

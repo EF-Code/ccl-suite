@@ -12,11 +12,20 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import and_, delete, or_
 from sqlalchemy.orm import Session
 
-from models import AuthSession, AuthThrottle, Invitation, User, utc_now
+from models import (
+    AuthSession,
+    AuthThrottle,
+    Invitation,
+    PasswordResetToken,
+    User,
+    utc_now,
+)
 
 INVITATION_LIFETIME = timedelta(days=3)
+PASSWORD_RESET_LIFETIME = timedelta(minutes=30)
 SESSION_LIFETIME = timedelta(hours=12)
 LOGIN_WINDOW = timedelta(minutes=15)
+PASSWORD_RESET_WINDOW = timedelta(minutes=15)
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_HASHER = PasswordHasher(time_cost=2, memory_cost=19_456, parallelism=1)
 DUMMY_HASH = PASSWORD_HASHER.hash("unusable-password-for-unknown-account")
@@ -80,6 +89,24 @@ def invitation_is_valid(invitation: Invitation) -> bool:
         and invitation.revoked_at is None
         and as_utc(invitation.expires_at) > utc_now()
     )
+
+
+def issue_password_reset(user: User) -> tuple[PasswordResetToken, str]:
+    """Create a short-lived reset token while persisting only its digest."""
+
+    token = secrets.token_urlsafe(32)
+    return (
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_digest(token),
+            expires_at=utc_now() + PASSWORD_RESET_LIFETIME,
+        ),
+        token,
+    )
+
+
+def password_reset_is_valid(reset_token: PasswordResetToken) -> bool:
+    return reset_token.used_at is None and as_utc(reset_token.expires_at) > utc_now()
 
 
 def issue_session(user: User) -> tuple[AuthSession, str, str]:
@@ -172,15 +199,72 @@ def clear_email_login_failures(
             db.delete(throttle)
 
 
+def _password_reset_keys(email: str, client_ip: str) -> tuple[str, str]:
+    return (
+        f"password-reset-pair:{len(email)}:{email}:{client_ip}",
+        f"password-reset-ip:{client_ip}",
+    )
+
+
+def password_reset_is_throttled(db: Session, email: str, client_ip: str) -> bool:
+    """Throttle reset requests by hashed address/source and source alone."""
+
+    now = utc_now()
+    for key in _password_reset_keys(email, client_ip):
+        throttle = db.get(AuthThrottle, token_digest(key))
+        if throttle is not None and throttle.locked_until is not None:
+            if as_utc(throttle.locked_until) > now:
+                return True
+    return False
+
+
+def record_password_reset_request(db: Session, email: str, client_ip: str) -> None:
+    """Count reset requests without persisting raw email addresses or IPs."""
+
+    now = utc_now()
+    db.execute(
+        delete(AuthThrottle).where(
+            or_(
+                and_(
+                    AuthThrottle.locked_until.is_not(None),
+                    AuthThrottle.locked_until <= now,
+                ),
+                and_(
+                    AuthThrottle.locked_until.is_(None),
+                    AuthThrottle.window_started <= now - PASSWORD_RESET_WINDOW,
+                ),
+            )
+        )
+    )
+    for key, limit in zip(_password_reset_keys(email, client_ip), (3, 12), strict=True):
+        digest = token_digest(key)
+        throttle = db.get(AuthThrottle, digest)
+        if throttle is None:
+            throttle = AuthThrottle(key_hash=digest, failures=0, window_started=now)
+            db.add(throttle)
+        elif as_utc(throttle.window_started) + PASSWORD_RESET_WINDOW <= now:
+            throttle.failures = 0
+            throttle.window_started = now
+            throttle.locked_until = None
+        throttle.failures += 1
+        if throttle.failures >= limit:
+            throttle.locked_until = now + PASSWORD_RESET_WINDOW
+    db.commit()
+
+
 __all__ = [
     "as_utc",
     "clear_email_login_failures",
     "hash_password",
     "invitation_is_valid",
     "issue_invitation",
+    "issue_password_reset",
     "issue_session",
     "login_is_throttled",
     "normalize_email",
+    "password_reset_is_throttled",
+    "password_reset_is_valid",
+    "record_password_reset_request",
     "record_failed_login",
     "session_is_valid",
     "token_digest",
