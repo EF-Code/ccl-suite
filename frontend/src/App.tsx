@@ -2986,13 +2986,37 @@ export default function App() {
   const [resetRequestMode, setResetRequestMode] = useState(false)
   const [loginEmail, setLoginEmail] = useState("")
 
-  const refreshSession = useCallback(() => {
+  useEffect(() => {
+    let active = true
     apiRequest<AuthUser>("/auth/me")
-      .then((user) => { setOwnerId(user.id); setAccount(user) })
-      .catch(() => { setOwnerId(""); setAccount(null) })
-  }, [])
+      .then((user) => {
+        if (!active) return
+        setOwnerId(user.id)
+        setAccount(user)
+      })
+      .catch(() => {
+        if (!active) return
+        setOwnerId("")
+        setAccount(null)
+      })
 
-  useEffect(() => { refreshSession() }, [refreshSession])
+    return () => {
+      active = false
+    }
+  }, [inviteToken, resetToken])
+
+  useEffect(() => {
+    const syncAuthLink = () => {
+      const fragment = new URLSearchParams(window.location.hash.slice(1))
+      setInviteToken(fragment.get("invite") || "")
+      setResetToken(fragment.get("reset") || "")
+      setError("")
+      setAuthNotice("")
+    }
+
+    window.addEventListener("hashchange", syncAuthLink)
+    return () => window.removeEventListener("hashchange", syncAuthLink)
+  }, [])
 
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -3047,6 +3071,8 @@ export default function App() {
       })
       window.history.replaceState(null, "", window.location.pathname)
       setResetToken("")
+      setOwnerId("")
+      setAccount(null)
       setLoginEmail("")
       setAuthNotice("Your password has been updated. Sign in with your new password.")
       form.reset()
@@ -3103,10 +3129,13 @@ export default function App() {
     }
   }
 
-  if (account === undefined) {
+  const hasAuthLink = Boolean(inviteToken || resetToken)
+  const returnActionLabel = account ? "Return to workspace" : "Back to sign in"
+
+  if (account === undefined && !hasAuthLink) {
     return <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">Checking your session…</main>
   }
-  if (account) return <Dashboard account={account} onLogout={handleLogout} />
+  if (account && !hasAuthLink) return <Dashboard account={account} onLogout={handleLogout} />
 
   return (
     <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#e8eef3] px-4 py-12">
@@ -3137,14 +3166,14 @@ export default function App() {
               <div className="grid gap-1.5"><Label htmlFor="new-password">Password</Label><Input id="new-password" name="password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /><p className="text-xs text-muted-foreground">Use at least 12 characters.</p></div>
               <div className="grid gap-1.5"><Label htmlFor="confirm-password">Confirm password</Label><Input id="confirm-password" name="confirm_password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /></div>
               <Button type="submit" disabled={busy}>{busy ? "Activating…" : "Activate account"}</Button>
-              <Button type="button" variant="ghost" onClick={returnToSignIn}>Back to sign in</Button>
+              <Button type="button" variant="ghost" onClick={returnToSignIn}>{returnActionLabel}</Button>
             </form>
           ) : resetToken ? (
             <form id="password-reset-complete-form" onSubmit={handleCompletePasswordReset} className="grid gap-4">
               <div className="grid gap-1.5"><Label htmlFor="reset-new-password">New password</Label><Input id="reset-new-password" name="password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /><p className="text-xs text-muted-foreground">Use at least 12 characters.</p></div>
               <div className="grid gap-1.5"><Label htmlFor="reset-confirm-password">Confirm new password</Label><Input id="reset-confirm-password" name="confirm_password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required /></div>
               <Button type="submit" disabled={busy}>{busy ? "Updating password…" : "Update password"}</Button>
-              <Button type="button" variant="ghost" onClick={returnToSignIn}>Back to sign in</Button>
+              <Button type="button" variant="ghost" onClick={returnToSignIn}>{returnActionLabel}</Button>
             </form>
           ) : resetRequestMode ? (
             <form id="password-reset-request-form" onSubmit={handleRequestPasswordReset} className="grid gap-4">

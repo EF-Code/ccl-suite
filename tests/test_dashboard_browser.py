@@ -719,6 +719,39 @@ def test_dashboard_mobile_header_controls_do_not_overlap(dashboard_page: Page) -
     assert inbox["x"] + inbox["width"] <= logout["x"] + 1
 
 
+def test_auth_hash_routes_update_without_full_reload(dashboard_page: Page) -> None:
+    """Reset and invitation fragments switch auth views in an open SPA tab."""
+
+    page = dashboard_page
+    page.goto(BASE_URL, wait_until="networkidle")
+    expect(page.locator("#health-badge")).to_be_visible()
+
+    page.evaluate("window.location.hash = 'reset=synthetic-reset-token'")
+    expect(page.locator("#password-reset-complete-form")).to_be_visible()
+    expect(page.get_by_role("button", name="Return to workspace")).to_be_visible()
+
+    page.evaluate("window.location.hash = ''")
+    expect(page.locator("#health-badge")).to_be_visible()
+
+    browser = page.context.browser
+    assert browser is not None
+    sign_in_page = browser.new_page()
+    try:
+        sign_in_page.goto(BASE_URL, wait_until="networkidle")
+        expect(sign_in_page.locator("#login-form")).to_be_visible()
+
+        sign_in_page.evaluate("window.location.hash = 'invite=synthetic-invite-token'")
+        expect(sign_in_page.locator("#invitation-form")).to_be_visible()
+
+        sign_in_page.evaluate("window.location.hash = 'reset=synthetic-reset-token'")
+        expect(sign_in_page.locator("#password-reset-complete-form")).to_be_visible()
+
+        sign_in_page.evaluate("window.location.hash = ''")
+        expect(sign_in_page.locator("#login-form")).to_be_visible()
+    finally:
+        sign_in_page.close()
+
+
 def test_administrator_can_offboard_and_reactivate_team_accounts(dashboard_page: Page) -> None:
     """Offboarding removes a teammate from the live team and transfers open work."""
 
