@@ -15,7 +15,6 @@ type OverviewHealth = {
 
 type OverviewDashboardProps = {
   project: Project | null
-  projects: Project[]
   health: OverviewHealth
   files: FileRecord[]
   knowledgeSources: KnowledgeSource[]
@@ -23,6 +22,7 @@ type OverviewDashboardProps = {
   researchReview: ResearchReviewResponse | null
   workflows: Workflow[]
   workItems: WorkItem[]
+  workItemsLoading: boolean
   approvals: Record<string, Approval[]>
   onNavigate: (view: OverviewTarget) => void
 }
@@ -58,7 +58,6 @@ function fileIcon(extension: string) {
 
 export function OverviewDashboard({
   project,
-  projects,
   health,
   files,
   knowledgeSources,
@@ -66,34 +65,56 @@ export function OverviewDashboard({
   researchReview,
   workflows,
   workItems,
+  workItemsLoading,
   approvals,
   onNavigate,
 }: OverviewDashboardProps) {
   const approvalList = workflows.flatMap((workflow) => approvals[workflow.id] || [])
   const pendingApprovals = approvalList.filter((approval) => approval.status === "pending")
-  const decidedApprovals = approvalList.filter((approval) => approval.status !== "pending")
   const activeWorkItems = workItems.filter((item) => !["done", "cancelled"].includes(item.status))
+  const completedWorkItems = workItems.filter((item) => item.status === "done")
   const currentWorkflow = workflows[0]
   const projectReady = Boolean(project)
   const evidenceStatus = researchReview?.status || (researchClaims.length ? "needs_review" : "not_started")
   const evidenceLabel = researchReview ? statusLabel(researchReview.status) : researchClaims.length ? "Preview ready" : "Not started"
-
-  const stageData = [
-    { label: "Define", detail: currentWorkflow ? `Version ${currentWorkflow.version} drafted` : "Create a workflow", complete: workflows.length > 0 },
-    { label: "Request", detail: approvalList.length ? `${approvalList.length} approval record${approvalList.length === 1 ? "" : "s"}` : "Send for review", complete: approvalList.length > 0 },
-    { label: "Decide", detail: decidedApprovals.length ? "Outcome recorded" : "Await reviewer action", complete: decidedApprovals.length > 0 },
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+  const overdueWorkItems = activeWorkItems.filter((item) => item.due_date && item.due_date < today)
+  const blockedWorkItems = activeWorkItems.filter((item) => item.status === "blocked")
+  const unassignedWorkItems = activeWorkItems.filter((item) => !item.assignee_id)
+  const workStatusSummary = [
+    { status: "todo", label: "To do", detail: "Ready to start", count: workItems.filter((item) => item.status === "todo").length },
+    { status: "in_progress", label: "In progress", detail: "Being worked on", count: workItems.filter((item) => item.status === "in_progress").length },
+    { status: "blocked", label: "Blocked", detail: "Needs an unblock", count: workItems.filter((item) => item.status === "blocked").length },
+    { status: "done", label: "Done", detail: "Completed tasks", count: workItems.filter((item) => item.status === "done").length },
   ]
 
-  const nextActions = !project
-    ? [{ title: "Create your first project", detail: "Set up the workspace before starting controlled work.", label: "Open setup", target: "setup" as const, tone: "attention" }]
-    : [
-        workItems.length === 0 ? { title: "Plan the project work", detail: "Break the delivery into prioritized work items with target dates.", label: "Open workboard", target: "workboard" as const, tone: "good" } : null,
-        workflows.length === 0 ? { title: "Define a workflow", detail: "Give the project its first versioned control path.", label: "Open workflows", target: "workflows" as const, tone: "good" } : null,
-        pendingApprovals.length > 0 ? { title: "Review pending approval", detail: `${pendingApprovals.length} decision${pendingApprovals.length === 1 ? "" : "s"} waiting for an operator.`, label: "Open approvals", target: "workflows" as const, tone: "attention" } : null,
-        files.length === 0 ? { title: "Prepare project files", detail: "Generate storage and scan the active project folder.", label: "Open operations", target: "operations" as const, tone: "neutral" } : null,
-        evidenceStatus !== "approved" ? { title: "Review evidence package", detail: "Check source-backed claims before publication.", label: "Open research", target: "research" as const, tone: "neutral" } : null,
-        { title: "Inspect the project register", detail: `${projects.length} project${projects.length === 1 ? "" : "s"} available in this workspace.`, label: "View projects", target: "setup" as const, tone: "neutral" },
-      ].filter(Boolean).slice(0, 4) as Array<{ title: string; detail: string; label: string; target: OverviewTarget; tone: string }>
+  const nextActions: Array<{ title: string; detail: string; label: string; target: OverviewTarget; tone: string }> = []
+  if (!project) {
+    nextActions.push({ title: "Create your first project", detail: "Set up a workspace before planning the team’s work.", label: "Open setup", target: "setup", tone: "attention" })
+  } else if (!workItemsLoading) {
+    if (workItems.length === 0) {
+      nextActions.push({ title: "Plan the first deliverables", detail: "Turn the brief into clear tasks with owners and target dates.", label: "Open workboard", target: "workboard", tone: "good" })
+    }
+    if (activeWorkItems.length === 0 && completedWorkItems.length > 0) {
+      nextActions.push({ title: "Review completed work", detail: `${completedWorkItems.length} task${completedWorkItems.length === 1 ? " is" : "s are"} marked done. Review the handoff or plan the next run.`, label: "Open workboard", target: "workboard", tone: "good" })
+    }
+    if (overdueWorkItems.length > 0) {
+      nextActions.push({ title: "Review overdue work", detail: `${overdueWorkItems.length} open task${overdueWorkItems.length === 1 ? " is" : "s are"} past its target date.`, label: "Open workboard", target: "workboard", tone: "attention" })
+    }
+    if (blockedWorkItems.length > 0) {
+      nextActions.push({ title: "Unblock team work", detail: `${blockedWorkItems.length} task${blockedWorkItems.length === 1 ? " needs" : "s need"} attention before it can move forward.`, label: "Open workboard", target: "workboard", tone: "attention" })
+    }
+    if (unassignedWorkItems.length > 0 && workItems.length > 0) {
+      nextActions.push({ title: "Assign owners to open tasks", detail: `${unassignedWorkItems.length} open task${unassignedWorkItems.length === 1 ? " has" : "s have"} no account assigned yet.`, label: "Open workboard", target: "workboard", tone: "neutral" })
+    }
+    if (pendingApprovals.length > 0) {
+      nextActions.push({ title: "Review pending approval", detail: `${pendingApprovals.length} decision${pendingApprovals.length === 1 ? " is" : "s are"} waiting for an authorized reviewer.`, label: "Open approvals", target: "workflows", tone: "attention" })
+    }
+    if (files.length === 0) {
+      nextActions.push({ title: "Add project reference files", detail: "Keep the brief and working references in the project workspace.", label: "Open file operations", target: "operations", tone: "neutral" })
+    }
+  }
 
   const activity = [
     project && { icon: <FolderOpen className="h-4 w-4" />, title: "Active project selected", detail: project.title, date: formatDate(project.updated_at) },
@@ -107,7 +128,7 @@ export function OverviewDashboard({
       <div className="overview-heading">
         <div>
           <h1 id="overview-title">Keep every project moving.</h1>
-          <p>One clear view of work, evidence, approvals, and the next decision.</p>
+          <p>Plan scripts, edits, reviews, and publishing work—and see what needs attention next.</p>
         </div>
         <div className="overview-heading-actions">
           <Button type="button" variant="outline" onClick={() => onNavigate("workboard")} disabled={!project}>
@@ -133,7 +154,7 @@ export function OverviewDashboard({
           </CardHeader>
           <CardContent className="overview-project-meta">
             <span><FolderOpen className="h-4 w-4" />{project?.storage_slug || "Project workspace"}</span>
-            <span><ListChecks className="h-4 w-4" />{activeWorkItems.length} active work item{activeWorkItems.length === 1 ? "" : "s"}</span>
+            <span><ListChecks className="h-4 w-4" />{activeWorkItems.length} open · {workItems.length} total task{workItems.length === 1 ? "" : "s"}</span>
             <span><ListChecks className="h-4 w-4" />{workflows.length} workflow{workflows.length === 1 ? "" : "s"}</span>
             <span><Clock3 className="h-4 w-4" />Updated {formatDate(project?.updated_at)}</span>
             <span className={projectReady ? "overview-status overview-status--good" : "overview-status overview-status--attention"}>{projectReady ? "Ready" : "Setup required"}</span>
@@ -158,7 +179,7 @@ export function OverviewDashboard({
               {project ? (
                 <>
                   <span><i className="overview-dot overview-dot--attention" />{pendingApprovals.length} pending approval{pendingApprovals.length === 1 ? "" : "s"}</span>
-                  <span><i className="overview-dot overview-dot--neutral" />{activeWorkItems.length} active work item{activeWorkItems.length === 1 ? "" : "s"}</span>
+                  <span><i className="overview-dot overview-dot--neutral" />{activeWorkItems.length} open task{activeWorkItems.length === 1 ? "" : "s"}</span>
                   <span><i className="overview-dot overview-dot--neutral" />{files.length} active file{files.length === 1 ? "" : "s"}</span>
                 </>
               ) : (
@@ -171,7 +192,7 @@ export function OverviewDashboard({
         <Card className="overview-card overview-actions-card">
           <CardHeader className="overview-card-header flex-row"><div><p className="overview-label">Next actions</p><CardTitle>Move the work forward</CardTitle></div><ArrowUpRight className="h-5 w-5 text-muted-foreground" /></CardHeader>
           <CardContent className="overview-actions-list">
-            {nextActions.map((action) => (
+            {nextActions.length === 0 ? <p className="overview-no-actions">No urgent action is flagged. Open the workboard to review the full task list.</p> : nextActions.slice(0, 4).map((action) => (
               <button key={action.title} type="button" className="overview-action" onClick={() => onNavigate(action.target)}>
                 <span className={`overview-action-marker overview-action-marker--${action.tone}`} />
                 <span><strong>{action.title}</strong><small>{action.detail}</small></span>
@@ -185,22 +206,17 @@ export function OverviewDashboard({
       <div className="overview-focus-grid">
         <Card className="overview-card overview-workflow-card">
           <CardHeader className="overview-card-header flex-row">
-            <div><p className="overview-label">Workflow control</p><CardTitle>Project delivery path</CardTitle><CardDescription>{currentWorkflow?.name || "Create a workflow to give this project a visible path from definition to decision."}</CardDescription></div>
-            <Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("workflows")} disabled={!project}>View workflow <ArrowUpRight className="ml-1 h-4 w-4" /></Button>
+            <div><p className="overview-label">Production work</p><CardTitle>Project delivery path</CardTitle><CardDescription>Current task status in {project?.title || "the selected project"}.</CardDescription></div>
+            <Button type="button" variant="link" className="overview-link" onClick={() => onNavigate("workboard")} disabled={!project}>Open workboard <ArrowUpRight className="ml-1 h-4 w-4" /></Button>
           </CardHeader>
           <CardContent>
-            <ol className="overview-stage-rail" aria-label="Workflow progress">
-              {stageData.map((stage, index) => (
-                <li key={stage.label} className={`overview-stage ${stage.complete ? "is-complete" : index === stageData.findIndex((item) => !item.complete) ? "is-current" : ""}`}>
-                  <span className="overview-stage-marker">{stage.complete ? <Check className="h-4 w-4" /> : index + 1}</span>
-                  <span><strong>{stage.label}</strong><small>{stage.detail}</small></span>
-                </li>
-              ))}
-            </ol>
-            <div className="overview-progress-block">
-              <div><span>Stage progress</span><strong>{decidedApprovals.length ? "3 of 3" : approvalList.length ? "2 of 3" : workflows.length ? "1 of 3" : "0 of 3"}</strong></div>
-              <div className="overview-progress-track"><span style={{ width: `${decidedApprovals.length ? 100 : approvalList.length ? 66 : workflows.length ? 33 : 0}%` }} /></div>
-            </div>
+            {workItemsLoading ? <p role="status" className="overview-muted-copy">Loading project tasks…</p> : !project ? <div className="overview-empty"><ListChecks className="h-5 w-5" /><span>Select a project to see its delivery tasks.</span></div> : workItems.length === 0 ? <div className="overview-empty"><ListChecks className="h-5 w-5" /><span>No tasks planned yet. Start by turning the brief into clear team handoffs.</span><Button type="button" variant="outline" size="sm" onClick={() => onNavigate("workboard")}>Plan the work</Button></div> : <div className="overview-task-status-grid" role="list" aria-label="Project tasks by status">
+              {workStatusSummary.map((entry) => <div key={entry.status} className="overview-task-status" role="listitem">
+                <span className={`overview-task-status-dot overview-task-status-dot--${entry.status}`} aria-hidden="true" />
+                <span><strong>{entry.label}</strong><small>{entry.detail}</small></span>
+                <b>{entry.count}</b>
+              </div>)}
+            </div>}
           </CardContent>
         </Card>
 

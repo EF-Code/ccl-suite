@@ -1883,7 +1883,6 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         <section className={activeView === "overview" ? "block" : "hidden"}>
           {visitedViews.has("overview") && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading workspace…</div>}><OverviewDashboard
             project={selectedProject}
-            projects={projects}
             health={health}
             files={files}
             knowledgeSources={knowledgeSources}
@@ -1891,6 +1890,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             researchReview={researchReview}
             workflows={workflows}
             workItems={workItems}
+            workItemsLoading={workItemsLoading}
             approvals={workflowApprovals}
             onNavigate={openView}
           /></Suspense>}

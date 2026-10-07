@@ -188,6 +188,7 @@
   .overview-dot--neutral { @apply bg-[#9bb0c2]; }
   .overview-actions-card { @apply min-h-[11.25rem]; }
   .overview-actions-list { @apply grid gap-1 p-5 pt-1; }
+  .overview-no-actions { @apply rounded-xl border border-dashed border-[#d8e2e7] bg-[#fbfcfd] px-3 py-4 text-xs leading-5 text-muted-foreground; }
   .overview-action { @apply grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[#edf1f3] py-2.5 text-left transition-[color,transform] duration-150 last:border-b-0 hover:translate-x-0.5 hover:text-primary; }
   .overview-action strong { @apply block truncate text-[0.82rem] font-semibold; }
   .overview-action small { @apply mt-0.5 block truncate text-[0.73rem] leading-4 text-muted-foreground; }
@@ -197,6 +198,17 @@
   .overview-action-marker--attention { @apply bg-[#ee8b4b]; }
   .overview-action-marker--neutral { @apply bg-[#9bb0c2]; }
   .overview-workflow-card, .overview-approval-card { @apply min-h-[19.5rem]; }
+  .overview-task-status-grid { @apply grid gap-2 sm:grid-cols-2; }
+  .overview-task-status { @apply flex min-h-[4.35rem] items-center gap-3 rounded-xl border border-[#e3eaee] bg-[#fafcfd] px-3 py-2.5; }
+  .overview-task-status > span:nth-child(2) { @apply min-w-0 flex-1; }
+  .overview-task-status strong { @apply block text-sm font-semibold text-[#20384e]; }
+  .overview-task-status small { @apply mt-0.5 block text-xs text-muted-foreground; }
+  .overview-task-status b { @apply grid h-8 min-w-8 place-items-center rounded-full bg-white px-2 text-sm font-semibold text-[#294052]; }
+  .overview-task-status-dot { @apply h-2.5 w-2.5 shrink-0 rounded-full; }
+  .overview-task-status-dot--todo { @apply bg-slate-400; }
+  .overview-task-status-dot--in_progress { @apply bg-blue-600; }
+  .overview-task-status-dot--blocked { @apply bg-amber-500; }
+  .overview-task-status-dot--done { @apply bg-emerald-600; }
   .overview-stage-rail { @apply grid gap-3 sm:grid-cols-3; }
   .overview-stage { @apply relative grid gap-2 rounded-xl border border-[#e3eaee] bg-[#fafcfd] p-3; }
   .overview-stage:not(:last-child)::after { content: ""; @apply absolute left-[calc(100%+0.55rem)] top-6 hidden h-px w-[calc(100%-1rem)] bg-[#d5e1e6] sm:block; }
