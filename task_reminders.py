@@ -87,9 +87,11 @@ def evaluate_task_deadline_reminders(db: Session, *, today: date) -> int:
             insert(UserNotification)
             .values(notification_values)
             .on_conflict_do_nothing(index_elements=[UserNotification.dedupe_key])
+            .returning(UserNotification.id)
         )
+        created_count = len(result.scalars().all())
         db.commit()
-        return result.rowcount or 0
+        return created_count
     except SQLAlchemyError:
         db.rollback()
         raise
