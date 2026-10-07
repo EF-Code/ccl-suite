@@ -124,6 +124,7 @@ def test_task_deadline_reminder_insert_and_deduplication_against_postgresql(
         expire_on_commit=False,
     )
     suffix = uuid4().hex
+    today = date.today()
     with session_factory() as session:
         owner = User(
             external_ref=f"reminder-integration-{suffix}",
@@ -146,7 +147,7 @@ def test_task_deadline_reminder_insert_and_deduplication_against_postgresql(
             title="Verify PostgreSQL reminder behavior",
             status="todo",
             priority="normal",
-            due_date=date.today(),
+            due_date=today,
             created_by_id=owner.id,
         )
         session.add(item)
@@ -157,8 +158,8 @@ def test_task_deadline_reminder_insert_and_deduplication_against_postgresql(
 
     try:
         with session_factory() as session:
-            assert evaluate_task_deadline_reminders(session, today=date.today()) == 1
-            assert evaluate_task_deadline_reminders(session, today=date.today()) == 0
+            assert evaluate_task_deadline_reminders(session, today=today) == 1
+            assert evaluate_task_deadline_reminders(session, today=today) == 0
             reminders = list(
                 session.scalars(
                     select(UserNotification).where(
