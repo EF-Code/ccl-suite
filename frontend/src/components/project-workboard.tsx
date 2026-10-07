@@ -357,7 +357,7 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
           <h1 id="workboard-title" className="text-2xl font-semibold tracking-tight text-[#1b2c3b]">Workboard</h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Plan and track the work that moves this project from brief to delivery.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="outline" onClick={onRefresh} disabled={!project || loading}><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</Button>
           {project && <Button type="button" variant="outline" onClick={() => { setTeamError(""); setTeamDialogOpen(true) }}><Users className="h-4 w-4" />Team <span className="ml-1 text-xs text-muted-foreground">{members.length}</span></Button>}
           {canManage && <Button type="button" onClick={openCreateDialog} disabled={!project}><Plus className="h-4 w-4" />New work item</Button>}
@@ -408,8 +408,10 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
           </div>
         </div>
         {filteredItems.length === 0 && <Card className="border-dashed"><CardContent className="grid justify-items-center gap-2 py-10 text-center"><Search className="h-7 w-7 text-muted-foreground" aria-hidden="true" /><p className="font-medium text-foreground">No tasks match these filters</p><p className="text-sm text-muted-foreground">Try changing a filter or clearing the search.</p>{hasFilters && <Button type="button" variant="outline" size="sm" onClick={clearFilters}>Clear filters</Button>}</CardContent></Card>}
-        {view === "board" && filteredItems.length > 0 && <div className="overflow-x-auto pb-2">
-          <div className="grid min-w-[960px] grid-cols-4 gap-4">
+        {view === "board" && filteredItems.length > 0 && <>
+          <p className="text-xs text-muted-foreground xl:hidden">On a narrow screen, swipe the board horizontally or switch to List for a compact view.</p>
+          <div className="overflow-x-auto pb-2">
+          <div className="grid min-w-[40rem] grid-cols-2 gap-3 xl:min-w-[960px] xl:grid-cols-4 xl:gap-4">
             {columns.map((column) => {
               const columnItems = filteredItems.filter((item) => item.status === column.status)
               return <section key={column.status} aria-labelledby={`workboard-${column.status}`} className="min-w-0 rounded-2xl border border-[#e2e8ed] bg-[#f4f7f9] p-3">
@@ -424,7 +426,8 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
               </section>
             })}
           </div>
-        </div>}
+          </div>
+        </>}
         {view === "board" && filteredItems.some((item) => item.status === "cancelled") && <details className="rounded-xl border bg-white px-4 py-3">
           <summary className="cursor-pointer text-sm font-medium text-[#41576a]">Cancelled items <span className="text-muted-foreground">({filteredItems.filter((item) => item.status === "cancelled").length})</span></summary>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{filteredItems.filter((item) => item.status === "cancelled").map((item) => <div key={item.id} className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
