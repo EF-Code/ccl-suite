@@ -3,11 +3,12 @@ import os
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from sqlalchemy import create_engine, delete, text
+from sqlalchemy import create_engine, delete, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -15,8 +16,9 @@ import main
 from auth import hash_password, token_digest, verify_password
 from database import get_db
 from main import app
-from models import AuthSession, Project, SecurityEvent, User
+from models import AuthSession, Project, SecurityEvent, User, UserNotification, WorkItem
 from scripts import reset_account_password as password_recovery
+from task_reminders import evaluate_task_deadline_reminders
 
 
 pytestmark = pytest.mark.integration
@@ -110,6 +112,69 @@ def test_project_endpoint_round_trip_against_postgresql(postgres_engine) -> None
                 session.execute(delete(Project).where(Project.id == project_id))
             session.execute(delete(AuthSession).where(AuthSession.user_id == UUID(owner_id)))
             session.execute(delete(User).where(User.id == UUID(owner_id)))
+            session.commit()
+
+
+def test_task_deadline_reminder_insert_and_deduplication_against_postgresql(
+    postgres_engine,
+) -> None:
+    session_factory = sessionmaker(
+        bind=postgres_engine,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+    suffix = uuid4().hex
+    with session_factory() as session:
+        owner = User(
+            external_ref=f"reminder-integration-{suffix}",
+            email=f"reminder-integration-{suffix}@example.test",
+            is_active=True,
+            role="administrator",
+        )
+        session.add(owner)
+        session.flush()
+        project = Project(
+            owner_id=owner.id,
+            name="Reminder integration project",
+            storage_slug=f"reminder-integration-{suffix}",
+        )
+        session.add(project)
+        session.flush()
+        item = WorkItem(
+            project_id=project.id,
+            assignee_id=owner.id,
+            title="Verify PostgreSQL reminder behavior",
+            status="todo",
+            priority="normal",
+            due_date=date.today(),
+            created_by_id=owner.id,
+        )
+        session.add(item)
+        session.commit()
+        user_id = owner.id
+        project_id = project.id
+        work_item_id = item.id
+
+    try:
+        with session_factory() as session:
+            assert evaluate_task_deadline_reminders(session, today=date.today()) == 1
+            assert evaluate_task_deadline_reminders(session, today=date.today()) == 0
+            reminders = list(
+                session.scalars(
+                    select(UserNotification).where(
+                        UserNotification.work_item_id == work_item_id
+                    )
+                ).all()
+            )
+        assert len(reminders) == 1
+        assert reminders[0].recipient_id == user_id
+        assert reminders[0].project_id == project_id
+        assert reminders[0].event_type == "task.due_soon"
+        assert reminders[0].dedupe_key
+    finally:
+        with session_factory() as session:
+            session.execute(delete(Project).where(Project.id == project_id))
+            session.execute(delete(User).where(User.id == user_id))
             session.commit()
 
 
