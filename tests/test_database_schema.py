@@ -127,6 +127,13 @@ def test_schema_can_be_created_without_a_live_database() -> None:
 
     tables = set(inspect(engine).get_table_names())
     assert tables == REQUIRED_TABLES
+    notification_columns = {
+        column["name"] for column in inspect(engine).get_columns("user_notifications")
+    }
+    notification_indexes = inspect(engine).get_indexes("user_notifications")
+
+    assert "dedupe_key" in notification_columns
+    assert any(index["name"] == "uq_user_notifications_dedupe_key" for index in notification_indexes)
 
 
 def test_database_password_file_is_url_encoded(monkeypatch, tmp_path: Path) -> None:
@@ -384,6 +391,23 @@ def test_membership_migration_preserves_legacy_labels_and_enrolls_owners(
     assert work_item is not None
     assert work_item.assignee_id is None
     assert work_item.assignee == "Video editor"
+    notification_inspector = inspect(migrated_engine)
+    notification_columns = {
+        column["name"]
+        for column in notification_inspector.get_columns("user_notifications")
+    }
+    notification_indexes = {
+        index["name"]
+        for index in notification_inspector.get_indexes("user_notifications")
+    }
+    notification_checks = {
+        constraint["name"]: constraint["sqltext"]
+        for constraint in notification_inspector.get_check_constraints("user_notifications")
+    }
+    assert "dedupe_key" in notification_columns
+    assert "uq_user_notifications_dedupe_key" in notification_indexes
+    assert "task.due_soon" in notification_checks["ck_user_notifications_event_type"]
+    assert "task.overdue" in notification_checks["ck_user_notifications_event_type"]
     migrated_engine.dispose()
 
 

@@ -394,7 +394,7 @@ class UserNotification(Base):
     __tablename__ = "user_notifications"
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ('task.assigned', 'task.status_changed', 'task.comment_added')",
+            "event_type IN ('task.assigned', 'task.status_changed', 'task.comment_added', 'task.due_soon', 'task.overdue')",
             name="ck_user_notifications_event_type",
         ),
         CheckConstraint("length(trim(title)) > 0", name="ck_user_notifications_title_not_blank"),
@@ -405,6 +405,7 @@ class UserNotification(Base):
             "read_at",
             "created_at",
         ),
+        Index("uq_user_notifications_dedupe_key", "dedupe_key", unique=True),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -421,6 +422,7 @@ class UserNotification(Base):
         ForeignKey("work_items.id", ondelete="SET NULL"), nullable=True
     )
     event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     message: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

@@ -317,7 +317,13 @@ class UserNotificationResponse(BaseModel):
     project_id: UUID
     project_title: str
     work_item_id: UUID | None
-    event_type: Literal["task.assigned", "task.status_changed", "task.comment_added"]
+    event_type: Literal[
+        "task.assigned",
+        "task.status_changed",
+        "task.comment_added",
+        "task.due_soon",
+        "task.overdue",
+    ]
     title: str
     message: str
     created_at: datetime
