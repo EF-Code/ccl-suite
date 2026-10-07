@@ -42,6 +42,8 @@ loopback-only demonstration environment, not a production deployment.
    tables to it. The API receives only that role's owner-only password file;
    the PostgreSQL bootstrap administrator credential is not passed to the API.
    The API applies Alembic migrations as the application role before starting.
+   A separate restricted task-reminder worker starts after the API is healthy
+   and periodically adds due-date reminders to the in-app inbox.
 
 4. Bootstrap the first administrator. Use a passphrase from 12 to 1,024
    characters. The command prompts for it; do not put it on the command line:
@@ -64,12 +66,13 @@ Useful checks and logs:
 docker compose ps
 docker compose logs --tail=100 api
 docker compose logs --tail=100 db
+docker compose logs --tail=100 task-reminder-worker
 ```
 
 After changing source code, rebuild and recreate the API:
 
 ```bash
-docker compose up --build -d api
+docker compose up --build -d api task-reminder-worker
 ```
 
 Stop the services without deleting persistent data:
@@ -103,6 +106,8 @@ template, not a source of production credentials.
 | `CCL_BACKUP_MAX_TOTAL_BYTES` | Aggregate backup storage cap in bytes |
 | `CCL_SMTP_*`, `CCL_MAIL_FROM_ADDRESS` | Outgoing email configuration; Mailpit is the local default |
 | `CCL_API_BIND_PORT`, `CCL_DB_BIND_PORT`, `CCL_MAILPIT_BIND_PORT` | Host loopback ports |
+| `CCL_TASK_REMINDER_INTERVAL_SECONDS` | Reminder evaluation interval; defaults to 900 seconds and accepts 30–86,400 seconds |
+| `CCL_TASK_REMINDER_TIMEZONE` | IANA timezone for date-only deadlines; defaults to UTC (`Africa/Lagos` in the local example environment) |
 
 Compose generates a distinct random application-role password in the private
 `database_app_credentials` volume. Do not remove that volume independently

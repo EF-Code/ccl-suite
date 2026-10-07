@@ -12,6 +12,7 @@ flowchart LR
     Browser[React and Vite dashboard] -->|session cookie; CSRF on writes| API[FastAPI application]
     API --> Auth[Session and role checks]
     API --> DB[(PostgreSQL)]
+    DeadlineWorker[Task deadline reminder worker] --> DB
     API --> Files[(Private project storage)]
     API --> Backups[(Separate backup storage)]
     API --> Mail[SMTP provider or local Mailpit]
@@ -53,9 +54,14 @@ relational records.
 5. **Workflows and agents:** workflow state, action intents, approvals, and
    handoff traces are persisted. Specialist roles use bounded tools and
    explicit approval controls rather than receiving unrestricted authority.
-6. **Monitoring:** security events, alert records, and weekly report metrics
-   are derived from application records. Alert checks are user-triggered; no
-   background scheduler is included in this release.
+6. **Task reminders:** a separate restricted worker periodically selects due
+   tasks assigned to active project members and writes private inbox events.
+   Calendar dates use the configured IANA timezone. A database uniqueness key
+   prevents duplicate reminders after retries or overlapping runs. It sends
+   no email.
+7. **Monitoring:** security events, alert records, and weekly report metrics
+   are derived from application records. Security-alert checks are
+   user-triggered; task reminders do not evaluate or escalate security alerts.
 
 ## Trust and storage boundaries
 
@@ -78,8 +84,9 @@ loopback. It is intended for local development and controlled demonstrations.
 Remote operation requires HTTPS, production cookie settings, a browser-facing
 public URL, a real mail provider, an explicit database backup policy, and an
 approved owner for secrets and maintenance. Project-file backups do not back
-up PostgreSQL. Alert evaluation has no scheduler in the local demonstration
-profile.
+up PostgreSQL. Task deadline reminders run in the local Compose profile;
+security-alert evaluation remains user-triggered and has no background
+scheduler.
 
 For the normalized table relationships, see the
 [database schema](database-schema.md). Security controls for specialist

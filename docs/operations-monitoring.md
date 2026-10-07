@@ -12,6 +12,10 @@ This feature adds a persistent in-app alert register and a record-derived weekly
 
 Open alerts that have not been acknowledged advance to escalation level 1 after 24 hours and level 2 after 72 hours. Escalation is applied and audited the next time the rules are evaluated; there is no scheduler or background monitoring process in this release. Acknowledged alerts stop escalating. Supervisors and administrators can acknowledge or resolve alerts; those actions are recorded as security events. Repeated-failure and high-risk alerts remain available for human triage until resolved. New evidence can reopen a resolved alert; the original evidence alone does not.
 
+The separate task deadline reminder worker only creates in-app notifications
+for assigned due and overdue work. It does not evaluate security-alert rules or
+advance alert escalation.
+
 The evaluator can be run from the Security page or with `POST /operations/alerts/evaluate`; this requires `security.alerts.evaluate`. Alert records are listed at `GET /operations/alerts`. Only users with `security.alerts.manage` can acknowledge or resolve them. Supervisors and administrators see organization-wide records; staff see alert records tied to their actor identity or owned projects.
 
 ## Weekly report

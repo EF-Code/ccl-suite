@@ -1,7 +1,7 @@
 FROM python:3.14-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends file \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends file tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

@@ -116,6 +116,31 @@ services:
       retries: 5
       start_period: 10s
 
+  task-reminder-worker:
+    image: ccl-suite-api:local
+    command: ["python", "-m", "task_reminder_worker"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    environment:
+      CCL_DATABASE_HOST: db
+      CCL_DATABASE_PORT: 5432
+      CCL_DATABASE_NAME: ${POSTGRES_DB:-ccl_suite}
+      CCL_DATABASE_USER: ${CCL_DATABASE_USER:-ccl_app}
+      CCL_DATABASE_PASSWORD_FILE: /run/ccl-db-credentials/password
+      CCL_TASK_REMINDER_INTERVAL_SECONDS: ${CCL_TASK_REMINDER_INTERVAL_SECONDS:-900}
+      CCL_TASK_REMINDER_TIMEZONE: ${CCL_TASK_REMINDER_TIMEZONE:-UTC}
+    volumes:
+      - database_app_credentials:/run/ccl-db-credentials:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   project_storage:

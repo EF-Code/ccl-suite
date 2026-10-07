@@ -58,7 +58,8 @@ recipient's invitation link for another person.
 - Set `CCL_PUBLIC_URL` to the exact browser-facing origin before creating
   invitations. Recreate the API after changing Compose environment values.
 - Review the Security page for scoped events and alerts. Alert evaluation is
-  manual in this release; there is no background scheduler.
+  manual in this release; the task deadline reminder worker does not evaluate
+  security alerts.
 - Create project backups, verify them, and periodically perform a restore to a
   new path. Follow the [backup and recovery runbook](backup-recovery.md).
 - Database backups are separate from project-file archives. Define and test a
