@@ -1574,6 +1574,14 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
   const navigation = navigationItems.filter(({ view }) =>
     (view !== "security" || canReadSecurity) && (view !== "templates" || canCreateProjects),
   )
+  const navigationSections: Array<{ label: string; views: typeof navigation }> = [
+    { label: "Work", views: ["overview", "my-work", "workboard", "templates"] },
+    { label: "Project resources", views: ["files", "operations", "knowledge", "research"] },
+    { label: "Controls", views: ["workflows", "recovery", "setup", "security"] },
+  ].map((section) => ({
+    label: section.label,
+    views: navigation.filter((item) => section.views.includes(item.view)),
+  })).filter((section) => section.views.length > 0)
   const isGlobalOperator = ["administrator", "supervisor"].includes(account.role)
   const canManageProjectMembers = Boolean(selectedProject && (
     selectedProject.owner_id === account.id
@@ -1716,19 +1724,17 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             <span className="brand-mark">CCL</span>
             <strong className="brand-name">AI Suite</strong>
           </a>
-          <nav className="app-links">
-            <p className="nav-label">Operate</p>
-            {navigation.slice(0, 8).map(({ view, label, icon: Icon }) => (
-              <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
-                <Icon className="h-4 w-4" />{label}
-              </Button>
-            ))}
-            <Separator className="my-3 bg-white/10" />
-            <p className="nav-label">Administration</p>
-            {navigation.slice(8).map(({ view, label, icon: Icon }) => (
-              <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
-                <Icon className="h-4 w-4" />{label}
-              </Button>
+          <nav className="app-links" aria-label="Workspace sections">
+            {navigationSections.map(({ label, views }, sectionIndex) => (
+              <div key={label} className="nav-section">
+                {sectionIndex > 0 && <Separator className="my-2 bg-white/10" />}
+                <p className="nav-label">{label}</p>
+                {views.map(({ view, label: itemLabel, icon: Icon }) => (
+                  <Button key={view} type="button" variant="ghost" aria-current={activeView === view ? "page" : undefined} className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}>
+                    <Icon className="h-4 w-4" />{itemLabel}
+                  </Button>
+                ))}
+              </div>
             ))}
           </nav>
           <div className="sidebar-status">
@@ -1746,10 +1752,11 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             <SheetTrigger asChild><Button variant="outline" size="icon" className="lg:hidden" aria-label="Open navigation"><Menu className="h-4 w-4" /></Button></SheetTrigger>
             <SheetContent side="left" className="w-[18rem] bg-[#101828] p-0 text-white">
               <SheetHeader className="border-b border-white/10 p-5 text-left"><SheetTitle className="text-white">CCL AI Suite</SheetTitle><SheetDescription className="text-white/55">Controlled operations</SheetDescription></SheetHeader>
-              <nav className="mobile-links p-3">
-                {navigation.map(({ view, label, icon: Icon }) => (
-                  <Button key={view} variant="ghost" className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}><Icon className="h-4 w-4" />{label}</Button>
-                ))}
+              <nav className="mobile-links p-3" aria-label="Workspace sections">
+                {navigationSections.map(({ label, views }) => <section key={label} className="mobile-nav-section">
+                  <p className="nav-label">{label}</p>
+                  {views.map(({ view, label: itemLabel, icon: Icon }) => <Button key={view} type="button" variant="ghost" aria-current={activeView === view ? "page" : undefined} className={activeView === view ? "is-active" : ""} onClick={() => openView(view)}><Icon className="h-4 w-4" />{itemLabel}</Button>)}
+                </section>)}
               </nav>
             </SheetContent>
           </Sheet>
