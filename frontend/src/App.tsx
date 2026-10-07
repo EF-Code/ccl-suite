@@ -1762,7 +1762,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
           </Sheet>
           <div className="project-switcher">
             <span className="hidden text-xs text-muted-foreground sm:inline">Project</span>
-            <Select value={selectedId || undefined} onValueChange={(value) => { const project = projects.find(item => item.id === value); if (project) activateProject(project) }}>
+            <Select value={selectedId} onValueChange={(value) => { const project = projects.find(item => item.id === value); if (project) activateProject(project) }}>
               <SelectTrigger aria-label="Active project" className="w-[12rem] sm:w-[16rem]"><FolderKanban className="h-4 w-4" /><SelectValue placeholder="Select a project" /></SelectTrigger>
               <SelectContent>{projects.map(project => <SelectItem key={project.id} value={project.id}>{project.title}</SelectItem>)}</SelectContent>
             </Select>
