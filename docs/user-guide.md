@@ -35,6 +35,13 @@ post. Comments are retained as project history and cannot be edited or deleted.
 Each new comment creates an audit event that records the task and actor, not the
 comment text.
 
+Assigned tasks due today or tomorrow in the configured reminder timezone appear
+in the notification inbox as due soon. Open tasks past their due date generate
+one overdue reminder for that assignee and deadline. Reminders are checked periodically and appear in-app;
+they are not sent by email. Completing a task stops future reminders. Changing
+the due date starts a reminder cycle for the new date; earlier reminders remain
+in the inbox as history.
+
 ## File operations
 
 In Setup, register a project and generate its standard folder layout. In
@@ -73,5 +80,6 @@ agent handoff is not proof that an external business action occurred.
 The Security workspace shows activity within the signed-in role's scope.
 Authorized users can evaluate alert rules and review the previous completed
 Monday-to-Sunday UTC operations report. Alert evaluation is user-triggered in
-this release, not a continuously running monitor. Report counts are operational
-records, not hours worked or AI-generated conclusions.
+this release, not a continuously running monitor. This is separate from the
+scheduled task deadline reminders in the notification inbox. Report counts are
+operational records, not hours worked or AI-generated conclusions.

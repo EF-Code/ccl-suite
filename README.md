@@ -29,6 +29,14 @@ Open `http://127.0.0.1:8000/docs` for interactive API documentation.
 Open `http://127.0.0.1:8000/` to sign in to the operations dashboard. The
 bootstrap command prompts for the first administrator's password.
 
+The Compose setup also runs a separate worker for scheduled due-date reminders.
+When running the API directly as above, start the reminder worker in another
+terminal after the database migrations have completed:
+
+```bash
+~/.venv/bin/python -m task_reminder_worker
+```
+
 ## API endpoints
 
 - `GET /health` returns the service status.
@@ -54,6 +62,9 @@ bootstrap command prompts for the first administrator's password.
   `PATCH` create and update tasks with account-backed assignments.
 - `GET /my/work-items` returns the signed-in user's assigned work across
   accessible projects, with bounded pagination and no-store caching.
+- `GET /my/notifications` returns the signed-in user's project-scoped task
+  inbox. Assignment, discussion, status, and scheduled due-date reminders are
+  persisted in-app; due-date reminders are deduplicated by task and deadline.
 - `GET` and `POST /projects/{project_id}/work-items/{work_item_id}/comments`
   provide project-scoped task discussions with role checks and content-free
   audit events.

@@ -178,7 +178,12 @@ export type UserNotification = {
   project_id: string;
   project_title: string;
   work_item_id: string | null;
-  event_type: "task.assigned" | "task.status_changed" | "task.comment_added";
+  event_type:
+    | "task.assigned"
+    | "task.status_changed"
+    | "task.comment_added"
+    | "task.due_soon"
+    | "task.overdue";
   title: string;
   message: string;
   created_at: string;

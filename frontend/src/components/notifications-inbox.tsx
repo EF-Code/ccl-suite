@@ -1,4 +1,4 @@
-import { Bell, CheckCheck, MessageSquare, RefreshCw, UserRoundPlus } from "lucide-react"
+import { Bell, CalendarClock, CheckCheck, CircleAlert, MessageSquare, RefreshCw, UserRoundPlus } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -19,7 +19,17 @@ type NotificationsInboxProps = {
 function eventIcon(eventType: UserNotification["event_type"]) {
   if (eventType === "task.assigned") return UserRoundPlus
   if (eventType === "task.comment_added") return MessageSquare
+  if (eventType === "task.due_soon") return CalendarClock
+  if (eventType === "task.overdue") return CircleAlert
   return CheckCheck
+}
+
+function eventTone(eventType: UserNotification["event_type"]): string {
+  if (eventType === "task.assigned") return "bg-teal-50 text-teal-900"
+  if (eventType === "task.comment_added") return "bg-blue-50 text-blue-800"
+  if (eventType === "task.due_soon") return "bg-amber-50 text-amber-900"
+  if (eventType === "task.overdue") return "bg-rose-50 text-rose-800"
+  return "bg-slate-100 text-slate-700"
 }
 
 export function NotificationsInbox({ items, total, unreadTotal, loading, error, onRefresh, onLoadMore, onMarkAllRead, onOpen }: NotificationsInboxProps) {
@@ -31,7 +41,7 @@ export function NotificationsInbox({ items, total, unreadTotal, loading, error, 
             <h3 id="task-notifications-title" className="text-sm font-semibold text-foreground">Task updates</h3>
             {unreadTotal > 0 && <Badge variant="secondary" aria-label={`${unreadTotal} unread notifications`}>{unreadTotal} unread</Badge>}
           </div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">Assignments, status changes, and discussion updates across your projects.</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">Assignments, status changes, deadlines, and discussion updates across your projects.</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Refresh notifications" onClick={onRefresh} disabled={loading}>
@@ -46,7 +56,7 @@ export function NotificationsInbox({ items, total, unreadTotal, loading, error, 
       {!loading && !error && items.length === 0 && <div className="grid justify-items-center gap-2 rounded-xl border border-dashed bg-muted/20 p-6 text-center">
         <Bell className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
         <p className="text-sm font-medium text-foreground">No task updates yet</p>
-        <p className="max-w-xs text-xs leading-5 text-muted-foreground">New assignments and relevant task changes will appear here.</p>
+        <p className="max-w-xs text-xs leading-5 text-muted-foreground">New assignments, task changes, and deadline reminders will appear here.</p>
       </div>}
 
       {items.length > 0 && <div className="divide-y overflow-hidden rounded-xl border" role="list" aria-label="Task notifications" aria-busy={loading}>
@@ -55,7 +65,7 @@ export function NotificationsInbox({ items, total, unreadTotal, loading, error, 
           const unread = notification.read_at === null
           return <div key={notification.id} role="listitem">
             <button type="button" className={`flex w-full items-start gap-3 p-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${unread ? "bg-[#f1f8f6]" : "bg-white"}`} onClick={() => onOpen(notification)}>
-              <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${notification.event_type === "task.comment_added" ? "bg-blue-50 text-blue-800" : notification.event_type === "task.assigned" ? "bg-teal-50 text-teal-900" : "bg-slate-100 text-slate-700"}`}><Icon className="h-4 w-4" aria-hidden="true" /></span>
+              <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${eventTone(notification.event_type)}`}><Icon className="h-4 w-4" aria-hidden="true" /></span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-start justify-between gap-2">
                   <strong className={`block min-w-0 truncate text-sm ${unread ? "font-semibold text-foreground" : "font-medium text-[#43596b]"}`}>{notification.title}</strong>
