@@ -20,8 +20,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      "/agents": "http://127.0.0.1:8000",
+      "/auth": "http://127.0.0.1:8000",
       "/health": "http://127.0.0.1:8000",
+      "/my": "http://127.0.0.1:8000",
       "/permissions": "http://127.0.0.1:8000",
+      "/project-templates": "http://127.0.0.1:8000",
       "/upload-policy": "http://127.0.0.1:8000",
       "/projects": "http://127.0.0.1:8000",
       "/research": "http://127.0.0.1:8000",
