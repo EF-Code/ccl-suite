@@ -78,6 +78,8 @@ export function MyWork({ items, total, loading, error, canManage, onRefresh, onL
   const groups = groupOrder
     .map((title) => ({ title, items: visibleItems.filter((item) => groupFor(item, today) === title) }))
     .filter((group) => group.items.length > 0)
+  const closedLoadedCount = items.filter((item) => ["done", "cancelled"].includes(item.status)).length
+  const openWorkEmpty = items.length > 0 && filter === "open" && !query.trim() && visibleItems.length === 0
 
   return (
     <section className="space-y-5" aria-labelledby="my-work-title">
@@ -109,14 +111,15 @@ export function MyWork({ items, total, loading, error, canManage, onRefresh, onL
 
       {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><span>{error}</span><Button type="button" variant="outline" size="sm" onClick={onRefresh}>Try again</Button></div>}
       {loading && items.length === 0 && <p role="status" className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">Loading your assigned work…</p>}
-      {items.length > 0 && <p className="text-xs text-muted-foreground">{visibleItems.length} shown · {items.length} loaded of {total} assigned task{total === 1 ? "" : "s"}.</p>}
+      {items.length > 0 && <p className="text-xs text-muted-foreground">Showing {visibleItems.length} of {items.length} loaded assigned task{items.length === 1 ? "" : "s"}{total > items.length ? ` · ${total} assigned total` : ""}.</p>}
 
       {!loading && !error && visibleItems.length === 0 && (
         <Card className="border-dashed">
           <CardContent className="grid justify-items-center gap-2 py-12 text-center">
             <ClipboardCheck className="h-8 w-8 text-teal-800" aria-hidden="true" />
-            <p className="font-medium text-foreground">{items.length === 0 ? "Nothing is assigned to you yet" : "No work matches this view"}</p>
-            <p className="max-w-md text-sm text-muted-foreground">{items.length === 0 ? "When a project manager assigns you a task, it will appear here with its project and due date." : "Try a different status or search term."}</p>
+            <p className="font-medium text-foreground">{items.length === 0 ? "Nothing is assigned to you yet" : openWorkEmpty ? "No open tasks in the loaded results" : "No work matches this view"}</p>
+            <p className="max-w-md text-sm text-muted-foreground">{items.length === 0 ? "When a project manager assigns you a task, it will appear here with its project and due date." : openWorkEmpty && closedLoadedCount > 0 ? `${closedLoadedCount} completed or cancelled task${closedLoadedCount === 1 ? " is" : "s are"} available to review.` : "Try a different status or search term."}</p>
+            {openWorkEmpty && closedLoadedCount > 0 && <Button type="button" variant="outline" size="sm" onClick={() => setFilter("all")}>Show all statuses</Button>}
           </CardContent>
         </Card>
       )}
