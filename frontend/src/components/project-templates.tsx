@@ -120,7 +120,7 @@ export function ProjectTemplates({ project, canSaveFromProject, onProjectCreated
         <div>
           <p className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-teal-800">Repeatable delivery</p>
           <h1 id="project-templates-title" className="text-2xl font-semibold tracking-tight text-[#1b2c3b]">Project templates</h1>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Reuse a proven project brief and task checklist. New projects start with clean, unassigned work.</p>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Save repeatable channel or campaign work as a project brief and task checklist. New runs start with fresh assignments and statuses.</p>
         </div>
         <Button type="button" variant="outline" onClick={() => void refreshTemplates(true)} disabled={loading}>
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden="true" />Refresh templates
@@ -147,7 +147,7 @@ export function ProjectTemplates({ project, canSaveFromProject, onProjectCreated
       {!loading && templates.length === 0 && <Card className="border-dashed"><CardContent className="grid justify-items-center gap-2 py-12 text-center">
         <Sparkles className="h-7 w-7 text-teal-800" aria-hidden="true" />
         <p className="font-medium text-foreground">No reusable templates yet</p>
-        <p className="max-w-md text-sm text-muted-foreground">Save a project you run regularly. Its brief and task checklist will be ready the next time you need it.</p>
+        <p className="max-w-md text-sm text-muted-foreground">Build the project brief and starter tasks first, then save them here for the next channel run, social campaign, or repeatable project.</p>
       </CardContent></Card>}
 
       {templates.length > 0 && <div className="grid gap-3 xl:grid-cols-2" aria-label="Saved project templates">
