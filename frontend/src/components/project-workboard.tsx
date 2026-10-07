@@ -367,7 +367,7 @@ export function ProjectWorkboard({ project, items, loading, error, canManage, me
       {!project ? <Card className="border-dashed"><CardContent className="grid justify-items-center gap-2 py-12 text-center"><ClipboardList className="h-8 w-8 text-muted-foreground" /><p className="font-medium text-foreground">Choose a project to see its workboard</p><p className="max-w-md text-sm text-muted-foreground">Work items stay inside the active project and follow its access permissions.</p></CardContent></Card> : <>
         <div className="workboard-project-context flex flex-wrap items-center gap-3 rounded-xl border border-[#e1e8eb] bg-[#f7faf9] px-4 py-3 text-sm">
           <strong className="mr-1 max-w-full truncate text-[#244050]">{project.title}</strong>
-          <span className="text-muted-foreground">{activeCount} active item{activeCount === 1 ? "" : "s"}</span>
+          <span className="text-muted-foreground">{activeCount} open · {items.length} total task{items.length === 1 ? "" : "s"}</span>
           {overdueCount > 0 && <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-800">{overdueCount} overdue</Badge>}
           {!canManage && <Badge variant="secondary">Read only</Badge>}
         </div>
