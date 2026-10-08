@@ -45,11 +45,11 @@
   .app-links button.is-active, .mobile-links button.is-active { @apply bg-[#214869] text-white; box-shadow: inset 3px 0 0 #45c1c1, 0 8px 20px rgba(0, 0, 0, 0.1); }
   .app-links button.is-active svg { @apply text-[#65d1ce]; }
   .sidebar-status { @apply mt-auto grid gap-2 border-t border-white/10 pt-4; }
-  .health-pill { @apply inline-flex items-center gap-2 px-2 text-xs font-medium text-slate-300; }
+  .health-pill { @apply inline-flex items-center gap-2 px-2 text-xs font-medium text-white/90; }
   .health-pulse { @apply h-1.5 w-1.5 rounded-full; }
   .health-pill.is-online .health-pulse { @apply bg-emerald-400; box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.10); }
   .health-pill.is-offline .health-pulse { @apply bg-amber-400; }
-  .docs-link { @apply flex items-center gap-2 rounded-md px-2 py-2 text-xs font-medium text-slate-400 transition-[background-color,color] duration-150 hover:bg-white/[0.07] hover:text-white; transition-timing-function: var(--ease-emil); }
+  .docs-link { @apply flex items-center gap-2 rounded-md px-2 py-2 text-xs font-medium text-white/90 transition-[background-color,color] duration-150 hover:bg-white/[0.07] hover:text-white; transition-timing-function: var(--ease-emil); }
 
   .app-topbar { @apply sticky top-0 z-30 flex h-[4.5rem] items-center justify-between gap-5 border-b border-[#dbe2e8] px-4 lg:ml-[15rem] lg:px-8; background-color: rgba(255, 255, 255, 0.96); box-shadow: 0 1px 0 rgba(16, 24, 40, 0.025); backdrop-filter: blur(16px); }
   .project-switcher { @apply flex items-center gap-2; }
