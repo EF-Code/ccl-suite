@@ -1,4 +1,4 @@
-import { Bell, CalendarClock, CheckCheck, CircleAlert, MessageSquare, RefreshCw, UserRoundPlus } from "lucide-react"
+import { Bell, CalendarClock, CheckCheck, CircleAlert, ClipboardCheck, MessageSquare, RefreshCw, UserRoundPlus } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,7 @@ function eventIcon(eventType: UserNotification["event_type"]) {
   if (eventType === "task.comment_added") return MessageSquare
   if (eventType === "task.due_soon") return CalendarClock
   if (eventType === "task.overdue") return CircleAlert
+  if (eventType === "content.review_requested") return ClipboardCheck
   return CheckCheck
 }
 
@@ -29,19 +30,21 @@ function eventTone(eventType: UserNotification["event_type"]): string {
   if (eventType === "task.comment_added") return "bg-blue-50 text-blue-800"
   if (eventType === "task.due_soon") return "bg-amber-50 text-amber-900"
   if (eventType === "task.overdue") return "bg-rose-50 text-rose-800"
+  if (eventType === "content.review_requested") return "bg-violet-50 text-violet-800"
+  if (eventType === "content.review_decided") return "bg-emerald-50 text-emerald-800"
   return "bg-slate-100 text-slate-700"
 }
 
 export function NotificationsInbox({ items, total, unreadTotal, loading, error, onRefresh, onLoadMore, onMarkAllRead, onOpen }: NotificationsInboxProps) {
   return (
-    <section aria-labelledby="task-notifications-title" className="space-y-3">
+    <section aria-labelledby="work-notifications-title" className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 id="task-notifications-title" className="text-sm font-semibold text-foreground">Task updates</h3>
+            <h3 id="work-notifications-title" className="text-sm font-semibold text-foreground">Work updates</h3>
             {unreadTotal > 0 && <Badge variant="secondary" aria-label={`${unreadTotal} unread notifications`}>{unreadTotal} unread</Badge>}
           </div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">Assignments, status changes, deadlines, and discussion updates across your projects.</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">Assignments, deadlines, discussion updates, and editorial review decisions across your projects.</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Refresh notifications" onClick={onRefresh} disabled={loading}>
@@ -52,14 +55,14 @@ export function NotificationsInbox({ items, total, unreadTotal, loading, error, 
       </div>
 
       {error && <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"><span>{error}</span><Button type="button" variant="outline" size="sm" onClick={onRefresh}>Try again</Button></div>}
-      {loading && items.length === 0 && <p role="status" className="rounded-xl border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">Loading task updates…</p>}
+      {loading && items.length === 0 && <p role="status" className="rounded-xl border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">Loading work updates…</p>}
       {!loading && !error && items.length === 0 && <div className="grid justify-items-center gap-2 rounded-xl border border-dashed bg-muted/20 p-6 text-center">
         <Bell className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-        <p className="text-sm font-medium text-foreground">No task updates yet</p>
-        <p className="max-w-xs text-xs leading-5 text-muted-foreground">New assignments, task changes, and deadline reminders will appear here.</p>
+        <p className="text-sm font-medium text-foreground">No work updates yet</p>
+        <p className="max-w-xs text-xs leading-5 text-muted-foreground">Assignments, task changes, editorial reviews, and deadline reminders will appear here.</p>
       </div>}
 
-      {items.length > 0 && <div className="divide-y overflow-hidden rounded-xl border" role="list" aria-label="Task notifications" aria-busy={loading}>
+      {items.length > 0 && <div className="divide-y overflow-hidden rounded-xl border" role="list" aria-label="Work notifications" aria-busy={loading}>
         {items.map((notification) => {
           const Icon = eventIcon(notification.event_type)
           const unread = notification.read_at === null
