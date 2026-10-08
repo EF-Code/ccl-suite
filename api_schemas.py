@@ -38,6 +38,20 @@ AgentActorContract = Literal[
 ]
 WorkItemStatus = Literal["todo", "in_progress", "blocked", "done", "cancelled"]
 WorkItemPriority = Literal["low", "normal", "high", "urgent"]
+WorkItemType = Literal["task", "content"]
+ContentPlatform = Literal["youtube", "tiktok", "cross_platform", "other"]
+ContentFormat = Literal["long_video", "short_video", "community_post", "live", "other"]
+ContentStage = Literal[
+    "brief",
+    "scripting",
+    "editing",
+    "in_review",
+    "changes_requested",
+    "approved",
+    "scheduled",
+    "published",
+]
+ContentAssetRole = Literal["brief", "script", "caption", "thumbnail", "reference"]
 
 
 class UserCreate(BaseModel):
@@ -248,6 +262,29 @@ class WorkItemCreate(BaseModel):
     assignee_id: UUID | None = None
     priority: WorkItemPriority = "normal"
     due_date: date | None = None
+    work_type: WorkItemType = "task"
+    content_platform: ContentPlatform | None = None
+    content_channel: str | None = Field(default=None, min_length=1, max_length=120)
+    content_format: ContentFormat | None = None
+    publish_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_content_item(self) -> WorkItemCreate:
+        details = (
+            self.content_platform,
+            self.content_channel,
+            self.content_format,
+            self.publish_date,
+        )
+        if self.work_type == "task" and any(value is not None for value in details):
+            raise ValueError("Content details are only valid for a content item.")
+        if self.work_type == "content" and not all(
+            (self.content_platform, self.content_channel, self.content_format)
+        ):
+            raise ValueError(
+                "Content items require a platform, channel or account, and format."
+            )
+        return self
 
 
 class WorkItemUpdate(BaseModel):
@@ -259,15 +296,63 @@ class WorkItemUpdate(BaseModel):
     priority: WorkItemPriority | None = None
     status: WorkItemStatus | None = None
     due_date: date | None = None
+    content_platform: ContentPlatform | None = None
+    content_channel: str | None = Field(default=None, min_length=1, max_length=120)
+    content_format: ContentFormat | None = None
+    content_stage: ContentStage | None = None
+    publish_date: date | None = None
 
     @model_validator(mode="after")
     def validate_patch(self) -> WorkItemUpdate:
         if not self.model_fields_set:
             raise ValueError("At least one work-item field must be provided.")
-        for field_name in ("title", "description", "priority", "status"):
+        for field_name in (
+            "title",
+            "description",
+            "priority",
+            "status",
+            "content_platform",
+            "content_channel",
+            "content_format",
+            "content_stage",
+        ):
             if field_name in self.model_fields_set and getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null.")
         return self
+
+
+class WorkItemContentFileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    storage_key: str
+    extension: str
+    media_type: str
+    size_bytes: int
+    status: str
+
+
+class WorkItemContentAssetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    file_id: UUID
+    role: ContentAssetRole
+    file: WorkItemContentFileResponse
+    added_by_id: UUID | None
+    created_at: datetime
+
+
+class WorkItemContentReviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    status: Literal["pending", "approved", "changes_requested"]
+    requested_by_id: UUID | None
+    reviewer_id: UUID | None
+    request_note: str
+    decision_note: str | None
+    requested_at: datetime
+    decided_at: datetime | None
 
 
 class WorkItemResponse(BaseModel):
@@ -282,10 +367,44 @@ class WorkItemResponse(BaseModel):
     priority: WorkItemPriority
     status: WorkItemStatus
     due_date: date | None
+    work_type: WorkItemType = "task"
+    content_platform: ContentPlatform | None = None
+    content_channel: str | None = None
+    content_format: ContentFormat | None = None
+    content_stage: ContentStage | None = None
+    publish_date: date | None = None
+    content_assets: list[WorkItemContentAssetResponse] = Field(default_factory=list)
+    content_reviews: list[WorkItemContentReviewResponse] = Field(default_factory=list)
     created_by_id: UUID | None
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class WorkItemContentAssetCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    file_id: UUID
+    role: ContentAssetRole
+
+
+class WorkItemContentReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    request_note: str = Field(default="", max_length=2000)
+
+
+class WorkItemContentReviewDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    decision: Literal["approved", "changes_requested"]
+    decision_note: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_revision_guidance(self) -> WorkItemContentReviewDecision:
+        if self.decision == "changes_requested" and not (self.decision_note or "").strip():
+            raise ValueError("Add a note explaining the requested changes.")
+        return self
 
 
 class WorkItemCommentCreate(BaseModel):
@@ -323,6 +442,8 @@ class UserNotificationResponse(BaseModel):
         "task.comment_added",
         "task.due_soon",
         "task.overdue",
+        "content.review_requested",
+        "content.review_decided",
     ]
     title: str
     message: str
