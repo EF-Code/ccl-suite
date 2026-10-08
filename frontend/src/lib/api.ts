@@ -111,6 +111,30 @@ export type Project = {
 
 export type WorkItemStatus = "todo" | "in_progress" | "blocked" | "done" | "cancelled";
 export type WorkItemPriority = "low" | "normal" | "high" | "urgent";
+export type WorkItemType = "task" | "content";
+export type ContentPlatform = "youtube" | "tiktok" | "cross_platform" | "other";
+export type ContentFormat = "long_video" | "short_video" | "community_post" | "live" | "other";
+export type ContentStage = "brief" | "scripting" | "editing" | "in_review" | "changes_requested" | "approved" | "scheduled" | "published";
+export type ContentAssetRole = "brief" | "script" | "caption" | "thumbnail" | "reference";
+
+export type ContentAsset = {
+  file_id: string;
+  role: ContentAssetRole;
+  file: Pick<FileRecord, "name" | "storage_key" | "extension" | "media_type" | "size_bytes" | "status">;
+  added_by_id: string | null;
+  created_at: string;
+};
+
+export type ContentReview = {
+  id: string;
+  status: "pending" | "approved" | "changes_requested";
+  requested_by_id: string | null;
+  reviewer_id: string | null;
+  request_note: string;
+  decision_note: string | null;
+  requested_at: string;
+  decided_at: string | null;
+};
 
 export type WorkItem = {
   id: string;
@@ -122,6 +146,14 @@ export type WorkItem = {
   priority: WorkItemPriority;
   status: WorkItemStatus;
   due_date: string | null;
+  work_type: WorkItemType;
+  content_platform: ContentPlatform | null;
+  content_channel: string | null;
+  content_format: ContentFormat | null;
+  content_stage: ContentStage | null;
+  publish_date: string | null;
+  content_assets: ContentAsset[];
+  content_reviews: ContentReview[];
   created_by_id: string | null;
   completed_at: string | null;
   created_at: string;
@@ -144,8 +176,12 @@ export type WorkItemCommentsResponse = {
   offset: number;
 };
 
-export type WorkItemCreate = Pick<WorkItem, "title" | "description" | "assignee_id" | "priority" | "due_date">;
-export type WorkItemUpdate = Partial<Pick<WorkItem, "title" | "description" | "assignee_id" | "priority" | "status" | "due_date">>;
+export type WorkItemCreate = Pick<WorkItem, "title" | "description" | "assignee_id" | "priority" | "due_date"> & Partial<Pick<WorkItem, "work_type" | "content_platform" | "content_channel" | "content_format" | "publish_date">>;
+export type WorkItemUpdate = Partial<Pick<WorkItem, "title" | "description" | "assignee_id" | "priority" | "status" | "due_date" | "content_platform" | "content_channel" | "content_format" | "content_stage" | "publish_date">>;
+
+export type ContentAssetCreate = { file_id: string; role: ContentAssetRole };
+export type ContentReviewRequest = { request_note: string };
+export type ContentReviewDecision = { decision: "approved" | "changes_requested"; decision_note: string | null };
 
 export type ProjectMember = {
   project_id: string;
@@ -183,7 +219,9 @@ export type UserNotification = {
     | "task.status_changed"
     | "task.comment_added"
     | "task.due_soon"
-    | "task.overdue";
+    | "task.overdue"
+    | "content.review_requested"
+    | "content.review_decided";
   title: string;
   message: string;
   created_at: string;
