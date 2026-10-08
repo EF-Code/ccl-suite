@@ -567,10 +567,16 @@ def test_dashboard_runs_accelerated_workflow_controls(dashboard_page: Page) -> N
     workflow_card.wait_for(state="visible")
     workflow_id = workflow_card.get_attribute("data-workflow-id")
     assert workflow_id
-    expect(workflow_panel.locator("[data-workflow-state='ready']")).to_be_visible()
+    expect(
+        workflow_panel.locator("#workflow-state-controls [data-workflow-state='ready']")
+    ).to_be_visible()
 
     workflow_panel.get_by_role("button", name="Move to in progress").click()
-    expect(workflow_panel.locator("[data-workflow-state='in_progress']")).to_be_visible()
+    expect(
+        workflow_panel.locator(
+            "#workflow-state-controls [data-workflow-state='in_progress']"
+        )
+    ).to_be_visible()
 
     page.locator("#workflow-tool-files").click()
     tool_run = page.locator("#workflow-tool-runs [data-tool-run-id]").first
@@ -1052,7 +1058,7 @@ def test_task_notification_inbox_marks_read_and_opens_assigned_work(dashboard_pa
         member_page.locator("#login-form").get_by_role("button", name="Sign in").click()
         member_page.locator("#health-badge").wait_for(state="visible")
         inbox_button = member_page.locator('button[aria-label^="Open project inbox"]')
-        expect(inbox_button).to_have_attribute("aria-label", re.compile(r"2 unread task notifications"))
+        expect(inbox_button).to_have_attribute("aria-label", re.compile(r"2 unread work notifications"))
         inbox_button.click()
         notification = member_page.get_by_role("button", name=re.compile(task_title))
         expect(notification).to_be_visible()
