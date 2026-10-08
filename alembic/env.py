@@ -12,6 +12,8 @@ from models import (  # noqa: F401
     AuthSession,
     AuthThrottle,
     Backup,
+    WorkItemContentAsset,
+    WorkItemContentReview,
     DocumentChunk,
     File,
     FileHistory,

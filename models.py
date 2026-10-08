@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -305,6 +306,27 @@ class WorkItem(Base):
             "priority IN ('low', 'normal', 'high', 'urgent')",
             name="ck_work_items_priority",
         ),
+        CheckConstraint(
+            "work_type IN ('task', 'content')",
+            name="ck_work_items_type",
+        ),
+        CheckConstraint(
+            "content_platform IS NULL OR content_platform IN ('youtube', 'tiktok', 'cross_platform', 'other')",
+            name="ck_work_items_content_platform",
+        ),
+        CheckConstraint(
+            "content_format IS NULL OR content_format IN ('long_video', 'short_video', 'community_post', 'live', 'other')",
+            name="ck_work_items_content_format",
+        ),
+        CheckConstraint(
+            "content_stage IS NULL OR content_stage IN ('brief', 'scripting', 'editing', 'in_review', 'changes_requested', 'approved', 'scheduled', 'published')",
+            name="ck_work_items_content_stage",
+        ),
+        CheckConstraint(
+            "(work_type = 'task' AND content_platform IS NULL AND content_channel IS NULL AND content_format IS NULL AND content_stage IS NULL AND publish_date IS NULL) OR "
+            "(work_type = 'content' AND content_platform IS NOT NULL AND content_channel IS NOT NULL AND length(trim(content_channel)) > 0 AND content_format IS NOT NULL AND content_stage IS NOT NULL)",
+            name="ck_work_items_content_metadata",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -320,6 +342,12 @@ class WorkItem(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="todo")
     priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    work_type: Mapped[str] = mapped_column(String(16), nullable=False, default="task")
+    content_platform: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    content_channel: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    content_format: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    content_stage: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    publish_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_by_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -341,6 +369,18 @@ class WorkItem(Base):
         back_populates="work_item",
         cascade="all, delete-orphan",
         order_by="WorkItemComment.created_at",
+    )
+    content_assets: Mapped[list[WorkItemContentAsset]] = relationship(
+        back_populates="work_item",
+        cascade="all, delete-orphan",
+        order_by="WorkItemContentAsset.created_at",
+        lazy="selectin",
+    )
+    content_reviews: Mapped[list[WorkItemContentReview]] = relationship(
+        back_populates="work_item",
+        cascade="all, delete-orphan",
+        order_by="WorkItemContentReview.requested_at",
+        lazy="selectin",
     )
 
     @property
@@ -388,13 +428,89 @@ class WorkItemComment(Base):
     )
 
 
+class WorkItemContentAsset(Base):
+    """Link one active project file to a content work item by editorial purpose."""
+
+    __tablename__ = "work_item_content_assets"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('brief', 'script', 'caption', 'thumbnail', 'reference')",
+            name="ck_work_item_content_assets_role",
+        ),
+        Index("ix_work_item_content_assets_file", "file_id"),
+    )
+
+    work_item_id: Mapped[UUID] = mapped_column(
+        ForeignKey("work_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    file_id: Mapped[UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(24), nullable=False)
+    added_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    work_item: Mapped[WorkItem] = relationship(back_populates="content_assets")
+    file: Mapped[File] = relationship(lazy="joined")
+
+
+class WorkItemContentReview(Base):
+    """Record a content review request and its human decision."""
+
+    __tablename__ = "work_item_content_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'changes_requested')",
+            name="ck_work_item_content_reviews_status",
+        ),
+        CheckConstraint(
+            "length(request_note) <= 2000 AND (decision_note IS NULL OR length(decision_note) <= 2000)",
+            name="ck_work_item_content_reviews_note_lengths",
+        ),
+        Index("ix_work_item_content_reviews_item_requested", "work_item_id", "requested_at"),
+        Index(
+            "uq_work_item_content_reviews_pending",
+            "work_item_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    work_item_id: Mapped[UUID] = mapped_column(
+        ForeignKey("work_items.id", ondelete="CASCADE"), nullable=False
+    )
+    requested_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewer_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    request_note: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    decision_note: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    work_item: Mapped[WorkItem] = relationship(back_populates="content_reviews")
+    requested_by: Mapped[User | None] = relationship(foreign_keys=[requested_by_id])
+    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewer_id])
+
+
 class UserNotification(Base):
     """A durable, private inbox event linked to work the recipient can access."""
 
     __tablename__ = "user_notifications"
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ('task.assigned', 'task.status_changed', 'task.comment_added', 'task.due_soon', 'task.overdue')",
+            "event_type IN ('task.assigned', 'task.status_changed', 'task.comment_added', 'task.due_soon', 'task.overdue', 'content.review_requested', 'content.review_decided')",
             name="ck_user_notifications_event_type",
         ),
         CheckConstraint("length(trim(title)) > 0", name="ck_user_notifications_title_not_blank"),

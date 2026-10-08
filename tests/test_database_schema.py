@@ -5,7 +5,7 @@ from uuid import uuid4
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import MetaData, Table, create_engine, inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, configure_mappers
 
@@ -35,6 +35,8 @@ from models import (
     WorkflowAction,
     WorkflowToolRun,
     WorkItem,
+    WorkItemContentAsset,
+    WorkItemContentReview,
     WorkItemComment,
 )
 
@@ -58,6 +60,8 @@ REQUIRED_TABLES = {
     "operational_alerts",
     "work_items",
     "work_item_comments",
+    "work_item_content_assets",
+    "work_item_content_reviews",
     "user_notifications",
     "project_templates",
     "password_reset_tokens",
@@ -102,6 +106,8 @@ def test_relationship_mappers_configure() -> None:
     assert Project.work_items.property.mapper.class_ is WorkItem
     assert WorkItem.assignee_user.property.mapper.class_ is User
     assert WorkItem.comments.property.mapper.class_ is WorkItemComment
+    assert WorkItem.content_assets.property.mapper.class_ is WorkItemContentAsset
+    assert WorkItem.content_reviews.property.mapper.class_ is WorkItemContentReview
     assert WorkItemComment.work_item.property.mapper.class_ is WorkItem
     assert WorkItemComment.author.property.mapper.class_ is User
     assert User.work_item_comments.property.mapper.class_ is WorkItemComment
@@ -363,16 +369,16 @@ def test_membership_migration_preserves_legacy_labels_and_enrolls_owners(
             )
         )
         connection.execute(
-            WorkItem.__table__.insert().values(
-                id=work_item_id,
-                project_id=project_id,
+            Table("work_items", MetaData(), autoload_with=connection).insert().values(
+                id=work_item_id.hex,
+                project_id=project_id.hex,
                 title="Legacy assignment",
                 description="Keep its original label until reviewed.",
                 assignee="Video editor",
                 status="todo",
                 priority="normal",
                 due_date=None,
-                created_by_id=owner_id,
+                created_by_id=owner_id.hex,
                 completed_at=None,
                 created_at=now,
                 updated_at=now,
@@ -408,6 +414,7 @@ def test_membership_migration_preserves_legacy_labels_and_enrolls_owners(
     assert "uq_user_notifications_dedupe_key" in notification_indexes
     assert "task.due_soon" in notification_checks["ck_user_notifications_event_type"]
     assert "task.overdue" in notification_checks["ck_user_notifications_event_type"]
+    assert "content.review_requested" in notification_checks["ck_user_notifications_event_type"]
     migrated_engine.dispose()
 
 
