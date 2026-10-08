@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import type { MyWorkItem, WorkItemStatus, WorkItemUpdate } from "@/lib/api"
+import type { ContentPlatform, ContentStage, MyWorkItem, WorkItemStatus, WorkItemUpdate } from "@/lib/api"
 
 type MyWorkProps = {
   items: MyWorkItem[];
@@ -40,8 +40,32 @@ const statusTransitions: Record<WorkItemStatus, WorkItemStatus[]> = {
   cancelled: ["cancelled", "todo"],
 };
 
+function availableStatuses(item: MyWorkItem): WorkItemStatus[] {
+  if (item.work_type !== "content") return statusTransitions[item.status]
+  if (item.content_stage === "published") return ["done"]
+  return statusTransitions[item.status].filter((status) => status !== "done")
+}
+
 function localDateKey(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+}
+
+const contentPlatformLabels: Record<ContentPlatform, string> = {
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  cross_platform: "Cross-platform",
+  other: "Other platform",
+}
+
+const contentStageLabels: Record<ContentStage, string> = {
+  brief: "Brief",
+  scripting: "Scripting",
+  editing: "Editing",
+  in_review: "In review",
+  changes_requested: "Changes requested",
+  approved: "Approved",
+  scheduled: "Scheduled",
+  published: "Published",
 }
 
 function formatDate(value: string): string {
@@ -50,12 +74,17 @@ function formatDate(value: string): string {
   return Number.isNaN(date.getTime()) ? "Date unavailable" : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(date)
 }
 
+function workTargetDate(item: MyWorkItem): string | null {
+  return item.work_type === "content" ? item.publish_date || item.due_date : item.due_date
+}
+
 function groupFor(item: MyWorkItem, today: string): WorkGroup {
   if (item.status === "cancelled") return "Cancelled"
   if (item.status === "done") return "Completed"
-  if (!item.due_date) return "No due date"
-  if (item.due_date < today) return "Overdue"
-  if (item.due_date === today) return "Due today"
+  const targetDate = workTargetDate(item)
+  if (!targetDate) return "No due date"
+  if (targetDate < today) return "Overdue"
+  if (targetDate === today) return "Due today"
   return "Upcoming"
 }
 
@@ -70,7 +99,7 @@ export function MyWork({ items, total, loading, error, canManage, onRefresh, onL
     return items.filter((item) => {
       const matchesStatus = filter === "all"
         || (filter === "open" ? !["done", "cancelled"].includes(item.status) : item.status === filter)
-      const matchesText = !normalizedQuery || [item.title, item.description, item.project_title, item.assignee || ""].some((value) => value.toLowerCase().includes(normalizedQuery))
+      const matchesText = !normalizedQuery || [item.title, item.description, item.project_title, item.assignee || "", item.content_channel || ""].some((value) => value.toLowerCase().includes(normalizedQuery))
       return matchesStatus && matchesText
     })
   }, [filter, items, query])
@@ -111,14 +140,14 @@ export function MyWork({ items, total, loading, error, canManage, onRefresh, onL
 
       {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><span>{error}</span><Button type="button" variant="outline" size="sm" onClick={onRefresh}>Try again</Button></div>}
       {loading && items.length === 0 && <p role="status" className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">Loading your assigned work…</p>}
-      {items.length > 0 && <p className="text-xs text-muted-foreground">Showing {visibleItems.length} of {items.length} loaded assigned task{items.length === 1 ? "" : "s"}{total > items.length ? ` · ${total} assigned total` : ""}.</p>}
+      {items.length > 0 && <p className="text-xs text-muted-foreground">Showing {visibleItems.length} of {items.length} loaded assigned work item{items.length === 1 ? "" : "s"}{total > items.length ? ` · ${total} assigned total` : ""}.</p>}
 
       {!loading && !error && visibleItems.length === 0 && (
         <Card className="border-dashed">
           <CardContent className="grid justify-items-center gap-2 py-12 text-center">
             <ClipboardCheck className="h-8 w-8 text-teal-800" aria-hidden="true" />
-            <p className="font-medium text-foreground">{items.length === 0 ? "Nothing is assigned to you yet" : openWorkEmpty ? "No open tasks in the loaded results" : "No work matches this view"}</p>
-            <p className="max-w-md text-sm text-muted-foreground">{items.length === 0 ? "When a project manager assigns you a task, it will appear here with its project and due date." : openWorkEmpty && closedLoadedCount > 0 ? `${closedLoadedCount} completed or cancelled task${closedLoadedCount === 1 ? " is" : "s are"} available to review.` : "Try a different status or search term."}</p>
+            <p className="font-medium text-foreground">{items.length === 0 ? "Nothing is assigned to you yet" : openWorkEmpty ? "No open work in the loaded results" : "No work matches this view"}</p>
+            <p className="max-w-md text-sm text-muted-foreground">{items.length === 0 ? "When a project manager assigns you work, it will appear here with its project and due or publish target." : openWorkEmpty && closedLoadedCount > 0 ? `${closedLoadedCount} completed or cancelled item${closedLoadedCount === 1 ? " is" : "s are"} available to review.` : "Try a different status or search term."}</p>
             {openWorkEmpty && closedLoadedCount > 0 && <Button type="button" variant="outline" size="sm" onClick={() => setFilter("all")}>Show all statuses</Button>}
           </CardContent>
         </Card>
@@ -140,18 +169,23 @@ export function MyWork({ items, total, loading, error, canManage, onRefresh, onL
                       <h4 className="min-w-0 break-words text-sm font-semibold text-[#203448]">{item.title}</h4>
                       {item.priority === "urgent" && <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-800">Urgent</Badge>}
                       {item.status === "blocked" && <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">Blocked</Badge>}
+                      {item.work_type === "content" && <>
+                        <Badge variant="secondary">{contentPlatformLabels[item.content_platform || "other"]}</Badge>
+                        <Badge variant="outline">{contentStageLabels[item.content_stage || "brief"]}</Badge>
+                      </>}
                     </div>
                     {item.description && <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>}
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                       <button type="button" className="inline-flex items-center gap-1 font-medium text-teal-800 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onOpenProject(item.project_id)}>
                         {item.project_title}<ArrowUpRight className="h-3 w-3" aria-hidden="true" /><span className="sr-only">Open project</span>
                       </button>
-                      {item.due_date && <><span aria-hidden="true">·</span><time dateTime={item.due_date}>{formatDate(item.due_date)}</time></>}
+                      {item.work_type === "content" && item.content_channel && <><span aria-hidden="true">·</span><span>{item.content_channel}</span></>}
+                      {workTargetDate(item) && <><span aria-hidden="true">·</span><time dateTime={workTargetDate(item) || undefined}>{item.work_type === "content" && item.publish_date ? "Publish target: " : "Due: "}{formatDate(workTargetDate(item) || "")}</time></>}
                     </div>
                   </div>
                   {canManage && <Select value={item.status} onValueChange={(status) => { void onUpdate(item.project_id, item.id, { status: status as WorkItemStatus }).catch(() => undefined) }}>
                     <SelectTrigger aria-label={`Change status for ${item.title}`} className="h-8 w-full text-xs sm:w-36"><SelectValue /></SelectTrigger>
-                    <SelectContent>{statusTransitions[item.status].map((status) => <SelectItem key={status} value={status}>{statusLabels[status]}</SelectItem>)}</SelectContent>
+                    <SelectContent>{availableStatuses(item).map((status) => <SelectItem key={status} value={status}>{statusLabels[status]}</SelectItem>)}</SelectContent>
                   </Select>}
                 </article>
               ))}
