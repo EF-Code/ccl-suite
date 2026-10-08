@@ -904,6 +904,307 @@ def test_project_work_items_support_audited_status_lifecycle() -> None:
     } == {"work_item.created", "work_item.status_changed"}
 
 
+def create_content_item(
+    project_id: str,
+    *,
+    headers: dict[str, str] | None = None,
+    assignee_id: str | None = None,
+) -> dict[str, object]:
+    response = request(
+        "POST",
+        f"/projects/{project_id}/work-items",
+        headers=headers,
+        json={
+            "title": "A practical editing tip",
+            "description": "Show one repeatable way to tighten the opening.",
+            "assignee_id": assignee_id,
+            "work_type": "content",
+            "content_platform": "youtube",
+            "content_channel": "Studio channel",
+            "content_format": "short_video",
+            "publish_date": "2026-11-12",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def create_project_file(project_id: str, name: str, *, headers: dict[str, str] | None = None) -> dict[str, object]:
+    response = request(
+        "POST",
+        f"/projects/{project_id}/files",
+        headers=headers,
+        json={
+            "storage_key": f"working/{name}",
+            "media_type": "text/markdown",
+            "size_bytes": 42,
+            "checksum_sha256": "c" * 64,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_content_items_use_project_tasks_with_safe_metadata_validation() -> None:
+    project = create_project("Content metadata")
+    project_id = str(project["id"])
+    endpoint = f"/projects/{project_id}/work-items"
+
+    missing_details = request(
+        "POST",
+        endpoint,
+        json={"title": "Incomplete content", "work_type": "content"},
+    )
+    misplaced_details = request(
+        "POST",
+        endpoint,
+        json={
+            "title": "Not content",
+            "content_platform": "youtube",
+        },
+    )
+    created = create_content_item(project_id)
+    invalid_completion = request(
+        "PATCH", f"{endpoint}/{created['id']}", json={"status": "done"}
+    )
+    direct_approval = request(
+        "PATCH",
+        f"{endpoint}/{created['id']}",
+        json={"content_stage": "approved"},
+    )
+    cancelled_item = create_content_item(project_id)
+    cancelled = request(
+        "PATCH",
+        f"{endpoint}/{cancelled_item['id']}",
+        json={"status": "cancelled"},
+    )
+    cancelled_stage_move = request(
+        "PATCH",
+        f"{endpoint}/{cancelled_item['id']}",
+        json={"content_stage": "scripting"},
+    )
+    reopened = request(
+        "PATCH",
+        f"{endpoint}/{cancelled_item['id']}",
+        json={"status": "todo"},
+    )
+    stage_after_reopen = request(
+        "PATCH",
+        f"{endpoint}/{cancelled_item['id']}",
+        json={"content_stage": "scripting"},
+    )
+
+    assert missing_details.status_code == 422
+    assert misplaced_details.status_code == 422
+    assert created["work_type"] == "content"
+    assert created["content_stage"] == "brief"
+    assert created["content_platform"] == "youtube"
+    assert created["content_channel"] == "Studio channel"
+    assert created["content_format"] == "short_video"
+    assert created["content_assets"] == []
+    assert created["content_reviews"] == []
+    assert invalid_completion.status_code == 409
+    assert direct_approval.status_code == 409
+    assert cancelled.status_code == 200
+    assert cancelled_stage_move.status_code == 409
+    assert reopened.status_code == 200
+    assert stage_after_reopen.status_code == 200
+
+
+def test_content_files_are_project_scoped_links_not_file_mutations() -> None:
+    project = create_project("Content file links")
+    other_project = create_project("Other project files")
+    project_id = str(project["id"])
+    item = create_content_item(project_id)
+    file_record = create_project_file(project_id, "script.md")
+    other_file = create_project_file(str(other_project["id"]), "private-brief.md")
+
+    attached = request(
+        "POST",
+        f"/projects/{project_id}/work-items/{item['id']}/content-assets",
+        json={"file_id": file_record["id"], "role": "script"},
+    )
+    duplicate = request(
+        "POST",
+        f"/projects/{project_id}/work-items/{item['id']}/content-assets",
+        json={"file_id": file_record["id"], "role": "caption"},
+    )
+    cross_project = request(
+        "POST",
+        f"/projects/{project_id}/work-items/{item['id']}/content-assets",
+        json={"file_id": other_file["id"], "role": "reference"},
+    )
+    detached = request(
+        "DELETE",
+        f"/projects/{project_id}/work-items/{item['id']}/content-assets/{file_record['id']}",
+    )
+    still_present = request("GET", f"/projects/{project_id}/files")
+
+    assert attached.status_code == 200
+    asset = attached.json()["content_assets"][0]
+    assert asset["file_id"] == file_record["id"]
+    assert asset["role"] == "script"
+    assert asset["file"]["name"] == "script.md"
+    assert duplicate.status_code == 409
+    assert cross_project.status_code == 404
+    assert detached.status_code == 204
+    assert [record["id"] for record in still_present.json()] == [file_record["id"]]
+
+
+def test_content_review_requires_a_distinct_project_lead_decision() -> None:
+    project = create_project("Content review lifecycle")
+    project_id = str(project["id"])
+    endpoint = f"/projects/{project_id}/work-items"
+    member_id = create_active_account("creator@example.test")
+    peer_id = create_active_account("peer@example.test")
+    reviewer_id = create_active_account("lead@example.test", role="supervisor")
+    member_added = request(
+        "POST",
+        f"/projects/{project_id}/members",
+        json={"user_id": member_id, "role": "member"},
+    )
+    peer_added = request(
+        "POST",
+        f"/projects/{project_id}/members",
+        json={"user_id": peer_id, "role": "member"},
+    )
+    content_item = create_content_item(
+        project_id,
+        headers={"X-User-ID": member_id},
+        assignee_id=member_id,
+    )
+    scripting = request(
+        "PATCH",
+        f"{endpoint}/{content_item['id']}",
+        headers={"X-User-ID": member_id},
+        json={"content_stage": "scripting"},
+    )
+    editing = request(
+        "PATCH",
+        f"{endpoint}/{content_item['id']}",
+        headers={"X-User-ID": member_id},
+        json={"content_stage": "editing"},
+    )
+    review_url = f"{endpoint}/{content_item['id']}/content-reviews"
+    review_request = request(
+        "POST",
+        review_url,
+        headers={"X-User-ID": member_id},
+        json={"request_note": "Opening cut and captions are ready."},
+    )
+    review = review_request.json()["content_reviews"][-1]
+    duplicate_review = request(
+        "POST", review_url, headers={"X-User-ID": member_id}, json={}
+    )
+    self_decision = request(
+        "POST",
+        f"{review_url}/{review['id']}/decision",
+        headers={"X-User-ID": member_id},
+        json={"decision": "approved"},
+    )
+    peer_decision = request(
+        "POST",
+        f"{review_url}/{review['id']}/decision",
+        headers={"X-User-ID": peer_id},
+        json={"decision": "approved"},
+    )
+    missing_revision_note = request(
+        "POST",
+        f"{review_url}/{review['id']}/decision",
+        headers={"X-User-ID": reviewer_id},
+        json={"decision": "changes_requested"},
+    )
+    revision_requested = request(
+        "POST",
+        f"{review_url}/{review['id']}/decision",
+        headers={"X-User-ID": reviewer_id},
+        json={
+            "decision": "changes_requested",
+            "decision_note": "Tighten the opening and add captions for the key point.",
+        },
+    )
+    back_to_editing = request(
+        "PATCH",
+        f"{endpoint}/{content_item['id']}",
+        headers={"X-User-ID": member_id},
+        json={"content_stage": "editing"},
+    )
+    review_again = request(
+        "POST",
+        review_url,
+        headers={"X-User-ID": member_id},
+        json={"request_note": "Revised cut and captions are ready."},
+    )
+    second_review = review_again.json()["content_reviews"][-1]
+    approved = request(
+        "POST",
+        f"{review_url}/{second_review['id']}/decision",
+        headers={"X-User-ID": reviewer_id},
+        json={"decision": "approved", "decision_note": "Ready for scheduling."},
+    )
+    assert member_added.status_code == peer_added.status_code == 201
+    assert scripting.status_code == editing.status_code == 200
+    assert review_request.status_code == 201
+    assert review_request.json()["content_stage"] == "in_review"
+    assert review["status"] == "pending"
+    assert duplicate_review.status_code == 409
+    assert self_decision.status_code == 403
+    assert peer_decision.status_code == 403
+    assert missing_revision_note.status_code == 422
+    assert revision_requested.status_code == 200
+    assert revision_requested.json()["content_stage"] == "changes_requested"
+    assert revision_requested.json()["content_reviews"][-1]["decision_note"] == (
+        "Tighten the opening and add captions for the key point."
+    )
+    assert back_to_editing.status_code == 200
+    assert review_again.status_code == 201
+    assert review_again.json()["content_stage"] == "in_review"
+    assert approved.status_code == 200
+    assert approved.json()["content_stage"] == "approved"
+    assert approved.json()["content_reviews"][-1]["decision_note"] == "Ready for scheduling."
+    date_cleared = request(
+        "PATCH",
+        f"{endpoint}/{content_item['id']}",
+        headers={"X-User-ID": member_id},
+        json={"publish_date": None},
+    )
+    schedule_without_date = request(
+        "PATCH",
+        f"{endpoint}/{content_item['id']}",
+        headers={"X-User-ID": member_id},
+        json={"content_stage": "scheduled"},
+    )
+    scheduled = request(
+        "PATCH",
+        f"{endpoint}/{content_item['id']}",
+        headers={"X-User-ID": member_id},
+        json={"content_stage": "scheduled", "publish_date": "2026-11-12"},
+    )
+    published = request(
+        "PATCH",
+        f"{endpoint}/{content_item['id']}",
+        headers={"X-User-ID": member_id},
+        json={"content_stage": "published"},
+    )
+    my_work = request("GET", "/my/work-items", headers={"X-User-ID": member_id})
+    reviewer_inbox = request("GET", "/my/notifications", headers={"X-User-ID": reviewer_id})
+    assert schedule_without_date.status_code == 409
+    assert date_cleared.status_code == 200
+    assert scheduled.status_code == 200
+    assert published.status_code == 200
+    assert published.json()["content_stage"] == "published"
+    assert published.json()["status"] == "done"
+    assert published.json()["completed_at"] is not None
+    assigned_content = next(
+        item for item in my_work.json()["items"] if item["id"] == content_item["id"]
+    )
+    assert assigned_content["work_type"] == "content"
+    assert assigned_content["content_stage"] == "published"
+    assert assigned_content["content_channel"] == "Studio channel"
+    assert assigned_content["publish_date"] == "2026-11-12"
+    assert "content.review_requested" in {item["event_type"] for item in reviewer_inbox.json()["items"]}
+
+
 def test_task_notifications_are_private_persistent_and_markable() -> None:
     project = create_project("Notification inbox")
     project_id = str(project["id"])

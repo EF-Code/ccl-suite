@@ -70,6 +70,9 @@ from api_schemas import (
     BackupVerifyResponse,
     ConversionCreate,
     ConversionResponse,
+    WorkItemContentAssetCreate,
+    WorkItemContentReviewDecision,
+    WorkItemContentReviewRequest,
     DocumentChunkResponse,
     FileCreate,
     FileHistoryResponse,
@@ -300,6 +303,8 @@ from models import (
     UserNotification,
     WorkItem,
     WorkItemComment,
+    WorkItemContentAsset,
+    WorkItemContentReview,
     Workflow,
     WorkflowAction,
     WorkflowToolRun,
@@ -2416,6 +2421,63 @@ WORK_ITEM_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     "cancelled": frozenset({"todo"}),
 }
 
+CONTENT_STAGE_TRANSITIONS: dict[str, frozenset[str]] = {
+    "brief": frozenset({"scripting"}),
+    "scripting": frozenset({"brief", "editing"}),
+    "editing": frozenset({"scripting"}),
+    "changes_requested": frozenset({"scripting", "editing"}),
+    "approved": frozenset({"scheduled"}),
+    "scheduled": frozenset({"published"}),
+}
+
+CONTENT_REVIEW_STAGES = frozenset({"in_review", "changes_requested", "approved"})
+
+
+def require_project_content_item(
+    db: Session,
+    project_id: UUID,
+    work_item_id: UUID,
+) -> WorkItem:
+    """Load a content item only from its owning project."""
+
+    item = require_project_work_item(db, project_id, work_item_id)
+    if item.work_type != "content":
+        raise HTTPException(status_code=404, detail="Content item was not found.")
+    return item
+
+
+def content_reviewer_allowed(db: Session, project_id: UUID, project: Project, actor: User) -> bool:
+    """Limit editorial decisions to project leads and global supervisors."""
+
+    if canonical_role(actor.role) in {"administrator", "supervisor"} or project.owner_id == actor.id:
+        return True
+    membership = db.get(ProjectMembership, (project_id, actor.id))
+    return membership is not None and membership.role == "manager"
+
+
+def content_review_recipients(db: Session, project: Project, actor_id: UUID) -> set[UUID]:
+    """Select active project leads and supervisors for a review request."""
+
+    global_reviewers = select(User.id).where(
+        User.is_active.is_(True),
+        User.role.in_(("administrator", "supervisor", "reviewer")),
+    )
+    project_managers = select(ProjectMembership.user_id).where(
+        ProjectMembership.project_id == project.id,
+        ProjectMembership.role == "manager",
+    )
+    reviewers = db.scalars(
+        select(User.id).where(
+            User.is_active.is_(True),
+            or_(
+                User.id == project.owner_id,
+                User.id.in_(global_reviewers),
+                User.id.in_(project_managers),
+            ),
+        )
+    ).all()
+    return {user_id for user_id in reviewers if user_id != actor_id}
+
 
 @app.get(
     "/my/work-items",
@@ -2776,6 +2838,215 @@ def require_project_work_item(db: Session, project_id: UUID, work_item_id: UUID)
 
 
 @app.post(
+    "/projects/{project_id}/work-items/{work_item_id}/content-assets",
+    response_model=WorkItemResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["content production"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_project_scope),
+        Depends(require_permission("work_item.manage")),
+    ],
+)
+async def attach_content_asset(
+    project_id: UUID,
+    work_item_id: UUID,
+    asset_request: WorkItemContentAssetCreate,
+    request: Request,
+    actor: User = Depends(require_permission("work_item.manage")),
+    db: Session = Depends(get_db),
+) -> WorkItemResponse:
+    """Link an active file from this project to one content work item."""
+
+    item = require_project_content_item(db, project_id, work_item_id)
+    file_record = db.scalar(
+        select(File).where(
+            File.id == asset_request.file_id,
+            File.project_id == project_id,
+            File.status == "active",
+        )
+    )
+    if file_record is None:
+        raise HTTPException(status_code=404, detail="Active project file was not found.")
+    if any(asset.file_id == file_record.id for asset in item.content_assets):
+        raise HTTPException(status_code=409, detail="This file is already linked to the content item.")
+
+    item.content_assets.append(
+        WorkItemContentAsset(
+            file=file_record,
+            role=asset_request.role,
+            added_by_id=actor.id,
+        )
+    )
+    saved = persist_work_item_change(db, item, actor.id, "content.asset_attached")
+    return WorkItemResponse.model_validate(saved)
+
+
+@app.delete(
+    "/projects/{project_id}/work-items/{work_item_id}/content-assets/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["content production"],
+    dependencies=[
+        Depends(require_project_scope),
+        Depends(require_permission("work_item.manage")),
+    ],
+)
+async def detach_content_asset(
+    project_id: UUID,
+    work_item_id: UUID,
+    file_id: UUID,
+    actor: User = Depends(require_permission("work_item.manage")),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Remove the content link without deleting or moving the project file."""
+
+    item = require_project_content_item(db, project_id, work_item_id)
+    asset = next((entry for entry in item.content_assets if entry.file_id == file_id), None)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Content file link was not found.")
+    db.delete(asset)
+    item.updated_at = utc_now()
+    persist_work_item_change(db, item, actor.id, "content.asset_detached")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/projects/{project_id}/work-items/{work_item_id}/content-reviews",
+    response_model=WorkItemResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["content production"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_project_scope),
+        Depends(require_permission("work_item.manage")),
+    ],
+)
+async def request_content_review(
+    project_id: UUID,
+    work_item_id: UUID,
+    review_request: WorkItemContentReviewRequest,
+    actor: User = Depends(require_permission("work_item.manage")),
+    db: Session = Depends(get_db),
+) -> WorkItemResponse:
+    """Queue a script or edit for a lead's explicit editorial decision."""
+
+    item = require_project_content_item(db, project_id, work_item_id)
+    if item.content_stage not in {"scripting", "editing"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Move the content to scripting or editing before requesting review.",
+        )
+    pending_review = db.scalar(
+        select(WorkItemContentReview).where(
+            WorkItemContentReview.work_item_id == item.id,
+            WorkItemContentReview.status == "pending",
+        )
+    )
+    if pending_review is not None:
+        raise HTTPException(status_code=409, detail="A content review is already pending.")
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    review = WorkItemContentReview(
+        work_item=item,
+        requested_by_id=actor.id,
+        request_note=review_request.request_note,
+    )
+    item.content_reviews.append(review)
+    item.content_stage = "in_review"
+    if item.status == "todo":
+        item.status = "in_progress"
+    notifications = [
+        (
+            recipient_id,
+            "content.review_requested",
+            "Content needs a review",
+            f'"{item.title}" is ready for an editorial decision.',
+        )
+        for recipient_id in content_review_recipients(db, project, actor.id)
+    ]
+    saved = persist_work_item_change(
+        db,
+        item,
+        actor.id,
+        "content.review_requested",
+        notifications,
+    )
+    return WorkItemResponse.model_validate(saved)
+
+
+@app.post(
+    "/projects/{project_id}/work-items/{work_item_id}/content-reviews/{review_id}/decision",
+    response_model=WorkItemResponse,
+    tags=["content production"],
+    dependencies=[
+        Depends(reject_oversized_requests),
+        Depends(require_project_scope),
+        Depends(require_permission("work_item.manage")),
+    ],
+)
+async def decide_content_review(
+    project_id: UUID,
+    work_item_id: UUID,
+    review_id: UUID,
+    decision_request: WorkItemContentReviewDecision,
+    request: Request,
+    actor: User = Depends(require_permission("work_item.manage")),
+    db: Session = Depends(get_db),
+) -> WorkItemResponse:
+    """Approve a submitted item or return it with a required revision note."""
+
+    item = require_project_content_item(db, project_id, work_item_id)
+    review = db.scalar(
+        select(WorkItemContentReview)
+        .where(
+            WorkItemContentReview.id == review_id,
+            WorkItemContentReview.work_item_id == item.id,
+        )
+        .with_for_update()
+    )
+    if review is None:
+        raise HTTPException(status_code=404, detail="Content review was not found.")
+    if review.status != "pending" or item.content_stage != "in_review":
+        raise HTTPException(status_code=409, detail="This content review is no longer pending.")
+
+    project = require_record(db, Project, project_id, "Project was not found.")
+    if not content_reviewer_allowed(db, project_id, project, actor):
+        _record_access_denial(db, request, actor, "content.review.decide")
+        raise HTTPException(status_code=403, detail="Only a project lead or supervisor can decide this review.")
+    if review.requested_by_id == actor.id:
+        raise HTTPException(status_code=403, detail="Reviewers cannot decide their own submission.")
+
+    review.status = decision_request.decision
+    review.reviewer_id = actor.id
+    review.decision_note = decision_request.decision_note
+    review.decided_at = utc_now()
+    item.content_stage = decision_request.decision
+    event_type = "content.review_decided"
+    outcome = "approved" if decision_request.decision == "approved" else "changes requested"
+    recipients = {review.requested_by_id, item.assignee_id, item.created_by_id} - {None, actor.id}
+    notifications: list[tuple[UUID, str, str, str]] = []
+    for recipient_id in recipients:
+        recipient = db.get(User, recipient_id)
+        if recipient is not None and recipient.is_active:
+            notifications.append(
+                (
+                    recipient_id,
+                    event_type,
+                    "Content review completed",
+                    f'The review for "{item.title}" is complete: {outcome}.',
+                )
+            )
+    saved = persist_work_item_change(
+        db,
+        item,
+        actor.id,
+        f"content.review.{decision_request.decision}",
+        notifications,
+    )
+    return WorkItemResponse.model_validate(saved)
+
+
+@app.post(
     "/projects/{project_id}/work-items",
     response_model=WorkItemResponse,
     status_code=status.HTTP_201_CREATED,
@@ -2801,6 +3072,12 @@ async def create_project_work_item(
         description=work_item.description,
         priority=work_item.priority,
         due_date=work_item.due_date,
+        work_type=work_item.work_type,
+        content_platform=work_item.content_platform,
+        content_channel=work_item.content_channel,
+        content_format=work_item.content_format,
+        content_stage="brief" if work_item.work_type == "content" else None,
+        publish_date=work_item.publish_date,
     )
     item.assignee_user = assignee
     notifications = []
@@ -2844,6 +3121,64 @@ async def update_project_work_item(
     if "assignee_id" in updates:
         assignee_user = require_active_project_member(db, project_id, updates["assignee_id"])
         updates["assignee_id"] = assignee_user.id if assignee_user is not None else None
+
+    content_fields = {
+        "content_platform",
+        "content_channel",
+        "content_format",
+        "content_stage",
+        "publish_date",
+    }
+    if content_fields.intersection(updates) and item.work_type != "content":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Content details can only be changed on a content item.",
+        )
+
+    next_content_stage = updates.get("content_stage")
+    if next_content_stage is not None:
+        if item.status == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Reopen cancelled content work before changing its production stage.",
+            )
+        if next_content_stage in CONTENT_REVIEW_STAGES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Review stages can only be changed through the content review actions.",
+            )
+        allowed_content_stages = CONTENT_STAGE_TRANSITIONS.get(item.content_stage or "", frozenset())
+        if next_content_stage not in allowed_content_stages:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That content stage transition is not available.",
+            )
+        if next_content_stage == "scheduled" and updates.get("publish_date", item.publish_date) is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Set a target publish date before scheduling this content.",
+            )
+        if next_content_stage == "published":
+            if item.status == "cancelled":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Cancelled content cannot be marked as published.",
+                )
+            updates["status"] = "done"
+
+    if item.work_type == "content":
+        proposed_status = updates.get("status")
+        proposed_stage = next_content_stage or item.content_stage
+        if proposed_status == "done" and proposed_stage != "published":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Content work can only be completed after it is published.",
+            )
+        if item.content_stage == "published" and proposed_status not in (None, "done"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Published content cannot be reopened as active work.",
+            )
     next_status = updates.get("status")
     changed_fields = {
         field_name: value
@@ -2873,7 +3208,9 @@ async def update_project_work_item(
             item.status = value
     if "assignee_id" in changed_fields:
         item.assignee_user = assignee_user
-    if status_changed:
+    if "content_stage" in changed_fields:
+        event_code = "content.stage_changed"
+    elif status_changed:
         event_code = "work_item.status_changed"
     elif "assignee_id" in changed_fields:
         event_code = "work_item.assigned" if item.assignee_id else "work_item.unassigned"
