@@ -132,6 +132,14 @@ jobs:
       CCL_BACKUP_ROOT: /tmp/ccl-browser-backups
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: pnpm/setup@v3
+        with:
+          version: 11.25.0
+          runtime: node@22
+      - name: Install locked frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+      - name: Build the dashboard served by the API
+        run: pnpm --dir frontend build:standalone
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
