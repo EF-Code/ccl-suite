@@ -190,7 +190,7 @@ export function WorkflowOrchestrator({
                 <CardHeader className="pb-3">
                   <p className="panel-label">New definition</p>
                   <CardTitle className="text-base">Create a workflow</CardTitle>
-                  <CardDescription className="text-xs">Start with a named, versioned definition. Approval requests are created separately so the draft stays editable.</CardDescription>
+                  <CardDescription className="text-xs">Start with a named, versioned definition. Approval requests are tracked separately from the workflow version.</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <form id="workflow-create-form" onSubmit={onCreateWorkflow} className="grid gap-3">
@@ -225,7 +225,18 @@ export function WorkflowOrchestrator({
                   </div>
                 ) : workflows.map((workflow) => {
                   const workflowApprovals = approvals[workflow.id] || []
+                  const latestApproval = workflowApprovals[workflowApprovals.length - 1] || null
                   const hasPendingApproval = workflowApprovals.some((approval) => approval.status === "pending")
+                  const latestDecision = latestApproval && latestApproval.status !== "pending" ? latestApproval.status : null
+                  const approvalSummary = hasPendingApproval
+                    ? "A reviewer decision is pending."
+                    : latestDecision === "approved"
+                      ? "The latest request was approved. Request another review if needed."
+                      : latestDecision === "rejected"
+                        ? "The latest request was declined. Request another review when ready."
+                        : latestDecision === "cancelled"
+                          ? "The latest request was cancelled. You can submit a new request."
+                          : "No decision has been requested."
                   return (
                     <Card key={workflow.id} data-workflow-id={workflow.id} className="border-border bg-card/70 shadow-sm">
                       <CardHeader className="gap-2 pb-3">
@@ -234,7 +245,10 @@ export function WorkflowOrchestrator({
                             <p className="panel-label">Version {workflow.version}</p>
                             <CardTitle className="text-base">{workflow.name}</CardTitle>
                           </div>
-                          <Badge data-workflow-status={workflow.status} className={statusTone(workflow.status)}>{statusLabel(workflow.status)}</Badge>
+                          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={`${workflow.name} status`}>
+                            <Badge data-workflow-status={workflow.status} className={statusTone(workflow.status)}>Definition · {statusLabel(workflow.status)}</Badge>
+                            <Badge data-workflow-state={workflow.state} className={statusTone(workflow.state)}>Lifecycle · {statusLabel(workflow.state)}</Badge>
+                          </div>
                         </div>
                         <CardDescription className="text-xs">Created {formatDate(workflow.created_at)} · Definition ID <span className="font-mono">{workflow.id.slice(0, 12)}…</span></CardDescription>
                       </CardHeader>
@@ -242,10 +256,10 @@ export function WorkflowOrchestrator({
                         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/30 p-3">
                           <div>
                             <p className="text-xs font-semibold">Approval gate</p>
-                            <p className="mt-1 text-[0.68rem] text-muted-foreground">{hasPendingApproval ? "A reviewer decision is pending." : workflowApprovals.length ? "The latest decision is recorded." : "No decision has been requested."}</p>
+                            <p className="mt-1 text-[0.68rem] text-muted-foreground">{approvalSummary}</p>
                           </div>
                           <Button id={`workflow-request-approval-${workflow.id}`} type="button" size="sm" variant={hasPendingApproval ? "outline" : "secondary"} onClick={() => onRequestApproval(workflow.id)} disabled={loading || hasPendingApproval}>
-                            <Send className="mr-1.5 h-3.5 w-3.5" />{hasPendingApproval ? "Awaiting decision" : "Request approval"}
+                            <Send className="mr-1.5 h-3.5 w-3.5" />{hasPendingApproval ? "Awaiting decision" : latestApproval ? "Request another review" : "Request approval"}
                           </Button>
                         </div>
 

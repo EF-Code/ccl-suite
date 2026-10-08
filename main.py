@@ -5934,9 +5934,10 @@ async def list_approvals(
         db,
         select(Approval)
         .where(Approval.workflow_id == _workflow.id)
-        .order_by(Approval.requested_at, Approval.id)
+        .order_by(Approval.requested_at.desc(), Approval.id.desc())
         .limit(limit),
     )
+    approvals.reverse()
     return [ApprovalResponse.model_validate(approval) for approval in approvals]
 
 

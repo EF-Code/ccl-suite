@@ -5418,6 +5418,33 @@ def test_workflow_trace_listings_share_a_safe_limit() -> None:
     assert request("GET", f"/workflows/{workflow['id']}/approvals?limit=51").status_code == 422
 
 
+def test_approval_history_returns_latest_records_in_chronological_order() -> None:
+    project = create_project("Recent approval history")
+    workflow = create_workflow(str(project["id"]))
+    requested_at = utc_now()
+    with TestingSessionLocal() as session:
+        workflow_record = session.get(Workflow, UUID(workflow["id"]))
+        assert workflow_record is not None
+        approvals = [
+            Approval(
+                workflow_id=workflow_record.id,
+                requested_by_id=UUID(TEST_OWNER_ID),
+                status="cancelled",
+                requested_at=requested_at + timedelta(seconds=index),
+                decided_at=requested_at + timedelta(seconds=index),
+            )
+            for index in range(55)
+        ]
+        session.add_all(approvals)
+        session.commit()
+        expected_ids = [str(approval.id) for approval in approvals[-50:]]
+
+    listed = request("GET", f"/workflows/{workflow['id']}/approvals?limit=50")
+
+    assert listed.status_code == 200
+    assert [approval["id"] for approval in listed.json()] == expected_ids
+
+
 def test_specialist_agents_return_project_scoped_results_and_traces() -> None:
     project = create_project("Specialist trace project")
     workflow = create_workflow(str(project["id"]))

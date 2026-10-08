@@ -510,7 +510,8 @@ def test_dashboard_runs_workflow_definition_and_approval(dashboard_page: Page) -
     workflow_card = page.locator("#workflow-list [data-workflow-id]").first
     workflow_card.wait_for(state="visible")
     expect(workflow_card).to_contain_text("Publish campaign package")
-    expect(workflow_card.locator("[data-workflow-status='draft']")).to_be_visible()
+    expect(workflow_card.locator("[data-workflow-status='draft']")).to_have_text("Definition · draft")
+    expect(workflow_card.locator("[data-workflow-state='ready']")).to_have_text("Lifecycle · ready")
 
     workflow_card.get_by_role("button", name="Request approval").click()
     approval = workflow_card.locator("[data-approval-id]").first
@@ -529,6 +530,12 @@ def test_dashboard_runs_workflow_definition_and_approval(dashboard_page: Page) -
         confirm_protected_action(reviewer)
         expect(reviewer_approval.locator("[data-approval-status='approved']")).to_be_visible()
         expect(reviewer_panel.locator("[data-workflow-stage='decide']")).to_contain_text("Outcome recorded")
+
+    page.locator("#workflow-refresh").click()
+    expect(workflow_card.locator("[data-workflow-status='draft']")).to_have_text("Definition · draft")
+    expect(workflow_card.locator("[data-workflow-state='approved']")).to_have_text("Lifecycle · approved")
+    expect(workflow_card).to_contain_text("The latest request was approved.")
+    expect(workflow_card.get_by_role("button", name="Request another review")).to_be_enabled()
 
 
 def test_dashboard_runs_accelerated_workflow_controls(dashboard_page: Page) -> None:
