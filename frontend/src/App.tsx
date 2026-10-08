@@ -12,12 +12,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Separator } from "@/components/ui/separator"
-import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type ManagedAccount, type AccountOffboardingImpact, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type Project, type ProjectMember, type ProjectMemberCandidate, type MyWorkItem, type MyWorkItemsResponse, type NotificationInboxResponse, type UserNotification, type WorkItem, type WorkItemCreate, type WorkItemUpdate, type WorkItemComment, type WorkItemCommentsResponse, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult, type UploadPolicy, type UploadResponse } from "@/lib/api"
+import { apiRequest, getOwnerId, setOwnerId, WORKFLOW_TRACE_LIMIT, type AuthUser, type ManagedAccount, type AccountOffboardingImpact, type InvitationResult, type AgentDefinition, type AgentHandoff, type AgentName, type Approval, type ApprovalDecision, type ContentAssetCreate, type ContentReviewDecision, type ContentReviewRequest, type Project, type ProjectMember, type ProjectMemberCandidate, type MyWorkItem, type MyWorkItemsResponse, type NotificationInboxResponse, type UserNotification, type WorkItem, type WorkItemCreate, type WorkItemUpdate, type WorkItemComment, type WorkItemCommentsResponse, type Workflow, type WorkflowAction, type WorkflowToolName, type WorkflowToolRun, type FileRecord, type KnowledgeSource, type KnowledgeAnswerResponse, type KnowledgeErrorCategory, type KnowledgeFeedbackRating, type ResearchApplicabilityResponse, type ResearchClaim, type ResearchClaimExtractionResponse, type ResearchEvidenceRegisterResponse, type ResearchReviewResponse, type ResearchScope, type SearchResult, type UploadPolicy, type UploadResponse } from "@/lib/api"
 import {
   Activity, ArchiveRestore, FolderCog, FolderKanban, FolderPlus, Gauge, HardDriveUpload,
   HeartPulse, Users, Files, Search, RefreshCw, ShieldCheck,
   Database, FileText, ArrowLeftRight, Library,
-  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare, GitBranch, Bell, ListChecks
+  AlertCircle, ExternalLink, CheckCircle2, ScanLine, Menu, CircleHelp, FileSearch, Copy, Download, ClipboardCheck, MessageSquare, GitBranch, Bell, ListChecks, Film
 } from "lucide-react"
 
 const OverviewDashboard = lazy(() => import("@/components/overview-dashboard").then((module) => ({ default: module.OverviewDashboard })))
@@ -27,6 +27,7 @@ const ProjectWorkboard = lazy(() => import("@/components/project-workboard").the
 const MyWork = lazy(() => import("@/components/my-work").then((module) => ({ default: module.MyWork })))
 const NotificationsInbox = lazy(() => import("@/components/notifications-inbox").then((module) => ({ default: module.NotificationsInbox })))
 const ProjectTemplates = lazy(() => import("@/components/project-templates").then((module) => ({ default: module.ProjectTemplates })))
+const ContentProduction = lazy(() => import("@/components/content-production").then((module) => ({ default: module.ContentProduction })))
 
 // Helpers
 function escapeForTest(v: string) { return v }
@@ -41,7 +42,7 @@ function formatUploadSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
-type WorkspaceView = "overview" | "my-work" | "workboard" | "templates" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
+type WorkspaceView = "overview" | "my-work" | "workboard" | "content" | "templates" | "operations" | "files" | "knowledge" | "research" | "workflows" | "recovery" | "setup" | "security"
 type OrganizationPlanAction = {
   source: string
   destination: string
@@ -325,7 +326,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       setTaskNotifications([])
       setNotificationTotal(0)
       setUnreadNotificationTotal(0)
-      setNotificationError(error instanceof Error ? error.message : "Task notifications could not be loaded.")
+      setNotificationError(error instanceof Error ? error.message : "Work notifications could not be loaded.")
     } finally {
       if (requestSequence === notificationsRequestSequence.current) setNotificationLoading(false)
     }
@@ -347,7 +348,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       setNotificationError("")
     } catch (error) {
       if (requestSequence !== notificationsRequestSequence.current) return
-      setNotificationError(error instanceof Error ? error.message : "More task notifications could not be loaded.")
+      setNotificationError(error instanceof Error ? error.message : "More work notifications could not be loaded.")
     } finally {
       if (requestSequence === notificationsRequestSequence.current) setNotificationLoading(false)
     }
@@ -1447,7 +1448,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
         method: "POST",
         body: JSON.stringify(workItem),
       })
-      showMessage("Work item added to the active project.")
+      showMessage(workItem.work_type === "content" ? "Content item added to the project pipeline." : "Work item added to the active project.")
       await Promise.all([refreshWorkItems(selectedId), refreshMyWorkItems(), refreshNotifications()])
     } catch (error) {
       showMessage(error instanceof Error ? error.message : "The work item could not be created.", "error")
@@ -1468,6 +1469,54 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
       showMessage(error instanceof Error ? error.message : "The work item could not be updated.", "error")
       throw error
     }
+  }
+
+  async function handleRequestContentReview(projectId: string, workItemId: string, details: ContentReviewRequest) {
+    const updated = await apiRequest<WorkItem>(
+      `/projects/${projectId}/work-items/${workItemId}/content-reviews`,
+      { method: "POST", body: JSON.stringify(details) },
+    )
+    await Promise.all([refreshWorkItems(projectId), refreshNotifications()])
+    showMessage("Content sent to the project lead for review.")
+    return updated
+  }
+
+  async function handleDecideContentReview(projectId: string, workItemId: string, reviewId: string, decision: ContentReviewDecision) {
+    const updated = await apiRequest<WorkItem>(
+      `/projects/${projectId}/work-items/${workItemId}/content-reviews/${reviewId}/decision`,
+      { method: "POST", body: JSON.stringify(decision) },
+    )
+    await Promise.all([refreshWorkItems(projectId), refreshNotifications()])
+    showMessage(decision.decision === "approved" ? "Content approved." : "Revision requested.")
+    return updated
+  }
+
+  async function handleAttachContentAsset(projectId: string, workItemId: string, asset: ContentAssetCreate) {
+    await apiRequest<WorkItem>(
+      `/projects/${projectId}/work-items/${workItemId}/content-assets`,
+      { method: "POST", body: JSON.stringify(asset) },
+    )
+    await refreshWorkItems(projectId)
+    showMessage("Project file linked to the content item.")
+  }
+
+  async function handleDetachContentAsset(projectId: string, workItemId: string, fileId: string) {
+    await apiRequest<void>(
+      `/projects/${projectId}/work-items/${workItemId}/content-assets/${fileId}`,
+      { method: "DELETE" },
+    )
+    await refreshWorkItems(projectId)
+    showMessage("File link removed. The project file was not deleted.")
+  }
+
+  function handleOpenContentFile(fileId: string) {
+    const file = files.find((candidate) => candidate.id === fileId)
+    if (!file) {
+      showMessage("This file is no longer available in the active project.", "error")
+      return
+    }
+    openView("files")
+    void openFileDetail(file)
   }
 
   async function handleListWorkItemComments(projectId: string, workItemId: string, offset: number) {
@@ -1555,6 +1604,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     { view: "overview", label: "Overview", icon: Gauge },
     { view: "my-work", label: "My Work", icon: ClipboardCheck },
     { view: "workboard", label: "Workboard", icon: ListChecks },
+    { view: "content", label: "Content", icon: Film },
     { view: "templates", label: "Templates", icon: Copy },
     { view: "operations", label: "Operations", icon: Gauge },
     { view: "files", label: "Files", icon: Files },
@@ -1575,7 +1625,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     (view !== "security" || canReadSecurity) && (view !== "templates" || canCreateProjects),
   )
   const navigationSections: Array<{ label: string; views: typeof navigation }> = [
-    { label: "Work", views: ["overview", "my-work", "workboard", "templates"] },
+    { label: "Work", views: ["overview", "my-work", "workboard", "content", "templates"] },
     { label: "Project resources", views: ["files", "operations", "knowledge", "research"] },
     { label: "Controls", views: ["workflows", "recovery", "setup", "security"] },
   ].map((section) => ({
@@ -1588,11 +1638,17 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     || isGlobalOperator
     || projectMembers.some((member) => member.user_id === account.id && member.role === "manager")
   ))
+  const canReviewContent = Boolean(selectedProject && (
+    selectedProject.owner_id === account.id
+    || ["administrator", "supervisor", "reviewer"].includes(account.role)
+    || projectMembers.some((member) => member.user_id === account.id && member.role === "manager")
+  ))
   const canPromoteProjectMembers = Boolean(selectedProject && (selectedProject.owner_id === account.id || isGlobalOperator))
   const viewCopy: Record<WorkspaceView, { title: string; description: string }> = {
     overview: { title: "Overview", description: "See project health, workflow progress, evidence readiness, and the next decision." },
     "my-work": { title: "My Work", description: "See and update the work assigned to you across your projects." },
     workboard: { title: "Workboard", description: "Add, prioritize, and track project deliverables through to completion." },
+    content: { title: "Content production", description: "Move scripts and videos from brief to publication with clear ownership and review." },
     templates: { title: "Project templates", description: "Reuse proven project briefs and task checklists to start new work consistently." },
     operations: { title: "Operations", description: "Preview and run controlled work inside the active project." },
     files: { title: "Files", description: "Search active files, inspect history, and restore immutable versions." },
@@ -1603,9 +1659,9 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     setup: { title: "Workspace setup", description: "Provision an owner, register a project, and prepare local storage." },
     security: { title: "Security overview", description: "Review audit activity, agent outcomes, and project controls within your access scope." },
   }
-  const pageOwnsVisibleHeading = ["overview", "my-work", "workboard", "templates"].includes(activeView)
+  const pageOwnsVisibleHeading = ["overview", "my-work", "workboard", "content", "templates"].includes(activeView)
   const sectionUsesScreenReaderHeading = ["operations", "security"].includes(activeView)
-  const pageOwnsProjectContext = ["overview", "my-work", "workboard", "templates", "research", "security"].includes(activeView)
+  const pageOwnsProjectContext = ["overview", "my-work", "workboard", "content", "templates", "research", "security"].includes(activeView)
   const pendingApprovalItems = workflows.flatMap((workflow) =>
     (workflowApprovals[workflow.id] || [])
       .filter((approval) => approval.status === "pending")
@@ -1688,7 +1744,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
     }
     setAttentionOpen(false)
     activateProject(project)
-    openView("workboard")
+    openView(notification.event_type.startsWith("content.") ? "content" : "workboard")
   }
 
   async function markAllTaskNotificationsRead() {
@@ -1789,7 +1845,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             variant="ghost"
             size="icon"
             className="relative"
-            aria-label={`Open project inbox${unreadNotificationTotal ? `, ${unreadNotificationTotal} unread task notifications` : ""}${attentionCount ? `, ${attentionCount} project items need attention` : ""}`}
+            aria-label={`Open project inbox${unreadNotificationTotal ? `, ${unreadNotificationTotal} unread work notifications` : ""}${attentionCount ? `, ${attentionCount} project items need attention` : ""}`}
             title="Project inbox"
             onClick={() => { setAttentionOpen(true); void refreshNotifications() }}
           >
@@ -1808,7 +1864,7 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             <SheetDescription>Task updates across your projects, plus items that need attention in the active project.</SheetDescription>
           </SheetHeader>
           <div className="mt-6 space-y-5">
-            <Suspense fallback={<p role="status" className="text-sm text-muted-foreground">Loading task updates…</p>}>
+            <Suspense fallback={<p role="status" className="text-sm text-muted-foreground">Loading work updates…</p>}>
               <NotificationsInbox
                 items={taskNotifications}
                 total={notificationTotal}
@@ -1938,6 +1994,28 @@ function Dashboard({ account, onLogout }: { account: AuthUser; onLogout: () => P
             onAddComment={handleAddWorkItemComment}
             onAddMember={handleAddProjectMember}
             onRemoveMember={handleRemoveProjectMember}
+            onRefresh={() => { if (selectedId) void refreshWorkItems(selectedId) }}
+          /></Suspense>}
+        </section>
+
+        <section className={activeView === "content" ? "block" : "hidden"}>
+          {visitedViews.has("content") && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground" role="status">Loading content desk…</div>}><ContentProduction
+            key={selectedId || "no-project"}
+            project={selectedProject}
+            items={workItems.filter((item) => item.work_type === "content")}
+            files={files}
+            members={projectMembers}
+            loading={workItemsLoading}
+            error={workItemsError}
+            canManage={canManageWorkItems}
+            canReview={canReviewContent}
+            onCreate={handleCreateWorkItem}
+            onUpdate={handleUpdateWorkItem}
+            onRequestReview={handleRequestContentReview}
+            onDecideReview={handleDecideContentReview}
+            onAttachAsset={handleAttachContentAsset}
+            onDetachAsset={handleDetachContentAsset}
+            onOpenFile={handleOpenContentFile}
             onRefresh={() => { if (selectedId) void refreshWorkItems(selectedId) }}
           /></Suspense>}
         </section>
